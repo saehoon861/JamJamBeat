@@ -1,0 +1,11 @@
+[project]
+name = "jamjambeat"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mediapipe>=0.10.32",
+    "opencv-python>=4.8.0",
+    "numpy>=1.26.0",
+]

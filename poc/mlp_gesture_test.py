@@ -2,18 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-class SimpleMLPClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
-        super(SimpleMLPClassifier, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size) 
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_size, num_classes)
-    
-    def forward(self, x):
-        out = self.fc1(x)
-        out = self.relu(out)
-        out = self.fc2(out)
-        return out
+# Import the model definition from src/models
+from src.models.baseline.mlp_classifier import SimpleMLPClassifier
 
 def main():
     # Define hyperparameters (these are placeholders and should be tuned)
@@ -24,10 +14,11 @@ def main():
     # Initialize the model
     model = SimpleMLPClassifier(input_size, hidden_size, num_classes)
     
-    # Define a loss function and optimizer
+    # Define a loss function and optimizer (even for a quick test, to ensure they can be initialized)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+    print("--- PoC Model Test ---")
     print("Model Architecture:")
     print(model)
 
@@ -44,15 +35,17 @@ def main():
     output = model(dummy_input)
     print(f"Model output shape: {output.shape}")
 
-    # Calculate loss
+    # Calculate loss (example of one training step)
     loss = criterion(output, dummy_target)
-    print(f"Dummy loss: {loss.item():.4f}")
+    print(f"Dummy loss (before optimization): {loss.item():.4f}")
 
     # Backward pass and optimization step (example of one training step)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    print("One optimization step performed with dummy data.")
+    print("One optimization step performed with dummy data (parameters updated).")
+    
+    print("\nPoC Test Complete. Model initialized and processed dummy data.")
 
 if __name__ == "__main__":
     main()

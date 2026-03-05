@@ -12,8 +12,14 @@
 
 ### 사용할 모델 파일
 * **경로**: `/home/user/JamJamBeat/hand_landmarker.task` (사전 다운로드 완료, 7.8MB)
-* **코드에서 모델 로드 시** 이 절대 경로 또는 프로젝트 루트 기준 상대 경로로 참조
+* **코드에서 모델 로드 시** `__file__` 기준 상대 경로로 동적 계산하여 참조합니다:
+```python
+from pathlib import Path
 
+# main.py 위치 기준으로 절대경로를 동적으로 계산
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # landmark_extractor → data → JamJamBeat
+MODEL_PATH = str(PROJECT_ROOT / "hand_landmarker.task")
+```
 ### 핵심 API (공식 문서 기반)
 ```python
 import mediapipe as mp

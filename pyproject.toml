@@ -13,4 +13,5 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "data/labeling_tool",
+    "data/landmark_extractor",
 ]

@@ -14,7 +14,7 @@ import pandas as pd
 class SessionData:
     """3종 데이터를 묶는 컨테이너."""
     cap: cv2.VideoCapture
-    labeled_df: pd.DataFrame
+    labeled_df: pd.DataFrame | None  # None = 백지 라벨링 (labeled_data 미존재)
     landmark_df: pd.DataFrame
     stem: str
     video_path: str
@@ -23,15 +23,13 @@ class SessionData:
 def get_checkable_stems(labeled_dir: str, landmark_dir: str, raw_dir: str) -> list[str]:
     """검수 가능한 영상 stem 목록을 반환합니다.
 
-    조건: labeled_data, landmark_data, raw_data 세 폴더 모두에 동일한 stem의 파일이 존재해야 합니다.
+    Phase 2 변경: raw_data ∩ landmark_data 교집합만으로 stem을 추출합니다.
+    labeled_data가 없어도 백지 라벨링이 가능하므로 교집합 대상에서 제외합니다.
     OS별 정렬 불일치 방지를 위해 sorted()를 사용합니다.
     """
-    labeled_path = Path(labeled_dir)
     landmark_path = Path(landmark_dir)
     raw_path = Path(raw_dir)
 
-    # labeled_data CSV stem 목록이 주 기준
-    labeled_stems = {f.stem for f in sorted(labeled_path.glob("*.csv"))}
     landmark_stems = {f.stem for f in sorted(landmark_path.glob("*.csv"))}
     raw_stems = {f.stem for f in sorted(raw_path.glob("*.mp4"))}
 
@@ -43,8 +41,8 @@ def get_checkable_stems(labeled_dir: str, landmark_dir: str, raw_dir: str) -> li
             norm = norm[:-4]
         raw_stems_normalized.add(norm)
 
-    # 세 목록 모두에 존재하는 stem만 반환
-    checkable = sorted(labeled_stems & landmark_stems & raw_stems_normalized)
+    # raw ∩ landmark 교집합만 반환 (labeled 유무 상관 없음)
+    checkable = sorted(landmark_stems & raw_stems_normalized)
     return checkable
 
 
@@ -76,9 +74,6 @@ def load_session_data(
     if not video_file.exists():
         print(f"[WARN] {stem} 파일 로드 실패 (raw_data mp4 누락) -> 스킵합니다.")
         return None
-    if not labeled_file.exists():
-        print(f"[WARN] {stem} 파일 로드 실패 (labeled_data 누락) -> 스킵합니다.")
-        return None
     if not landmark_file.exists():
         print(f"[WARN] {stem} 파일 로드 실패 (landmark_data 누락) -> 스킵합니다.")
         return None
@@ -90,7 +85,13 @@ def load_session_data(
             print(f"[WARN] {stem} 동영상을 열 수 없습니다 -> 스킵합니다.")
             return None
 
-        labeled_df = pd.read_csv(str(labeled_file))
+        # labeled_data는 없을 수 있음 (백지 라벨링 지원)
+        labeled_df = None
+        if labeled_file.exists():
+            labeled_df = pd.read_csv(str(labeled_file))
+        else:
+            print(f"[INFO] {stem} labeled_data 없음 -> 백지 라벨링 모드로 진입합니다.")
+
         landmark_df = pd.read_csv(str(landmark_file))
 
     except Exception as e:

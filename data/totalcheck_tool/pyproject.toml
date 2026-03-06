@@ -1,0 +1,11 @@
+[project]
+name = "totalcheck-tool"
+version = "0.1.0"
+description = "통합 검수 도구: 동영상 + 랜드마크 + 라벨링 데이터를 동시에 시각화하며 라벨 검수/수정"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+]

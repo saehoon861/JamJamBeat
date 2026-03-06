@@ -28,6 +28,11 @@ MODEL_PATH = str(PROJECT_ROOT / "hand_landmarker.task")
 RAW_DATA_DIR = str(PROJECT_ROOT / "data" / "raw_data")
 OUTPUT_DIR = str(PROJECT_ROOT / "data" / "landmark_data")
 
+# --- 실행 모드 설정 ---
+# VisionRunningMode.IMAGE : 프레임 단위 독립 추론 (추적 없음, Ground Truth 추출에 적합)
+# VisionRunningMode.VIDEO : 연속 프레임 추적 기반 추론 (스무딩 적용, 부드러운 결과)
+RUNNING_MODE = VisionRunningMode.VIDEO
+
 # --- 랜드마크 컬럼 헤더 생성 (x0, y0, z0, x1, y1, z1, ..., x20, y20, z20) ---
 LANDMARK_COLUMNS = []
 for i in range(21):
@@ -119,15 +124,19 @@ def process_video(video_path: str, output_dir: str, model_path: str) -> str:
 
     print(f"  FPS: {actual_fps}, Total Frames: {total_frames}")
 
-    # HandLandmarker 옵션 설정 (IMAGE 모드: 프레임 단위 독립 추론, 추적/예측 없음)
-    options = HandLandmarkerOptions(
+    # HandLandmarker 옵션 설정 (RUNNING_MODE에 따라 자동 분기)
+    options_kwargs = dict(
         base_options=BaseOptions(model_asset_path=model_path),
-        running_mode=VisionRunningMode.IMAGE,
+        running_mode=RUNNING_MODE,
         num_hands=1,
         min_hand_detection_confidence=0.5,
         min_hand_presence_confidence=0.5,
-        # 주의: IMAGE 모드에서는 min_tracking_confidence를 설정하면 에러 발생하므로 삭제
     )
+    # VIDEO 모드에서만 min_tracking_confidence 추가 (IMAGE 모드에서 설정 시 에러)
+    if RUNNING_MODE == VisionRunningMode.VIDEO:
+        options_kwargs["min_tracking_confidence"] = 0.5
+
+    options = HandLandmarkerOptions(**options_kwargs)
 
     rows = []
 
@@ -145,9 +154,12 @@ def process_video(video_path: str, output_dir: str, model_path: str) -> str:
             # OSD UI 표시용 수학적 타임스탬프 (라벨링 파일과 동일한 계산식)
             timestamp_ms = int(frame_idx / actual_fps * 1000)
 
-            # MediaPipe Image 생성 및 추론 (IMAGE 모드: 타임스탬프 인자 없음)
+            # MediaPipe Image 생성 및 추론
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-            result = landmarker.detect(mp_image)
+            if RUNNING_MODE == VisionRunningMode.IMAGE:
+                result = landmarker.detect(mp_image)
+            else:
+                result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
             # 랜드마크 추출 (미감지 시 NaN)
             landmark_values = extract_landmarks(result)

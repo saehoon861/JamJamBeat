@@ -58,10 +58,22 @@ def get_pending_videos(raw_dir: str, output_dir: str) -> list[str]:
 
 def format_timestamp(frame_idx: int, fps: float) -> str:
     """프레임 인덱스를 'mm:ss:ms' 형태 문자열로 변환합니다.
-
+    
     예: frame_idx=26, fps=30.0 -> '00:00:866'
     """
     total_ms = int((frame_idx / fps) * 1000)
+    minutes = total_ms // 60000
+    seconds = (total_ms % 60000) // 1000
+    ms = total_ms % 1000
+    return f"{minutes:02d}:{seconds:02d}:{ms:03d}"
+
+
+def format_timestamp_from_ms(total_ms: int) -> str:
+    """밀리초 값을 직접 받아 'mm:ss:ms' 형태 문자열로 변환합니다.
+    
+    OpenCV CAP_PROP_POS_MSEC 기반 실제 타임스탬프 저장용.
+    예: total_ms=866 -> '00:00:866'
+    """
     minutes = total_ms // 60000
     seconds = (total_ms % 60000) // 1000
     ms = total_ms % 1000
@@ -107,14 +119,14 @@ def process_video(video_path: str, output_dir: str, model_path: str) -> str:
 
     print(f"  FPS: {actual_fps}, Total Frames: {total_frames}")
 
-    # HandLandmarker 옵션 설정
+    # HandLandmarker 옵션 설정 (IMAGE 모드: 프레임 단위 독립 추론, 추적/예측 없음)
     options = HandLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=model_path),
-        running_mode=VisionRunningMode.VIDEO,
+        running_mode=VisionRunningMode.IMAGE,
         num_hands=1,
         min_hand_detection_confidence=0.5,
         min_hand_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
+        # 주의: IMAGE 모드에서는 min_tracking_confidence를 설정하면 에러 발생하므로 삭제
     )
 
     rows = []
@@ -122,6 +134,7 @@ def process_video(video_path: str, output_dir: str, model_path: str) -> str:
     # ✅ 영상마다 새 인스턴스 생성 (with 블록)
     with HandLandmarker.create_from_options(options) as landmarker:
         for frame_idx in range(total_frames):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
                 break
@@ -129,12 +142,12 @@ def process_video(video_path: str, output_dir: str, model_path: str) -> str:
             # BGR → RGB 변환 (MediaPipe 요구사항)
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # 실제 FPS 기반 타임스탬프 계산 (밀리초, 단조 증가 필수)
+            # OSD UI 표시용 수학적 타임스탬프 (라벨링 파일과 동일한 계산식)
             timestamp_ms = int(frame_idx / actual_fps * 1000)
 
-            # MediaPipe Image 생성 및 추론
+            # MediaPipe Image 생성 및 추론 (IMAGE 모드: 타임스탬프 인자 없음)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-            result = landmarker.detect_for_video(mp_image, timestamp_ms)
+            result = landmarker.detect(mp_image)
 
             # 랜드마크 추출 (미감지 시 NaN)
             landmark_values = extract_landmarks(result)

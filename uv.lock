@@ -17,6 +17,7 @@ resolution-markers = [
 members = [
     "jamjambeat",
     "labeling-tool",
+    "landmark-extractor",
 ]
 
 [[package]]
@@ -370,6 +371,25 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.13.0.92" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+]
+
+[[package]]
+name = "landmark-extractor"
+version = "0.1.0"
+source = { virtual = "data/landmark_extractor" }
+dependencies = [
+    { name = "mediapipe" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mediapipe", specifier = ">=0.10.32" },
+    { name = "numpy", specifier = ">=2.4.2" },
+    { name = "opencv-python", specifier = ">=4.13.0.92" },
+    { name = "pandas", specifier = ">=3.0.1" },
 ]
 
 [[package]]

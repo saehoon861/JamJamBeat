@@ -191,4 +191,4 @@ uv run python main.py
 ### 수동 검증
 1. `RUNNING_MODE = VisionRunningMode.IMAGE`로 설정 → 추출 실행 → `totalcheck_tool`로 랜드마크 1:1 매칭 확인
 2. `RUNNING_MODE = VisionRunningMode.VIDEO`로 변경 → 추출 실행 → `totalcheck_tool`로 결과 비교
-3. 두 결과의 차이를 육안으로 비교하여, 사용자가 최종 모드를 결정
+

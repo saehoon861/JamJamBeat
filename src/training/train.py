@@ -2,15 +2,16 @@ import os
 import itertools
 import copy
 import argparse
+import random
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.model_selection import train_test_split
+import wandb
 
 from src.models.baseline.mlp_classifier import GestureMLP
+from src.dataset.gesture_dataset import create_dataloaders
 
 
 class EarlyStopping:
@@ -33,6 +34,19 @@ class EarlyStopping:
             return False
 
 
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def calculate_accuracy(outputs, labels):
     preds = torch.argmax(outputs, dim=1)
     correct = (preds == labels).sum().item()
@@ -40,54 +54,17 @@ def calculate_accuracy(outputs, labels):
     return correct / total
 
 
-def create_dataloaders(
-    X,
-    y,
-    batch_size=32,
-    validation_split_ratio=0.2,
-    test_split_ratio=0.1,
-    random_state=42,
-):
-    # 1차 분할: train+val / test
-    X_train_val, X_test, y_train_val, y_test = train_test_split(
-        X,
-        y,
-        test_size=test_split_ratio,
-        random_state=random_state,
-        stratify=y,
+def train_one_experiment(config, save_dir="checkpoints"):
+    # 학습 자체 랜덤성 고정
+    set_seed(config["train_seed"])
+
+    run = wandb.init(
+        entity="yqazxcv39372046-yong-in-tae-kwon-do-college",
+        project="jamjambeat-gesture-mlp",
+        config=config,
+        reinit=True,
     )
 
-    # 2차 분할: train / val
-    # 전체 기준 validation_split_ratio가 유지되도록 보정
-    val_ratio_adjusted = validation_split_ratio / (1.0 - test_split_ratio)
-
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_train_val,
-        y_train_val,
-        test_size=val_ratio_adjusted,
-        random_state=random_state,
-        stratify=y_train_val,
-    )
-
-    train_dataset = TensorDataset(X_train, y_train)
-    val_dataset = TensorDataset(X_val, y_val)
-    test_dataset = TensorDataset(X_test, y_test)
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-    return (
-        train_loader,
-        val_loader,
-        test_loader,
-        train_dataset,
-        val_dataset,
-        test_dataset,
-    )
-
-
-def train_one_experiment(X, y, config, save_dir="checkpoints"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(save_dir, exist_ok=True)
 
@@ -99,12 +76,18 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
         val_dataset,
         test_dataset,
     ) = create_dataloaders(
-        X=X,
-        y=y,
+        csv_path=config["csv_path"],
+        feature_columns=config["feature_columns"],
+        label_col=config["label_col"],
+        num_classes=config["num_classes"],
         batch_size=config["batch_size"],
         validation_split_ratio=config["validation_split_ratio"],
         test_split_ratio=config["test_split_ratio"],
-        random_state=config["random_state"],
+        test_split_seed=config["test_split_seed"],
+        train_val_split_seed=config["train_val_split_seed"],
+        balance_train=config["balance_train"],
+        majority_class=config["majority_class"],
+        majority_ratio=config["majority_ratio"],
     )
 
     model = GestureMLP(
@@ -112,7 +95,7 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
         num_classes=config["num_classes"],
         hidden_dims=config["hidden_dims"],
         dropout=config["dropout"],
-        use_batchnorm=config["use_batchnorm"],
+        use_batchnorm=config["use_batchnorm"]
     ).to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -127,6 +110,7 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
         optimizer = optim.SGD(
             model.parameters(),
             lr=config["learning_rate"],
+            momentum=0.9,
             weight_decay=config["weight_decay"],
         )
     else:
@@ -146,10 +130,6 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
             factor=config["gamma"],
             patience=2,
         )
-    elif config["scheduler_name"] is None:
-        scheduler = None
-    else:
-        raise ValueError(f"Unsupported scheduler: {config['scheduler_name']}")
 
     early_stopping = EarlyStopping(
         patience=config["early_stopping_patience"],
@@ -158,13 +138,13 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
 
     best_model_wts = copy.deepcopy(model.state_dict())
     best_val_loss = float("inf")
-    best_val_acc_at_best_loss = 0.0
+    best_val_acc = 0.0
     history = []
 
+    # 모델 구조 저장
+    wandb.watch(model, log="all", log_freq=100)
+
     for epoch in range(config["num_epochs"]):
-        # -----------------
-        # Train
-        # -----------------
         model.train()
         running_train_loss = 0.0
         running_train_acc = 0.0
@@ -174,10 +154,8 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
             labels = labels.to(device)
 
             optimizer.zero_grad()
-
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-
             loss.backward()
             optimizer.step()
 
@@ -188,9 +166,6 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
         epoch_train_loss = running_train_loss / len(train_dataset)
         epoch_train_acc = running_train_acc / len(train_dataset)
 
-        # -----------------
-        # Validation
-        # -----------------
         model.eval()
         running_val_loss = 0.0
         running_val_acc = 0.0
@@ -221,12 +196,25 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
             }
         )
 
-        print(
-            f"Epoch [{epoch + 1}/{config['num_epochs']}] | "
-            f"Train Loss: {epoch_train_loss:.4f}, Train Acc: {epoch_train_acc:.4f} | "
-            f"Val Loss: {epoch_val_loss:.4f}, Val Acc: {epoch_val_acc:.4f} | "
-            f"LR: {optimizer.param_groups[0]['lr']:.6f}"
+        wandb.log(
+            {
+                "epoch": epoch + 1,
+                "train_loss": epoch_train_loss,
+                "train_acc": epoch_train_acc,
+                "val_loss": epoch_val_loss,
+                "val_acc": epoch_val_acc,
+                "lr": optimizer.param_groups[0]["lr"],
+            }
         )
+
+        print(
+            f"Epoch [{epoch+1}/{config['num_epochs']}] | "
+            f"Train Loss: {epoch_train_loss:.4f}, Train Acc: {epoch_train_acc:.4f} | "
+            f"Val Loss: {epoch_val_loss:.4f}, Val Acc: {epoch_val_acc:.4f}"
+        )
+
+        if epoch_val_acc > best_val_acc:
+            best_val_acc = epoch_val_acc
 
         if scheduler is not None:
             if config["scheduler_name"] == "ReduceLROnPlateau":
@@ -237,25 +225,17 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
         improved = early_stopping.step(epoch_val_loss)
         if improved:
             best_val_loss = epoch_val_loss
-            best_val_acc_at_best_loss = epoch_val_acc
             best_model_wts = copy.deepcopy(model.state_dict())
 
             save_path = os.path.join(save_dir, config["save_name"])
             torch.save(best_model_wts, save_path)
-            print(f"  --> Best model saved to {save_path}")
 
         if early_stopping.should_stop:
             print("  --> Early stopping triggered.")
             break
 
-    # -----------------
-    # Load best model
-    # -----------------
     model.load_state_dict(best_model_wts)
 
-    # -----------------
-    # Final Test Evaluation
-    # -----------------
     model.eval()
     running_test_loss = 0.0
     running_test_acc = 0.0
@@ -275,11 +255,9 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
     epoch_test_loss = running_test_loss / len(test_dataset)
     epoch_test_acc = running_test_acc / len(test_dataset)
 
-    print(f"Final Test Loss: {epoch_test_loss:.4f} | Final Test Acc: {epoch_test_acc:.4f}")
-
     result = {
         "best_val_loss": best_val_loss,
-        "best_val_acc": best_val_acc_at_best_loss,
+        "best_val_acc": best_val_acc,
         "test_loss": epoch_test_loss,
         "test_acc": epoch_test_acc,
         "history": history,
@@ -287,38 +265,36 @@ def train_one_experiment(X, y, config, save_dir="checkpoints"):
         "model_state_dict": best_model_wts,
     }
 
+    wandb.log(
+        {
+            "best_val_loss": best_val_loss,
+            "best_val_acc": best_val_acc,
+            "test_loss": epoch_test_loss,
+            "test_acc": epoch_test_acc,
+        }
+    )
+
+    wandb.finish()
     return result
 
 
-def manual_grid_search(X, y, param_grid, save_dir="checkpoints"):
+def manual_grid_search(param_grid, save_dir="checkpoints"):
     keys = list(param_grid.keys())
     values = list(param_grid.values())
     all_combinations = list(itertools.product(*values))
 
-    print(f"Total combinations: {len(all_combinations)}")
-
+    print(f"Total experiments: {len(all_combinations)}")
     best_result = None
 
     for i, combination in enumerate(all_combinations, start=1):
         config = dict(zip(keys, combination))
-        print("\n" + "=" * 80)
-        print(f"[Grid Search] Running combination {i}/{len(all_combinations)}")
-        print(config)
+        print(f"\n\n[Experiment {i}/{len(all_combinations)}]")
 
-        result = train_one_experiment(X, y, config, save_dir=save_dir)
+        result = train_one_experiment(config, save_dir=save_dir)
 
         if best_result is None or result["best_val_loss"] < best_result["best_val_loss"]:
             best_result = result
-            print("  --> New best result found.")
-
-    print("\n" + "=" * 80)
-    print("Grid Search Finished")
-    print(f"Best Val Loss: {best_result['best_val_loss']:.4f}")
-    print(f"Best Val Acc : {best_result['best_val_acc']:.4f}")
-    print(f"Test Loss    : {best_result['test_loss']:.4f}")
-    print(f"Test Acc     : {best_result['test_acc']:.4f}")
-    print("Best Config:")
-    print(best_result["config"])
+            print(f"*** New best result found! Val Loss: {best_result['best_val_loss']:.4f}")
 
     return best_result
 
@@ -330,34 +306,34 @@ def parse_hidden_dims(hidden_dims_str):
 def str2bool(v):
     if isinstance(v, bool):
         return v
-    if v.lower() in ("yes", "true", "t", "y", "1"):
+    if v.lower() in ("true", "1", "yes", "y"):
         return True
-    elif v.lower() in ("no", "false", "f", "n", "0"):
+    if v.lower() in ("false", "0", "no", "n"):
         return False
-    else:
-        raise argparse.ArgumentTypeError("Boolean value expected.")
+    raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Train GestureMLP with optional grid search.")
+    parser = argparse.ArgumentParser(description="Train GestureMLP with optional grid search")
 
-    # 실행 관련
-    parser.add_argument("--use-grid-search", type=str2bool, default=False)
+    parser.add_argument("--use-grid-search", action="store_true")
     parser.add_argument("--save-dir", type=str, default="checkpoints")
-    parser.add_argument("--save-name", type=str, default="best_mlp.pt")
+    parser.add_argument("--save-name", type=str, default="best_model.pth")
 
-    # 데이터 관련
+    parser.add_argument("--csv-path", type=str, required=True)
+    parser.add_argument("--label-col", type=str, default="gesture")
+
     parser.add_argument("--input-size", type=int, default=63)
     parser.add_argument("--num-classes", type=int, default=7)
-    parser.add_argument("--num-samples", type=int, default=1000)
-    parser.add_argument("--random-state", type=int, default=42)
 
-    # 모델 관련
+    parser.add_argument("--test-split-seed", type=int, default=42)
+    parser.add_argument("--train-val-split-seed", type=int, default=42)
+    parser.add_argument("--train-seed", type=int, default=42)
+
     parser.add_argument("--hidden-dims", type=str, default="128,64")
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--use-batchnorm", type=str2bool, default=False)
 
-    # 학습 관련
     parser.add_argument("--optimizer-name", type=str, default="adam", choices=["adam", "sgd"])
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
@@ -366,7 +342,6 @@ def build_parser():
     parser.add_argument("--validation-split-ratio", type=float, default=0.2)
     parser.add_argument("--test-split-ratio", type=float, default=0.1)
 
-    # 스케줄러 관련
     parser.add_argument(
         "--scheduler-name",
         type=str,
@@ -376,9 +351,12 @@ def build_parser():
     parser.add_argument("--step-size", type=int, default=5)
     parser.add_argument("--gamma", type=float, default=0.5)
 
-    # Early stopping 관련
     parser.add_argument("--early-stopping-patience", type=int, default=5)
-    parser.add_argument("--early-stopping-min-delta", type=float, default=0.0)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
+
+    parser.add_argument("--balance-train", type=str2bool, default=True)
+    parser.add_argument("--majority-class", type=int, default=0)
+    parser.add_argument("--majority-ratio", type=float, default=1.5)
 
     return parser
 
@@ -390,37 +368,49 @@ def main():
     scheduler_name = None if args.scheduler_name == "none" else args.scheduler_name
     hidden_dims = parse_hidden_dims(args.hidden_dims)
 
-    # 현재는 더미 데이터
-    X = torch.randn(args.num_samples, args.input_size)
-    y = torch.randint(0, args.num_classes, (args.num_samples,))
+    feature_columns = []
+    for i in range(0, 21):
+        feature_columns.extend([f"x{i}", f"y{i}", f"z{i}"])
 
     if args.use_grid_search:
         param_grid = {
+            "csv_path": [args.csv_path],
+            "feature_columns": [feature_columns],
+            "label_col": [args.label_col],
             "input_size": [args.input_size],
             "num_classes": [args.num_classes],
-            "hidden_dims": [[128, 64], [256, 128], [128, 128, 64]],
-            "dropout": [0.0, 0.3],
+            "hidden_dims": [[64, 32], [128, 64], [128, 128]],
+            "dropout": [0.0, 0.003, 0.005, 0.01],
             "use_batchnorm": [False, True],
             "optimizer_name": [args.optimizer_name],
             "learning_rate": [1e-3, 5e-4],
-            "weight_decay": [0.0, 1e-4],
-            "batch_size": [16, 32],
+            "weight_decay": [0.0, 1e-5, 1e-4],
+            "scheduler_name": [None],
+            "step_size": [args.step_size],
+            "gamma": [args.gamma],
+            "batch_size": [32],
             "num_epochs": [args.num_epochs],
             "validation_split_ratio": [args.validation_split_ratio],
             "test_split_ratio": [args.test_split_ratio],
-            "scheduler_name": [None, "StepLR", "ReduceLROnPlateau"],
-            "step_size": [args.step_size],
-            "gamma": [args.gamma],
+            "test_split_seed": [args.test_split_seed],
+            "train_val_split_seed": [7, 42, 123],
+            "train_seed": [args.train_seed],
+            "save_name": [args.save_name],
             "early_stopping_patience": [args.early_stopping_patience],
             "early_stopping_min_delta": [args.early_stopping_min_delta],
-            "random_state": [args.random_state],
-            "save_name": [args.save_name],
+            "balance_train": [args.balance_train],
+            "majority_class": [args.majority_class],
+            "majority_ratio": [args.majority_ratio],
         }
 
-        manual_grid_search(X, y, param_grid, save_dir=args.save_dir)
+        best_result = manual_grid_search(param_grid, save_dir=args.save_dir)
+        print(best_result)
 
     else:
         config = {
+            "csv_path": args.csv_path,
+            "feature_columns": feature_columns,
+            "label_col": args.label_col,
             "input_size": args.input_size,
             "num_classes": args.num_classes,
             "hidden_dims": hidden_dims,
@@ -429,27 +419,26 @@ def main():
             "optimizer_name": args.optimizer_name,
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
+            "scheduler_name": scheduler_name,
+            "step_size": args.step_size,
+            "gamma": args.gamma,
             "batch_size": args.batch_size,
             "num_epochs": args.num_epochs,
             "validation_split_ratio": args.validation_split_ratio,
             "test_split_ratio": args.test_split_ratio,
-            "scheduler_name": scheduler_name,
-            "step_size": args.step_size,
-            "gamma": args.gamma,
+            "test_split_seed": args.test_split_seed,
+            "train_val_split_seed": args.train_val_split_seed,
+            "train_seed": args.train_seed,
+            "save_name": args.save_name,
             "early_stopping_patience": args.early_stopping_patience,
             "early_stopping_min_delta": args.early_stopping_min_delta,
-            "random_state": args.random_state,
-            "save_name": args.save_name,
+            "balance_train": args.balance_train,
+            "majority_class": args.majority_class,
+            "majority_ratio": args.majority_ratio,
         }
 
-        result = train_one_experiment(X, y, config, save_dir=args.save_dir)
-
-        print("\n" + "=" * 80)
-        print("Training Finished")
-        print(f"Best Val Loss: {result['best_val_loss']:.4f}")
-        print(f"Best Val Acc : {result['best_val_acc']:.4f}")
-        print(f"Test Loss    : {result['test_loss']:.4f}")
-        print(f"Test Acc     : {result['test_acc']:.4f}")
+        result = train_one_experiment(config, save_dir=args.save_dir)
+        print(result)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 
 TOTAL_DATA_DIR = Path(__file__).parent / "total_data"
-OUTPUT_FILE = Path(__file__).parent / "total_data" / "sample.csv"
+OUTPUT_FILE = Path(__file__).parent / "total_data_0309.csv"  # total_data 밖으로
 
 # 이름 바꾸지 않으면 실행 차단
 if OUTPUT_FILE.name == "sample.csv":
@@ -23,7 +23,9 @@ def main():
     dfs = []
     for f in csv_files:
         df = pd.read_csv(f)
-        df.insert(0, "source_file", f.stem)  # 어느 파일에서 왔는지 추적용 컬럼
+        df["source_file"] = f.stem
+        cols = ["source_file"] + [c for c in df.columns if c != "source_file"]
+        df = df[cols]
         dfs.append(df)
         print(f"  ✅ {f.name} ({len(df)}행)")
 

@@ -23,9 +23,12 @@ def main():
     dfs = []
     for f in csv_files:
         df = pd.read_csv(f)
-        df["source_file"] = f.stem
-        cols = ["source_file"] + [c for c in df.columns if c != "source_file"]
-        df = df[cols]
+        if "source_file" not in df.columns:
+        # 미병합 파일 → 파일명으로 source_file 추가
+            df["source_file"] = f.stem
+            cols = ["source_file"] + [c for c in df.columns if c != "source_file"]
+            df = df[cols]
+        # 병합된 파일 → source_file 컬럼 그대로 유지
         dfs.append(df)
         print(f"  ✅ {f.name} ({len(df)}행)")
 

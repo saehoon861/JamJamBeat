@@ -324,6 +324,10 @@ def main():
         print(f"\n[{idx}/{len(stems)}] 검수 시작: {stem}")
         result = process_video(stem, config)
 
+        # Qt 이벤트 루프 확실히 비우기 (다음 영상 전환 시 창 깨짐 방지)
+        for _ in range(10):
+            cv2.waitKey(1)
+
         if result == "saved":
             saved_count += 1
         elif result == "skipped":

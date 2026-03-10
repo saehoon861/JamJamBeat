@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JamJam Beat - Forest Mode Select</title>
+  <link rel="stylesheet" href="./src/styles/main.css?v=6" />
+  <link rel="preload" href="./public/hand_landmarker.task" as="fetch" />
+</head>
+
+<body>
+  <main class="scene theme-scene hide-camera" aria-live="polite">
+    <section class="layer layer-background" aria-hidden="true">
+      <div class="bg-video-wrap" aria-hidden="true">
+        <video class="bg-video bg-video-a" muted playsinline preload="auto" autoplay loop>
+          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
+          <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
+        </video>
+        <video class="bg-video bg-video-b" muted playsinline preload="auto" autoplay loop>
+          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
+          <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
+        </video>
+      </div>
+      <svg class="forest-silhouette" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" role="img">
+        <title>Mode selection forest background</title>
+        <defs>
+          <linearGradient id="themeSkyGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#1c1938" />
+            <stop offset="100%" stop-color="#183a32" />
+          </linearGradient>
+        </defs>
+        <rect width="1600" height="900" fill="url(#themeSkyGrad)"></rect>
+        <path d="M0 710 Q160 610 360 700 T760 710 T1200 695 T1600 710 L1600 900 L0 900 Z" fill="#101a27"></path>
+      </svg>
+      <div class="fog fog-a"></div>
+      <div class="fog fog-b"></div>
+    </section>
+
+    <section class="theme-shell">
+      <a id="themeBackButton" class="theme-back-link" href="./index.html">← 숲 입구로</a>
+      <h1>숲 무드 선택</h1>
+      <p class="theme-sub">손 커서를 카드 위에 잠깐 올리면 시작됩니다.</p>
+      <p id="themeStatus" class="theme-status">카메라에 손을 보여주세요.</p>
+      <div class="theme-quick-nav">
+        <a class="theme-main-link" href="./index.html">메인 화면으로</a>
+      </div>
+
+      <div class="theme-mode-grid">
+        <button class="theme-mode-card" type="button" data-nav="./index.html?session=start&mode=calm">
+          <span class="theme-chip calm"></span>
+          <strong>고요한 숲</strong>
+          <small>차분한 보라-초록 톤</small>
+        </button>
+        <button class="theme-mode-card" type="button" data-nav="./index.html?session=start&mode=magic">
+          <span class="theme-chip magic"></span>
+          <strong>마법 숲</strong>
+          <small>빛나는 민트-골드 톤</small>
+        </button>
+      </div>
+    </section>
+
+    <a class="global-main-link" href="./index.html">메인화면으로</a>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="handCanvas"></canvas>
+    <div id="handCursor" class="hand-cursor" aria-hidden="true"></div>
+  </main>
+
+  <script type="module" src="./src/js/theme.js?v=5"></script>
+</body>
+
+</html>

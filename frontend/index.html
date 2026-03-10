@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JamJam Beat - Layered Forest</title>
+  <link rel="stylesheet" href="./src/styles/main.css?v=3" />
+  <link rel="preload" href="./public/hand_landmarker.task" as="fetch" />
+</head>
+
+<body>
+  <main id="scene" class="scene hide-camera" data-fever="off">
+    <section id="landingOverlay" class="landing-overlay" aria-live="polite">
+      <div class="landing-panel">
+        <p class="landing-kicker">JamJam Beat</p>
+        <h1>Layered Forest</h1>
+        <p>손을 잼잼! 해서 숲을 깨워봐!</p>
+        <p class="landing-privacy">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
+        <button id="landingStartButton" type="button">숲 깨우기 시작</button>
+        <a class="landing-admin-link" href="./index.html?admin=1">관리자 모드 (직접 배치)</a>
+      </div>
+    </section>
+
+    <section class="layer layer-background" aria-hidden="true">
+      <div class="bg-video-wrap" aria-hidden="true">
+        <video class="bg-video bg-video-a" muted playsinline preload="auto" autoplay loop>
+          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
+          <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
+        </video>
+        <video class="bg-video bg-video-b" muted playsinline preload="auto" autoplay loop>
+          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
+          <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
+        </video>
+      </div>
+      <svg class="forest-silhouette" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" role="img">
+        <title>Layered forest silhouette background</title>
+        <defs>
+          <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#1a1630" />
+            <stop offset="100%" stop-color="#182b2d" />
+          </linearGradient>
+        </defs>
+        <rect width="1600" height="900" fill="url(#skyGrad)"></rect>
+        <path d="M0 660 Q120 560 220 660 T460 660 T700 650 T960 670 T1260 655 T1600 660 L1600 900 L0 900 Z" fill="#111c24"></path>
+        <path d="M0 720 Q180 640 360 715 T760 720 T1120 710 T1600 720 L1600 900 L0 900 Z" fill="#0f1621"></path>
+        <g fill="#102418" opacity="0.95">
+          <path d="M120 900 L120 620 L90 620 L90 900 Z"></path>
+          <path d="M160 900 L160 585 L130 585 L130 900 Z"></path>
+          <path d="M1240 900 L1240 610 L1210 610 L1210 900 Z"></path>
+          <path d="M1288 900 L1288 570 L1262 570 L1262 900 Z"></path>
+        </g>
+      </svg>
+      <div class="fog fog-a"></div>
+      <div class="fog fog-b"></div>
+      <div class="fog fog-c"></div>
+    </section>
+
+    <section id="instrumentLayer" class="layer layer-middleground" aria-label="인터랙티브 악기 숲">
+      <button id="instrumentDrum" class="instrument instrument-drum" type="button" aria-label="고슴도치 드럼">
+        <img
+          class="instrument-art"
+          src="/public/assets/objects/hedgehog-drum.png"
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+        <span class="instrument-label">고슴도치 드럼</span>
+      </button>
+
+      <button id="instrumentXylophone" class="instrument instrument-xylophone" type="button" aria-label="노래하는 백합">
+        <img
+          class="instrument-art"
+          src="/public/assets/objects/lily-melody.png"
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+        <span class="instrument-label">노래하는 백합</span>
+      </button>
+
+      <button id="instrumentTambourine" class="instrument instrument-tambourine" type="button" aria-label="행운 클로버">
+        <img
+          class="instrument-art"
+          src="/public/assets/objects/clover-chime.png"
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+        <span class="instrument-label">행운 클로버</span>
+      </button>
+
+      <button id="instrumentFern" class="instrument instrument-fern" type="button" aria-label="마법 고사리">
+        <img
+          class="instrument-art"
+          src="/public/assets/objects/magic-fern.png"
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+        <span class="instrument-label">마법 고사리</span>
+      </button>
+
+      <button id="instrumentOwl" class="instrument instrument-owl" type="button" aria-label="아기 사슴">
+        <img
+          class="instrument-art"
+          src="/public/assets/objects/baby-deer.png"
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+        <span class="instrument-label">아기 사슴</span>
+      </button>
+    </section>
+
+    <section class="layer layer-foreground" aria-live="polite">
+      <div class="camera-shell" aria-hidden="true">
+        <video id="webcam" autoplay playsinline muted></video>
+      </div>
+      <div class="guide-silhouette" aria-hidden="true"></div>
+      <img id="gestureSquirrelEffect" class="gesture-squirrel" src="/public/assets/objects/squirrel-effect.png" alt="" aria-hidden="true" />
+      <p id="pulseMessage" class="pulse-message">손을 잼잼! 해서 숲을 깨워봐!</p>
+    </section>
+
+    <section class="hud" aria-live="polite">
+      <h2>잼잼비트 숲의 입구</h2>
+      <p id="status" class="status">카메라 준비 중...</p>
+      <button id="soundUnlockButton" class="sound-unlock" type="button">소리 켜기</button>
+      <a class="hud-main-link" href="./index.html">메인화면으로</a>
+      <p class="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
+    </section>
+
+    <section id="adminControls" class="admin-floating-controls" aria-live="polite">
+      <p>관리자 편집 모드: 오브젝트를 드래그해 배치</p>
+      <div>
+        <button id="adminSaveButton" type="button">배치 저장</button>
+        <button id="adminResetButton" type="button">기본 위치</button>
+        <a href="javascript:history.back()">뒤로가기</a>
+        <a href="./index.html">메인화면으로</a>
+      </div>
+    </section>
+
+    <canvas id="handCanvas"></canvas>
+    <canvas id="effectCanvas" aria-hidden="true"></canvas>
+    <div id="handCursor" class="hand-cursor" aria-hidden="true"></div>
+  </main>
+
+  <script type="module" src="./src/js/main.js?v=3"></script>
+</body>
+
+</html>

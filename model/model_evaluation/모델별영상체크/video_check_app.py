@@ -23,7 +23,7 @@ import torch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-RUNS_ROOT = PROJECT_ROOT / "model" / "model_evaluation" / "runs"
+RUNS_ROOT = PROJECT_ROOT / "model" / "model_evaluation" / "pipelines"
 RAW_VIDEO_ROOT = PROJECT_ROOT / "data" / "raw_data"
 TASK_MODEL_PATH = PROJECT_ROOT / "hand_landmarker.task"
 MODEL_PIPELINES_ROOT = PROJECT_ROOT / "model" / "model_pipelines"

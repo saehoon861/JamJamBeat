@@ -21,7 +21,7 @@ set -euo pipefail
 # Optional env overrides:
 #   PROJECT_ROOT=/home/user/projects/JamJamBeat
 #   PYTHON_BIN=/home/user/projects/JamJamBeat/.venv/bin/python
-#   OUTPUT_ROOT=/home/user/projects/JamJamBeat/model/model_evaluation/runs
+#   OUTPUT_ROOT=/home/user/projects/JamJamBeat/model/model_evaluation/pipelines
 #   EPOCHS=20
 #   BATCH_SIZE=128
 # -----------------------------------------------------------------------------
@@ -36,8 +36,8 @@ else
 fi
 
 PYTHON_BIN="${PYTHON_BIN:-${PROJECT_ROOT}/.venv/bin/python}"
-RUNNER="${PROJECT_ROOT}/model/cron/run_model_pipeline.py"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${PROJECT_ROOT}/model/model_evaluation/runs}"
+RUNNER="${PROJECT_ROOT}/model/model_pipelines/run_pipeline.py"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${PROJECT_ROOT}/model/model_evaluation/pipelines}"
 LOG_DIR="${PROJECT_ROOT}/model/cron/logs"
 
 EPOCHS="${EPOCHS:-20}"
@@ -55,6 +55,7 @@ for req in "$PYTHON_BIN" "$RUNNER" "$DATA_1" "$DATA_2" "$DATA_3" "$DATA_4"; do
   fi
 done
 
+# 로그 / 결과 디렉터리를 먼저 보장해 cron 실행 시 mkdir 비용과 실패를 줄인다.
 mkdir -p "$LOG_DIR"
 mkdir -p "$OUTPUT_ROOT"
 
@@ -67,14 +68,14 @@ TMP_NEW="$(mktemp)"
 
 crontab -l > "$TMP_OLD" 2>/dev/null || true
 
-# Remove old managed block (if exists)
+# 재설치 시 block이 중복되지 않도록 기존 managed block을 먼저 제거한다.
 awk -v start="$START_MARK" -v end="$END_MARK" '
   $0 == start {skip=1; next}
   $0 == end   {skip=0; next}
   skip != 1   {print}
 ' "$TMP_OLD" > "$TMP_CLEAN"
 
-# Build managed block
+# 모델별 명령을 고정 스케줄로 한 번에 생성해 crontab에 주입한다.
 {
   cat "$TMP_CLEAN"
   echo "$START_MARK"

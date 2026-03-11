@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 
 TOTAL_DATA_DIR = Path(__file__).parent / "total_data"
-OUTPUT_FILE = Path(__file__).parent / "total_data" / "kimsg_total.csv"
+OUTPUT_FILE = Path(__file__).parent / "total_data_0309.csv"  # total_data 밖으로
 
 # 이름 바꾸지 않으면 실행 차단
 if OUTPUT_FILE.name == "sample.csv":
@@ -10,7 +10,7 @@ if OUTPUT_FILE.name == "sample.csv":
 
 def main():
     csv_files = sorted(TOTAL_DATA_DIR.glob("*.csv"))
-    
+
     # .gitkeep 등 비CSV 파일 방어
     csv_files = [f for f in csv_files if f.suffix == ".csv"]
 
@@ -23,7 +23,12 @@ def main():
     dfs = []
     for f in csv_files:
         df = pd.read_csv(f)
-        df.insert(0, "source_file", f.stem)  # 어느 파일에서 왔는지 추적용 컬럼
+        if "source_file" not in df.columns:
+        # 미병합 파일 → 파일명으로 source_file 추가
+            df["source_file"] = f.stem
+            cols = ["source_file"] + [c for c in df.columns if c != "source_file"]
+            df = df[cols]
+        # 병합된 파일 → source_file 컬럼 그대로 유지
         dfs.append(df)
         print(f"  ✅ {f.name} ({len(df)}행)")
 

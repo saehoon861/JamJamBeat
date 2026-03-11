@@ -685,10 +685,11 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
     delay_ms = max(int(1000 / max(analyzed.fps, 1e-6)), 1)
     paused = False
     current_idx = 0
+    window_created = False
 
     while 0 <= current_idx < analyzed.total_frames:
-        # 창이 X버튼으로 닫혔으면 루프를 즉시 종료한다.
-        if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+        # 창이 생성된 이후에만 닫힘 여부를 확인한다 (생성 전 호출 시 OpenCV 에러 발생).
+        if window_created and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
             break
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, current_idx)
@@ -698,6 +699,7 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
 
         display = overlay_frame(frame, runtime, analyzed, current_idx)
         cv2.imshow(window_name, display)
+        window_created = True
 
         wait_ms = 0 if paused else delay_ms
         key = cv2.waitKeyEx(wait_ms)

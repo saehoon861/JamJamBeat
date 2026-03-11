@@ -7,6 +7,7 @@ END_MARK="# <<< JAMJAMBEAT_MODEL_COMPARISON_CRON <<<"
 TMP_OLD="$(mktemp)"
 TMP_NEW="$(mktemp)"
 
+# 현재 crontab에서 JamJamBeat managed block만 제거하고 나머지는 보존한다.
 crontab -l > "$TMP_OLD" 2>/dev/null || true
 
 awk -v start="$START_MARK" -v end="$END_MARK" '

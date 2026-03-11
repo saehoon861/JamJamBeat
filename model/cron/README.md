@@ -36,7 +36,7 @@
 
 각 실행 결과는 기본적으로 아래 경로에 저장됩니다.
 
-- `model/model_evaluation/runs/<model_id>/<timestamp>/`
+- `model/model_evaluation/pipelines/<model_id>/<timestamp>/`
 
 포함 파일:
 

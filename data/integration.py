@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 
 TOTAL_DATA_DIR = Path(__file__).parent / "total_data"
-OUTPUT_FILE = Path(__file__).parent / "total_data" / "sample.csv"
+OUTPUT_FILE = Path(__file__).parent / "total_data" / "kimsg_total.csv"
 
 # 이름 바꾸지 않으면 실행 차단
 if OUTPUT_FILE.name == "sample.csv":

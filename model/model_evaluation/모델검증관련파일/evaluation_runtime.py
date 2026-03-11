@@ -39,6 +39,8 @@ DEFAULT_CLASS_NAMES = [
 
 @dataclass
 class EvaluationConfig:
+    """평가와 후처리 파라미터를 한 번에 전달하는 설정 컨테이너."""
+
     class_names: list[str]
     neutral_class_id: int = 0
     tau: float = 0.85
@@ -56,6 +58,7 @@ def compute_confusion_matrix(
     y_pred: Iterable[int],
     num_classes: int,
 ) -> np.ndarray:
+    """예측/정답 시퀀스를 정수 confusion matrix로 누적한다."""
     cm = np.zeros((num_classes, num_classes), dtype=np.int64)
     for t, p in zip(y_true, y_pred):
         if 0 <= int(t) < num_classes and 0 <= int(p) < num_classes:
@@ -67,6 +70,7 @@ def build_classification_report(
     cm: np.ndarray,
     class_names: list[str],
 ) -> tuple[pd.DataFrame, dict]:
+    """confusion matrix에서 per-class precision / recall / F1과 macro 평균을 만든다."""
     rows: list[dict] = []
 
     for i, class_name in enumerate(class_names):
@@ -113,6 +117,7 @@ def save_confusion_matrix_plot(
     class_names: list[str],
     output_path: Path,
 ) -> None:
+    """행 정규화 confusion matrix를 시각화해서 PNG로 저장한다."""
     row_sum = cm.sum(axis=1, keepdims=True)
     normalized = np.divide(cm, row_sum, out=np.zeros_like(cm, dtype=float), where=row_sum != 0)
 
@@ -145,6 +150,13 @@ def save_confusion_matrix_plot(
 
 
 def _ts_to_seconds(ts: object) -> float | None:
+    """timestamp 컬럼을 초 단위 실수로 파싱한다.
+
+    지원 형태:
+    - float / int
+    - MM:SS
+    - MM:SS:ms
+    """
     if ts is None:
         return None
     if isinstance(ts, (int, float, np.integer, np.floating)):
@@ -186,6 +198,7 @@ def postprocess_events(
     """
     from collections import deque
 
+    # evaluate_predictions는 frame-level 예측을 받아 실서비스와 비슷한 trigger 단위로 다시 묶는다.
     events: list[dict] = []
     window: deque[int] = deque(maxlen=vote_n)
     debounce_count = 0
@@ -200,7 +213,7 @@ def postprocess_events(
         if len(window) < vote_n:
             continue
 
-        # deterministic majority vote (smallest class id wins tie)
+        # tie가 나면 class id가 작은 쪽을 택해 postprocess를 deterministic하게 유지한다.
         vote_counts = {}
         for cls_id in window:
             vote_counts[cls_id] = vote_counts.get(cls_id, 0) + 1
@@ -233,9 +246,11 @@ def calc_fp_per_min(
     neutral_class_id: int,
     fallback_fps: float = 30.0,
 ) -> dict:
+    """neutral 구간에서 발생한 오발동(trigger)을 분당 횟수로 환산한다."""
     if "gesture" not in df.columns:
         return {"fp_per_min": None, "fp_count": 0, "duration_min": 0.0, "reason": "gesture column missing"}
 
+    # neutral slice만 따로 떼어 실제 '아무 동작이 없어야 하는 구간'에서의 오동작을 본다.
     neutral_df = df[df["gesture"] == neutral_class_id].copy()
     if neutral_df.empty:
         return {"fp_per_min": None, "fp_count": 0, "duration_min": 0.0, "reason": "neutral slice empty"}
@@ -253,6 +268,7 @@ def calc_fp_per_min(
         if sec.notna().sum() >= 2:
             duration_sec = float(sec.max() - sec.min())
         else:
+            # timestamp 품질이 낮으면 fps 기반 길이 추정으로 fallback 한다.
             duration_sec = float(len(neutral_df) / max(fallback_fps, 1e-6))
     else:
         duration_sec = float(len(neutral_df) / max(fallback_fps, 1e-6))
@@ -270,6 +286,7 @@ def calc_fp_per_min(
 
 
 def latency_summary(latency_ms: np.ndarray) -> dict:
+    """latency 벡터에서 비교용 백분위 통계를 계산한다."""
     if latency_ms.size == 0:
         return {
             "count": 0,
@@ -290,6 +307,7 @@ def latency_summary(latency_ms: np.ndarray) -> dict:
 
 
 def save_latency_cdf_plot(latency_ms: np.ndarray, output_path: Path) -> None:
+    """latency 분포를 CDF 형태로 저장해 모델 간 tail latency를 비교한다."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -324,6 +342,7 @@ def evaluate_predictions(
     output_dir: str | Path,
     config: EvaluationConfig | None = None,
 ) -> dict:
+    """예측 원본 CSV에서 모든 평가 산출물을 생성하는 메인 진입점."""
     cfg = config or EvaluationConfig(class_names=DEFAULT_CLASS_NAMES)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -336,6 +355,7 @@ def evaluate_predictions(
     y_true = df_preds["gesture"].to_numpy(dtype=np.int64)
     y_pred = df_preds["pred_class"].to_numpy(dtype=np.int64)
 
+    # 기본 분류 지표는 raw frame prediction 기준으로 계산한다.
     num_classes = len(cfg.class_names)
     cm = compute_confusion_matrix(y_true, y_pred, num_classes=num_classes)
     report_df, base_summary = build_classification_report(cm, cfg.class_names)
@@ -345,6 +365,7 @@ def evaluate_predictions(
     report_df.to_csv(out_dir / "per_class_report.csv", index=False)
     save_confusion_matrix_plot(cm, cfg.class_names, out_dir / "confusion_matrix.png")
 
+    # class0 관련 메트릭은 neutral 축에서의 누락 / 오발동을 따로 보기 위한 지표다.
     class0_fp = int(cm[1:, cfg.neutral_class_id].sum()) if num_classes > 1 else 0
     class0_fn = int(cm[cfg.neutral_class_id, 1:].sum()) if num_classes > 1 else 0
     total_non0 = int(cm[1:, :].sum()) if num_classes > 1 else 0
@@ -372,6 +393,7 @@ def evaluate_predictions(
     latency_metrics = latency_summary(latency_arr)
     save_latency_cdf_plot(latency_arr, out_dir / "latency_cdf.png")
 
+    # 최종 summary는 run_summary.json에 바로 들어갈 수 있는 compact 구조만 유지한다.
     summary = {
         "accuracy": base_summary["accuracy"],
         "macro_avg": base_summary["macro_avg"],

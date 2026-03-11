@@ -72,6 +72,7 @@ JOINT_ONLY_SEQUENCE_MODELS = {
     "mlp_sequence_joint",
     "mlp_temporal_pooling",
     "mlp_sequence_delta",
+    "mlp_baseline_seq8",
 }
 
 
@@ -236,10 +237,17 @@ def instantiate_model(
     """checkpoint state_dict shape를 읽어 정확한 model 클래스를 복원한다."""
     mod = importlib.import_module(f"{model_id}.model")
 
-    if model_id in {"mlp_baseline", "mediapipe_hand_landmarker"}:
+    if model_id in {"mlp_baseline", "mediapipe_hand_landmarker", "mlp_baseline_full"}:
         input_dim = int(state_dict["net.0.weight"].shape[1])
         model = mod.MLPBaseline(input_dim=input_dim, num_classes=num_classes)
         return model, DEFAULT_SEQ_LEN
+
+    if model_id == "mlp_baseline_seq8":
+        flat_dim = int(state_dict["net.0.weight"].shape[1])
+        seq_len = 8
+        input_dim = flat_dim // seq_len
+        model = mod.MLPBaselineSeq(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
+        return model, seq_len
 
     if model_id == "mlp_sequence_joint":
         input_dim = int(state_dict["net.1.weight"].shape[1])
@@ -679,6 +687,10 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
     current_idx = 0
 
     while 0 <= current_idx < analyzed.total_frames:
+        # 창이 X버튼으로 닫혔으면 루프를 즉시 종료한다.
+        if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+            break
+
         cap.set(cv2.CAP_PROP_POS_FRAMES, current_idx)
         ok, frame = cap.read()
         if not ok:
@@ -717,6 +729,7 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
 
     cap.release()
     cv2.destroyWindow(window_name)
+    cv2.waitKey(1)  # WSL2/Linux에서 destroy 이벤트를 즉시 flush한다.
 
 
 class VideoCheckApp:
@@ -851,6 +864,7 @@ class VideoCheckApp:
                 playback(runtime, analyzed)
             finally:
                 self.root.deiconify()
+                self.root.update()
                 self.root.lift()
                 self.root.focus_force()
                 self.status_var.set("Playback finished")

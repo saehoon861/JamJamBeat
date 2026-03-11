@@ -3,9 +3,15 @@
 ## 0. 환경 준비
 
 ```bash
-cd /home/user/projects/JamJamBeat
-source model/.venv/bin/activate
+cd /home/user/projects/JamJamBeat/model
 ```
+
+최초 1회: 의존성 설치
+```bash
+uv sync
+```
+
+> 이후 모든 명령은 `/home/user/projects/JamJamBeat/model` 기준으로 실행한다.
 
 ---
 
@@ -17,23 +23,23 @@ source model/.venv/bin/activate
 ### 단일 파일 전처리
 
 ```bash
-python model/data_fusion/hand_preprocess.py \
-    data/landmark_data/man1_right.csv \
-    model/data_fusion/man1_right_for_poc_output.csv
+uv run python data_fusion/hand_preprocess.py \
+    ../data/landmark_data/man1_right.csv \
+    data_fusion/man1_right_for_poc_output.csv
 ```
 
 출력 파일명 자동 지정 (input 이름 + `_preprocessed.csv`):
 ```bash
-python model/data_fusion/hand_preprocess.py data/landmark_data/man1_right.csv
+uv run python data_fusion/hand_preprocess.py ../data/landmark_data/man1_right.csv
 ```
 
 ### 4개 파일 일괄 전처리
 
 ```bash
 for name in man1 man2 man3 woman1; do
-  python model/data_fusion/hand_preprocess.py \
-    data/landmark_data/${name}_right_for_poc.csv \
-    model/data_fusion/${name}_right_for_poc_output.csv
+  uv run python data_fusion/hand_preprocess.py \
+    ../data/landmark_data/${name}_right_for_poc.csv \
+    data_fusion/${name}_right_for_poc_output.csv
 done
 ```
 
@@ -52,14 +58,14 @@ flex_*, abd_*   손가락 굽힘/벌어짐 각도  (9개)
 ## 2. 모델 학습 (전체 순차 실행, 권장)
 
 ```bash
-python model/model_pipelines/run_all.py
+uv run python model_pipelines/run_all.py
 ```
 
 13개 모델을 순서대로 학습 → 평가 → 저장한다.
 완료 후 비교 결과가 아래 경로에 저장된다:
 
 ```
-model/model_evaluation/pipelines/comparison_results.csv
+model_evaluation/pipelines/comparison_results.csv
 ```
 
 ---
@@ -67,7 +73,7 @@ model/model_evaluation/pipelines/comparison_results.csv
 ## 3. 특정 모델만 실행
 
 ```bash
-python model/model_pipelines/run_pipeline.py --model-id mlp_baseline
+uv run python model_pipelines/run_pipeline.py --model-id mlp_baseline
 ```
 
 **선택 가능한 model-id:**
@@ -84,7 +90,7 @@ efficientnet_b0
 ## 4. 여러 모델만 골라서 실행
 
 ```bash
-python model/model_pipelines/run_all.py \
+uv run python model_pipelines/run_all.py \
     --models mlp_baseline mlp_baseline_full two_stream_mlp
 ```
 
@@ -103,7 +109,7 @@ python model/model_pipelines/run_all.py \
 
 ```bash
 # 예: 에폭 50, 배치 64로 실행
-python model/model_pipelines/run_all.py --epochs 50 --batch-size 64
+uv run python model_pipelines/run_all.py --epochs 50 --batch-size 64
 ```
 
 ---
@@ -111,7 +117,7 @@ python model/model_pipelines/run_all.py --epochs 50 --batch-size 64
 ## 6. 실행 결과 위치
 
 ```
-model/model_evaluation/pipelines/
+model_evaluation/pipelines/
 └── {model_id}/
     ├── latest.json              ← 최신 실험 경로 포인터
     └── {yyyymmdd_HHMMSS}/
@@ -132,10 +138,10 @@ model/model_evaluation/pipelines/
 
 ```bash
 # 전체 모델 비교표
-cat model/model_evaluation/pipelines/comparison_results.csv
+cat model_evaluation/pipelines/comparison_results.csv
 
 # 특정 모델 메트릭
-cat model/model_evaluation/pipelines/mlp_baseline/latest.json
+cat model_evaluation/pipelines/mlp_baseline/latest.json
 # → latest_run 경로 확인 후
 cat {latest_run경로}/run_summary.json
 ```
@@ -151,19 +157,17 @@ cat {latest_run경로}/run_summary.json
 ### UI 모드 (드롭다운으로 run/영상 선택)
 
 ```bash
-cd /home/user/projects/JamJamBeat
-source model/.venv/bin/activate
-python model/model_evaluation/모델별영상체크/video_check_app.py
+uv run python "model_evaluation/모델별영상체크/video_check_app.py"
 ```
 
-실행하면 학습된 run과 `data/raw_data/` 영상을 자동으로 탐색해 드롭다운으로 선택할 수 있다.
+실행하면 학습된 run과 `../data/raw_data/` 영상을 자동으로 탐색해 드롭다운으로 선택할 수 있다.
 
 ### 직접 지정 모드
 
 ```bash
-python model/model_evaluation/모델별영상체크/video_check_app.py \
-  --run-dir model/model_evaluation/pipelines/mlp_baseline/20260310_082223 \
-  --video data/raw_data/4_slow_right_man3.mp4
+uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260310_082223 \
+  --video ../data/raw_data/4_slow_right_man3.mp4
 ```
 
 ### 재생 컨트롤

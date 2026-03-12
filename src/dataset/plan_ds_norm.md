@@ -14,8 +14,9 @@
   2. 그 외 동작 비디오(`1_fast_...`, `2_slow_...` 등) 내부의 Class 0 프레임은 무작위 추출(샘플링) 계산 대상이 됩니다.
   3. **전이 구간 마진(Transition Margin) 방어**: 영상 모델의 오분류를 막기 위해, 제스처가 0에서 1로 변하거나 그 반대인 변화 지점 근방에 위치한 Class 0 프레임은 무조건 샘플링에서 탈락 및 배제됩니다. 이 마진 값은 `config.py`의 `MARGIN_FRAMES` 변수로 중앙 제어됩니다.
   4. **수치 비례 목표량 명확화**: 지정된 `downsample_ratio` (`"origin"`, `"4:1"`, `"1:1"` 세 가지 방식 중 택일) 옵션에 따라 0번 클래스의 데이터 개수가 축소 조정됩니다. 
-     - 0번을 제외한 1~6번 나머지 클래스 상호간의 비율 차이나 갯수 차이는 전혀 신경 쓰지 않으며, 이들에 대해서는 **절대 어떠한 다운샘플링이나 조작도 진행하지 않고 원본 그대로 둡니다.** 오직 이들의 전체 평균 개수를 기준으로 삼아 0번 클래스의 목표 수치만 결정합니다.
-     - 목표 수치 예시: `downsample_ratio`가 `"4:1"`일 경우, `(0번 클래스) : (나머지 1~6번 클래스의 평균 개수)` 가 대략 `4:1` 이 되도록 0번 클래스만 무작위 추출합니다. (출력 로그에 나머지 1~6번 클래스들의 갯수 차이 명시만 철저히 수행)
+     - 0번을 제외한 1~6번 나머지 클래스 상호간의 비율 차이나 갯수 차이는 전혀 신경 쓰지 않으며, 이들에 대해서는 **절대 어떠한 다운샘플링이나 조작도 진행하지 않고 원본 그대로 둡니다.** 
+     - 목표 수치 예시 (`4:1`): `(0번 클래스) : (나머지 1~6번 클래스의 평균 개수)` 가 대략 `4:1` 이 되도록 0번 클래스만 무작위 추출합니다.
+     - 목표 수치 예시 (`1:1`): 일반적인 관측 결과 나머지 클래스들의 평균 프레임 수와, `0_neutral` 및 `0_hardneg` 절대 보존 프레임 수의 비율이 대략 `3:1` 이기 때문에, 1:1 매칭 시에는 `0_` 보존 체인 내부에서도 추가적으로 동일 비율만큼 무작위 샘플링 하락을 허용하는 특별 로직을 구현에 포함시킵니다.
 
 * **정규화(Normalization)** 로직 상세 규칙:
   1. **위치 정규화(Position Normalization)**: `config.py`에 정의된 `origin` 랜드마크(예: `"wrist"`)를 원점 `(0,0,0)`으로 이동(`Translation`) 시킵니다.
@@ -116,20 +117,27 @@ LANDMARK_IDX = {
     "pinky_mcp": 17, "pinky_pip": 18, "pinky_dip": 19, "pinky_tip": 20,
 }
 
-# --- 시나리오 설정 예시 (SCENARIOS Key 값 = 최종 저장될 CSV 파일 명) ---
+# --- 시나리오 설정 (총 12개 조합: 비율 3 x 위치 정규화 2 x 스케일 정규화 2) ---
 SCENARIOS = {
-    "baseline": {
-        "downsample_ratio": "origin",  # ["origin", "4:1", "1:1"] 중 택일
-        "origin": "wrist",             # LANDMARK_IDX에서 번호 0 참조 변환
-        "scale": "middle_mcp",         # LANDMARK_IDX에서 번호 9 참조 변환
-        "augment": False,
-    },
-    "downsample_4": {
-        "downsample_ratio": "4:1",
-        "origin": "wrist",
-        "scale": "middle_mcp",
-        "augment": False,
-    }
+    # 1. 아무것도 안 함 (X / X)
+    "baseline": { "downsample_ratio": "origin", "origin": None, "scale": None, "augment": False },
+    "ds_4_none": { "downsample_ratio": "4:1", "origin": None, "scale": None, "augment": False },
+    "ds_1_none": { "downsample_ratio": "1:1", "origin": None, "scale": None, "augment": False },
+    
+    # 2. 위치만 (O / X)
+    "pos_only": { "downsample_ratio": "origin", "origin": "wrist", "scale": None, "augment": False },
+    "ds_4_pos": { "downsample_ratio": "4:1", "origin": "wrist", "scale": None, "augment": False },
+    "ds_1_pos": { "downsample_ratio": "1:1", "origin": "wrist", "scale": None, "augment": False },
+    
+    # 3. 스케일만 (X / O)
+    "scale_only": { "downsample_ratio": "origin", "origin": None, "scale": ["wrist", "middle_mcp"], "augment": False },
+    "ds_4_scale": { "downsample_ratio": "4:1", "origin": None, "scale": ["wrist", "middle_mcp"], "augment": False },
+    "ds_1_scale": { "downsample_ratio": "1:1", "origin": None, "scale": ["wrist", "middle_mcp"], "augment": False },
+    
+    # 4. 위치 + 스케일 (O / O)
+    "pos_scale": { "downsample_ratio": "origin", "origin": "wrist", "scale": ["wrist", "middle_mcp"], "augment": False },
+    "ds_4_pos_scale": { "downsample_ratio": "4:1", "origin": "wrist", "scale": ["wrist", "middle_mcp"], "augment": False },
+    "ds_1_pos_scale": { "downsample_ratio": "1:1", "origin": "wrist", "scale": ["wrist", "middle_mcp"], "augment": False },
 }
 ```
 

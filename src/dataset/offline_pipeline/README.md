@@ -27,6 +27,30 @@
 | **ds_4_pos_scale** | 4:1 | O | O | 4:1 샘플링 + 전체 정규화 적용 풀-패키지 |
 | **ds_1_pos_scale** | 1:1 | O | O | 1:1 샘플링 + 전체 정규화 적용 풀-패키지 |
 
+### W&B Artifact로 시나리오 데이터셋 불러오기
+
+학습 코드에서 아래 패턴을 사용하면 **"이 실험이 어떤 데이터셋을 썼는지"** 가 W&B에 자동으로 연결됩니다.
+`use_artifact()` 호출이 없으면 데이터-모델 간 lineage가 기록되지 않으니 반드시 포함해 주세요.
+
+```python
+import wandb
+import pandas as pd
+
+# ✅ wandb.init()은 학습 전체를 감싸야 lineage가 기록됩니다
+with wandb.init(project="JamJamBeat", job_type="train") as run:
+
+    # 1. 사용할 시나리오 이름을 아래에서 골라 교체하세요
+    #    (예: "baseline", "ds_1_pos_scale", "pos_only" ...)
+    artifact = run.use_artifact("ds_1_pos_scale:latest")
+    data_dir = artifact.download()
+
+    # 2. 이후 기존 방식 그대로 데이터 로드
+    df = pd.read_csv(f"{data_dir}/ds_1_pos_scale.csv")
+
+    # 3. 학습 코드 ...
+```
+
+> 시나리오 이름 목록은 위 테이블의 **파일명** 열을 참고하세요.
 ---
 
 ## ⚙️ 주요 파이프라인 전처리 로직

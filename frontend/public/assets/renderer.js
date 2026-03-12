@@ -1,12 +1,10 @@
-// [renderer.js] 화면에 예쁜 손과 반짝이는 효과를 그리는 '화가' 역할의 파일입니다.
-// 손이 너무 떨리지 않게 부드럽게 보정해주고, 젤리처럼 말랑말랑한 디자인을 입혀줍니다.
+// [public/assets/renderer.js] 외부에서도 우리 프로젝트의 손 모양을 똑같이 그릴 수 있게 해주는 '그림 도구' 파일입니다.
 // 캔버스 렌더링 및 시각 효과를 담당하는 모듈입니다.
 // "어두운색의 살집 있는 말랑말랑한 손" 디자인이 포함되어 있습니다.
 
 let smoothedHandLandmarks = null;
 
 // 손의 떨림을 줄이기 위해 이전 좌표와 현재 좌표를 보간(Interpolation)하는 함수
-// 손이 떨리는 것을 방지하기 위해, 이전 위치와 현재 위치를 자연스럽게 이어주는 '부드러운 보정' 기능입니다.
 export function getSmoothedLandmarks(rawLandmarks) {
     if (!smoothedHandLandmarks || smoothedHandLandmarks.length !== rawLandmarks.length) {
         smoothedHandLandmarks = rawLandmarks.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
@@ -27,10 +25,9 @@ export function getSmoothedLandmarks(rawLandmarks) {
 }
 
 // "어두운색의 살집 있는 손"을 그리는 핵심 함수
-// 화면에 실제로 손 모양을 그리는 핵심 기능입니다. 색깔이나 그림자 등을 여기서 입힙니다.
 export function drawHand(ctx, landmarks, canvas, t) {
     ctx.save();
-    ctx.globalAlpha = 0.92;
+    ctx.globalAlpha = 0.78;
     const stable = getSmoothedLandmarks(landmarks);
     const toCanvasX = (x) => (1 - x) * canvas.width; // 좌우 반전 처리
     const toCanvasY = (y) => y * canvas.height;
@@ -66,13 +63,10 @@ export function drawHand(ctx, landmarks, canvas, t) {
         const g = ctx.createRadialGradient(x - r * 0.34, y - r * 0.36, r * 0.22, x, y, r);
         g.addColorStop(0, core);
         g.addColorStop(1, edge);
-        ctx.shadowColor = "rgba(255, 186, 218, 0.5)";
-        ctx.shadowBlur = r * 0.7;
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowBlur = 0;
     };
 
     // 손가락 마디(캡슐 형태) 그리기
@@ -88,7 +82,7 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
         // 아래쪽 그림자 효과
         ctx.strokeStyle = shadowColor;
-        ctx.lineWidth = radius * 1.32;
+        ctx.lineWidth = radius * 1.15;
         ctx.beginPath();
         ctx.moveTo(a.x + 2, a.y + 3);
         ctx.lineTo(b.x + 2, b.y + 3);
@@ -96,22 +90,22 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
         // 메인 살집 색상 (어두운 회색/차콜)
         ctx.strokeStyle = color;
-        ctx.lineWidth = radius * 1.08;
+        ctx.lineWidth = radius;
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
         ctx.stroke();
 
         // 위쪽 하이라이트 (Glossy 효과)
-        ctx.strokeStyle = "rgba(255,255,255,0.3)";
-        ctx.lineWidth = radius * 0.42;
+        ctx.strokeStyle = "rgba(255,255,255,0.12)";
+        ctx.lineWidth = radius * 0.35;
         ctx.beginPath();
         ctx.moveTo(a.x - nx * radius * 0.2, a.y - ny * radius * 0.2);
         ctx.lineTo(b.x - nx * radius * 0.2, b.y - ny * radius * 0.2);
         ctx.stroke();
     };
 
-    // 1. 손바닥 그리기 (심장 박동처럼 미세하게 커졌다가 작아졌다가 하는 효과를 줍니다)
+    // 1. 손바닥 그리기
     const pulse = 1 + Math.sin(t * 5) * 0.015;
     ctx.save();
     ctx.translate(cx, cy);
@@ -120,8 +114,8 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
     // 손바닥 그림자
     const palmShadow = ctx.createRadialGradient(cx + 10, cy + 12, 10, cx + 10, cy + 12, 100);
-    palmShadow.addColorStop(0, "rgba(35, 45, 48, 0.28)");
-    palmShadow.addColorStop(1, "rgba(35, 45, 48, 0)");
+    palmShadow.addColorStop(0, "rgba(20, 20, 25, 0.35)");
+    palmShadow.addColorStop(1, "rgba(20, 20, 25, 0)");
     ctx.fillStyle = palmShadow;
     ctx.beginPath();
     drawPalmPath();
@@ -129,17 +123,17 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
     // 손바닥 본체 (어두운 차콜 그레이 입체 그라데이션)
     const palmGrad = ctx.createRadialGradient(cx - 20, cy - 20, 15, cx, cy + 15, 110);
-    palmGrad.addColorStop(0, "#ffe9f4");
-    palmGrad.addColorStop(0.45, "#ffd4e8");
-    palmGrad.addColorStop(1, "#f3a8ca");
+    palmGrad.addColorStop(0, "#4a4a50");   // 밝은 회색 하이라이트
+    palmGrad.addColorStop(0.5, "#2c2c32"); // 메인 차콜 색상
+    palmGrad.addColorStop(1, "#1a1a1f");   // 어두운 테두리
     ctx.fillStyle = palmGrad;
     ctx.beginPath();
     drawPalmPath();
     ctx.fill();
 
     // 손바닥 상단 하이라이트 Rim
-    ctx.strokeStyle = "rgba(255,255,255,0.62)";
-    ctx.lineWidth = 5.4;
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.arc(cx - 15, cy - 18, 30, Math.PI * 1.0, Math.PI * 1.9);
     ctx.stroke();
@@ -147,11 +141,11 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
     // 2. 손가락 그리기
     const fingers = [
-        { joints: [1, 2, 3, 4], color: "#ffd8ee", shadow: "#d988b5", size: 19.5 },
-        { joints: [5, 6, 7, 8], color: "#ffd0ea", shadow: "#d581ae", size: 19 },
-        { joints: [9, 10, 11, 12], color: "#ffcee8", shadow: "#cf78a7", size: 20.2 },
-        { joints: [13, 14, 15, 16], color: "#ffc8e5", shadow: "#c96f9f", size: 18.8 },
-        { joints: [17, 18, 19, 20], color: "#ffc2df", shadow: "#bf6596", size: 18 }
+        { joints: [1, 2, 3, 4], color: "#3a3a40", shadow: "#15151a", size: 16 },   // 엄지 (통통하게)
+        { joints: [5, 6, 7, 8], color: "#35353b", shadow: "#121217", size: 15.5 }, // 검지
+        { joints: [9, 10, 11, 12], color: "#3a3a40", shadow: "#15151a", size: 17 }, // 중지
+        { joints: [13, 14, 15, 16], color: "#35353b", shadow: "#121217", size: 15.5 }, // 약지
+        { joints: [17, 18, 19, 20], color: "#323238", shadow: "#101015", size: 14.5 }  // 새끼
     ];
 
     fingers.forEach((finger, fIdx) => {
@@ -163,32 +157,32 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
         // 마디 연결 그리기 (끝으로 갈수록 얇아지는 Tapering 적용)
         for (let i = 1; i < pts.length; i++) {
-            const r = Math.max(9.5, finger.size - i * 2.1);
+            const r = Math.max(8, finger.size - i * 2.2);
             drawCapsule(pts[i - 1], pts[i], r, finger.color, finger.shadow);
         }
 
-        // 관절 노드 그리기 (젤리 같은 느낌이 나도록 동그랗게 그립니다)
+        // 관절 노드 그리기 (젤리 같은 느낌)
         pts.forEach((p, i) => {
-            const r = Math.max(9.4, finger.size - i * 2.05);
-            drawJoint(p.x, p.y, r, "rgba(255, 245, 252, 0.76)", finger.color);
+            const r = Math.max(8, finger.size - i * 2.1);
+            drawJoint(p.x, p.y, r, "rgba(100,100,110,0.4)", finger.color);
         });
     });
 
     // 3. 손가락 끝 포인트 효과 (어두운 테마에 어울리는 은은한 빛)
-    const tipColors = ["#ffc5e7", "#ffbbe1", "#ffc0e4", "#ffb2db", "#ffa9d6"];
+    const tipColors = ["#6e6e78", "#5a5a64", "#787882", "#5a5a64", "#50505a"];
     [4, 8, 12, 16, 20].forEach((idx, i) => {
         const p = point(idx);
-        const r = 13 + Math.sin(t * 8 + i) * 1.6;
-        drawJoint(p.x, p.y, r, "rgba(255,255,255,0.88)", tipColors[i]);
+        const r = 11 + Math.sin(t * 8 + i) * 1.5;
+        drawJoint(p.x, p.y, r, "rgba(255,255,255,0.25)", tipColors[i]);
         // 상단 반짝임
-        drawJoint(p.x - r * 0.3, p.y - r * 0.3, r * 0.42, "rgba(255,255,255,0.74)", "rgba(255,255,255,0)");
+        drawJoint(p.x - r * 0.3, p.y - r * 0.3, r * 0.35, "rgba(255,255,255,0.3)", "rgba(255,255,255,0)");
     });
 
     ctx.shadowBlur = 0;
     ctx.restore();
 }
 
-// 떠다니는 음표 효과 생성 (audio.js와 함께 사용)
+// 떠다니는 음표 효과 생성 (audio.js와 함께 사용)/
 export function createFloatingNote(container) {
     if (!container) return;
     const notes = ["♪", "♫", "♬", "🎵", "🎶"];

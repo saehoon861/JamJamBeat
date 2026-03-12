@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JamJam Beat - 관리자 모드</title>
+  <link rel="icon" href="/public/assets/objects/squirrel-effect.png" type="image/png" />
   <link rel="stylesheet" href="./src/styles/main.css?v=5" />
 </head>
 
@@ -13,56 +14,70 @@
     <section class="layer layer-background" aria-hidden="true">
       <div class="bg-video-wrap" aria-hidden="true">
         <video class="bg-video bg-video-a" muted playsinline preload="auto" autoplay loop>
-          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
           <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
         </video>
         <video class="bg-video bg-video-b" muted playsinline preload="auto" autoplay loop>
-          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
           <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
         </video>
       </div>
     </section>
 
     <section class="admin-shell">
-      <h1>관리자 모드 - 오브젝트 위치 조정</h1>
-      <p>슬라이더로 위치를 조정하고 저장하면 시작 화면에 바로 반영됩니다.</p>
+      <h1>관리자 모드 - 오브젝트별 소리 매칭</h1>
+      <p>각 오브젝트에 원하는 소리를 선택하거나 MP3 파일을 업로드하세요.</p>
 
       <div class="admin-row">
-        <div class="admin-panel admin-preview">
-          <div id="adminStage" class="admin-stage">
-            <div id="admin-drum" class="admin-inst" aria-label="고슴도치 드럼">
-              <img src="/public/assets/objects/hedgehog-drum.png" alt="" />
+        <div class="admin-panel admin-controls sound-only">
+
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/public/assets/objects/hedgehog-drum.png" alt="고슴도치 드럼" class="object-thumbnail" />
+              <label>고슴도치 드럼 소리</label>
             </div>
-            <div id="admin-xylophone" class="admin-inst" aria-label="노래하는 백합">
-              <img src="/public/assets/objects/lily-melody.png" alt="" />
-            </div>
-            <div id="admin-tambourine" class="admin-inst" aria-label="행운 클로버">
-              <img src="/public/assets/objects/clover-chime.png" alt="" />
-            </div>
+            <select id="sound-drum"></select>
+            <input type="file" id="upload-drum" accept="audio/mp3,audio/mpeg" />
+            <button id="test-drum" class="test-sound-btn" type="button">🔊 테스트</button>
           </div>
-        </div>
 
-        <div class="admin-panel admin-controls">
-          <label>고슴도치 드럼 X (vw)
-            <input id="drum-x" type="range" min="0" max="90" step="1" />
-          </label>
-          <label>고슴도치 드럼 Y (vh)
-            <input id="drum-y" type="range" min="0" max="80" step="1" />
-          </label>
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/public/assets/objects/lily-melody.png" alt="노래하는 백합" class="object-thumbnail" />
+              <label>노래하는 백합 소리</label>
+            </div>
+            <select id="sound-xylophone"></select>
+            <input type="file" id="upload-xylophone" accept="audio/mp3,audio/mpeg" />
+            <button id="test-xylophone" class="test-sound-btn" type="button">🔊 테스트</button>
+          </div>
 
-          <label>노래하는 백합 X (vw)
-            <input id="xylophone-x" type="range" min="0" max="90" step="1" />
-          </label>
-          <label>노래하는 백합 Y (vh)
-            <input id="xylophone-y" type="range" min="0" max="80" step="1" />
-          </label>
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/public/assets/objects/clover-chime.png" alt="행운 클로버" class="object-thumbnail" />
+              <label>행운 클로버 소리</label>
+            </div>
+            <select id="sound-tambourine"></select>
+            <input type="file" id="upload-tambourine" accept="audio/mp3,audio/mpeg" />
+            <button id="test-tambourine" class="test-sound-btn" type="button">🔊 테스트</button>
+          </div>
 
-          <label>행운 클로버 X (vw)
-            <input id="tambourine-x" type="range" min="0" max="90" step="1" />
-          </label>
-          <label>행운 클로버 Y (vh)
-            <input id="tambourine-y" type="range" min="0" max="80" step="1" />
-          </label>
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/public/assets/objects/magic-fern.png" alt="마법 고사리" class="object-thumbnail" />
+              <label>마법 고사리 소리</label>
+            </div>
+            <select id="sound-fern"></select>
+            <input type="file" id="upload-fern" accept="audio/mp3,audio/mpeg" />
+            <button id="test-fern" class="test-sound-btn" type="button">🔊 테스트</button>
+          </div>
+
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/public/assets/objects/squirrel-effect.png" alt="다람쥐" class="object-thumbnail" />
+              <label>다람쥐 소리</label>
+            </div>
+            <select id="sound-owl"></select>
+            <input type="file" id="upload-owl" accept="audio/mp3,audio/mpeg" />
+            <button id="test-owl" class="test-sound-btn" type="button">🔊 테스트</button>
+          </div>
 
           <div class="admin-actions">
             <button id="saveLayout" class="admin-save" type="button">저장</button>

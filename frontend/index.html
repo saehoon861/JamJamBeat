@@ -5,8 +5,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JamJam Beat - Layered Forest</title>
+  <link rel="icon" href="/public/assets/objects/squirrel-effect.png" type="image/png" />
   <link rel="stylesheet" href="./src/styles/main.css?v=3" />
-  <link rel="preload" href="./public/hand_landmarker.task" as="fetch" />
 </head>
 
 <body>
@@ -19,17 +19,16 @@
         <p class="landing-privacy">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
         <button id="landingStartButton" type="button">숲 깨우기 시작</button>
         <a class="landing-admin-link" href="./index.html?admin=1">관리자 모드 (직접 배치)</a>
+        <a class="landing-admin-link" href="./admin.html">🎵 소리 매칭 페이지</a>
       </div>
     </section>
 
     <section class="layer layer-background" aria-hidden="true">
       <div class="bg-video-wrap" aria-hidden="true">
         <video class="bg-video bg-video-a" muted playsinline preload="auto" autoplay loop>
-          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
           <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
         </video>
         <video class="bg-video bg-video-b" muted playsinline preload="auto" autoplay loop>
-          <source src="/public/assets/forest_cinemagraph.webm" type="video/webm" />
           <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
         </video>
       </div>
@@ -65,7 +64,6 @@
           loading="lazy"
           decoding="async"
         />
-        <span class="instrument-label">고슴도치 드럼</span>
       </button>
 
       <button id="instrumentXylophone" class="instrument instrument-xylophone" type="button" aria-label="노래하는 백합">
@@ -76,7 +74,6 @@
           loading="lazy"
           decoding="async"
         />
-        <span class="instrument-label">노래하는 백합</span>
       </button>
 
       <button id="instrumentTambourine" class="instrument instrument-tambourine" type="button" aria-label="행운 클로버">
@@ -87,7 +84,6 @@
           loading="lazy"
           decoding="async"
         />
-        <span class="instrument-label">행운 클로버</span>
       </button>
 
       <button id="instrumentFern" class="instrument instrument-fern" type="button" aria-label="마법 고사리">
@@ -98,18 +94,16 @@
           loading="lazy"
           decoding="async"
         />
-        <span class="instrument-label">마법 고사리</span>
       </button>
 
-      <button id="instrumentOwl" class="instrument instrument-owl" type="button" aria-label="아기 사슴">
+      <button id="instrumentOwl" class="instrument instrument-owl" type="button" aria-label="다람쥐">
         <img
           class="instrument-art"
-          src="/public/assets/objects/baby-deer.png"
+          src="/public/assets/objects/squirrel-effect.png"
           alt=""
           loading="lazy"
           decoding="async"
         />
-        <span class="instrument-label">아기 사슴</span>
       </button>
     </section>
 
@@ -127,6 +121,7 @@
       <p id="status" class="status">카메라 준비 중...</p>
       <button id="soundUnlockButton" class="sound-unlock" type="button">소리 켜기</button>
       <a class="hud-main-link" href="./index.html">메인화면으로</a>
+      <a class="hud-main-link" href="./admin.html">🎵 소리 매칭 페이지</a>
       <p class="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
     </section>
 
@@ -145,6 +140,9 @@
     <div id="handCursor" class="hand-cursor" aria-hidden="true"></div>
   </main>
 
+  <script>
+    window.__JAMJAM_MODEL_ENDPOINT = window.__JAMJAM_MODEL_ENDPOINT || "http://127.0.0.1:8008/infer";
+  </script>
   <script type="module" src="./src/js/main.js?v=3"></script>
 </body>
 

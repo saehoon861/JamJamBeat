@@ -1,3 +1,6 @@
+// [theme.js] 우리 숲으로 들어가는 '입구' 역할을 하는 파일입니다.
+// 여기서 어떤 모드로 플레이할지 고를 수 있습니다. 마우스 클릭 대신 손을 올려서 선택합니다.
+
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
 import * as Renderer from "./renderer.js";
 
@@ -12,18 +15,45 @@ const cards = Array.from(document.querySelectorAll(".theme-mode-card"));
 const HOVER_MS = 520;
 const HOVER_PADDING = 28;
 const BG_VIDEO_CROSSFADE_SEC = 0.42;
+const DEFAULT_INFER_FPS = 15;
+const MIN_INFER_FPS = 8;
+const MAX_INFER_FPS = 60;
+const LANDMARK_STALE_MS = 300;
 
 let handLandmarker;
 let lastVideoTime = -1;
 let hoverTarget = null;
 let hoverStartedAt = 0;
 let cameraStream = null;
+let lastInferenceAt = 0;
+let cachedLandmarks = null;
+let cachedLandmarksAt = 0;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseInferFps() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = Number(params.get("inferFps"));
+  if (!Number.isFinite(raw)) return DEFAULT_INFER_FPS;
+  return clamp(Math.round(raw), MIN_INFER_FPS, MAX_INFER_FPS);
+}
+
+const INFER_INTERVAL_MS = Math.round(1000 / parseInferFps());
+
+function parsePreferredDelegate() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = (params.get("mpDelegate") || "gpu").trim().toUpperCase();
+  return raw === "CPU" ? "CPU" : "GPU";
+}
 
 function setCanvasSize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
 
+// 배경 동영상이 끊기지 않고 자연스럽게 계속 반복되도록 해주는 기능입니다.
 function setupSeamlessBackgroundLoop() {
   const videoA = document.querySelector(".bg-video-a");
   const videoB = document.querySelector(".bg-video-b");
@@ -99,9 +129,12 @@ function setupSeamlessBackgroundLoop() {
 
 function clearHoverStyles() {
   if (backButton) backButton.classList.remove("is-hovered");
-  cards.forEach((card) => card.classList.remove("is-hovered"));
+  cards.forEach((card) => {
+    card.classList.remove("is-hovered");
+  });
 }
 
+// 내 손 커서가 어떤 카드(버튼) 안에 들어가 있는지 확인하는 기능입니다.
 function isCursorInside(element, x, y) {
   const rect = element.getBoundingClientRect();
   return (
@@ -127,6 +160,7 @@ function activateTarget(target) {
   window.location.href = nav;
 }
 
+// 손 커서가 특정 카드 위에 올라가 있는지 확인하고, 일정 시간 유지되면 선택하는 기능입니다.
 function updateHover(x, y, now) {
   const target = findHoverTarget(x, y);
   if (target !== hoverTarget) {
@@ -160,27 +194,45 @@ function predict() {
     return;
   }
 
-  if (video.currentTime !== lastVideoTime && video.readyState >= 2 && video.videoWidth > 0) {
+  const now = performance.now();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cacheFresh = cachedLandmarks && now - cachedLandmarksAt <= LANDMARK_STALE_MS;
+  if (cacheFresh) {
+    Renderer.drawHand(ctx, cachedLandmarks, canvas, now * 0.001);
+
+    const x = (1 - cachedLandmarks[8].x) * canvas.width;
+    const y = cachedLandmarks[8].y * canvas.height;
+
+    handCursor.style.opacity = "1";
+    handCursor.style.left = `${x}px`;
+    handCursor.style.top = `${y}px`;
+  } else if (cachedLandmarks) {
+    cachedLandmarks = null;
+    handCursor.style.opacity = "0";
+  }
+
+  const hasFreshFrame = video.currentTime !== lastVideoTime && video.readyState >= 2 && video.videoWidth > 0;
+  const inferenceDue = now - lastInferenceAt >= INFER_INTERVAL_MS;
+
+  if (hasFreshFrame && inferenceDue) {
     lastVideoTime = video.currentTime;
-    const now = performance.now();
+    lastInferenceAt = now;
 
     try {
       const result = handLandmarker.detectForVideo(video, now);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (result.landmarks.length > 0) {
         const landmarks = result.landmarks[0];
-        Renderer.drawHand(ctx, landmarks, canvas, now * 0.001);
+        cachedLandmarks = landmarks;
+        cachedLandmarksAt = now;
 
         const x = (1 - landmarks[8].x) * canvas.width;
         const y = landmarks[8].y * canvas.height;
-
-        handCursor.style.opacity = "1";
-        handCursor.style.left = `${x}px`;
-        handCursor.style.top = `${y}px`;
-
         updateHover(x, y, now);
       } else {
+        cachedLandmarks = null;
+        cachedLandmarksAt = 0;
         handCursor.style.opacity = "0";
         clearHoverStyles();
         hoverTarget = null;
@@ -198,22 +250,24 @@ function predict() {
 async function initMediaPipe() {
   const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
   const modelAssetPath = new URL("../../public/hand_landmarker.task", import.meta.url).toString();
+  const preferredDelegate = parsePreferredDelegate();
+  const fallbackDelegate = preferredDelegate === "GPU" ? "CPU" : "GPU";
 
   try {
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath,
-        delegate: "GPU"
+        delegate: preferredDelegate
       },
       runningMode: "VIDEO",
       numHands: 1
     });
-  } catch (gpuError) {
-    console.warn("GPU delegate failed, fallback to CPU.", gpuError);
+  } catch (delegateError) {
+    console.warn(`${preferredDelegate} delegate failed, fallback to ${fallbackDelegate}.`, delegateError);
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath,
-        delegate: "CPU"
+        delegate: fallbackDelegate
       },
       runningMode: "VIDEO",
       numHands: 1
@@ -275,7 +329,9 @@ async function init() {
   window.addEventListener("resize", setCanvasSize);
   window.addEventListener("beforeunload", () => {
     if (!cameraStream) return;
-    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream.getTracks().forEach((track) => {
+      track.stop();
+    });
   });
 
   bindClickFallback();

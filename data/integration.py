@@ -10,7 +10,7 @@ if OUTPUT_FILE.name == "sample.csv":
 
 def main():
     csv_files = sorted(TOTAL_DATA_DIR.glob("*.csv"))
-    
+
     # .gitkeep 등 비CSV 파일 방어
     csv_files = [f for f in csv_files if f.suffix == ".csv"]
 

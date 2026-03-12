@@ -41,10 +41,10 @@ ALL_MODELS = [
 PIPELINE_SCRIPT = PROJECT_ROOT / "model" / "model_pipelines" / "run_pipeline.py"
 
 DEFAULT_INPUTS = [
-    "model/data_fusion/man1_right_for_poc_output.csv",
-    "model/data_fusion/man2_right_for_poc_output.csv",
-    "model/data_fusion/man3_right_for_poc_output.csv",
-    "model/data_fusion/woman1_right_for_poc_output.csv",
+    "model/data_fusion/man1_right_for_poc.csv",
+    "model/data_fusion/man2_right_for_poc.csv",
+    "model/data_fusion/man3_right_for_poc.csv",
+    "model/data_fusion/woman1_right_for_poc.csv",
 ]
 
 

@@ -1,7 +1,7 @@
-# two_stream_mlp/dataset.py - joint(63d) / bone+angle(93d) 두 스트림 Dataset 빌더
+# two_stream_mlp/dataset.py - xy(42d) / z(21d) 두 스트림 Dataset 빌더 (raw CSV 기준)
 from __future__ import annotations
 
-from _shared import TwoStreamDataset, JOINT_COLS, BONE_COLS, SplitData, frame_arrays
+from _shared import TwoStreamDataset, RAW_JOINT_XY_COLS, RAW_JOINT_Z_COLS, SplitData, frame_arrays
 from .model import TwoStreamMLP
 
 
@@ -16,21 +16,19 @@ def build(
     """
     Returns: (model, mode, train_ds, val_ds, test_ds)
     mode = "two_stream"
-    Stream-J: joint(63d), Stream-B: bone+angle(93d)
+    Stream-J: x,y 평면 좌표(42d), Stream-B: z 깊이(21d)
     """
-    # joint와 bone+angle을 분리해 late fusion으로 결합하기 위해 입력도 두 갈래로 나눈다.
-    bone_angle_cols = BONE_COLS + angle_cols
-
-    trj, try_, trm = frame_arrays(split.train_df, JOINT_COLS)
-    trb, _,    _   = frame_arrays(split.train_df, bone_angle_cols)
-    vaj, vay,  vam = frame_arrays(split.val_df,   JOINT_COLS)
-    vab, _,    _   = frame_arrays(split.val_df,   bone_angle_cols)
-    tej, tey,  tem = frame_arrays(split.test_df,  JOINT_COLS)
-    teb, _,    _   = frame_arrays(split.test_df,  bone_angle_cols)
+    # raw CSV 기준: 공간(xy) 스트림과 깊이(z) 스트림으로 분리한다.
+    trj, try_, trm = frame_arrays(split.train_df, RAW_JOINT_XY_COLS)
+    trb, _,    _   = frame_arrays(split.train_df, RAW_JOINT_Z_COLS)
+    vaj, vay,  vam = frame_arrays(split.val_df,   RAW_JOINT_XY_COLS)
+    vab, _,    _   = frame_arrays(split.val_df,   RAW_JOINT_Z_COLS)
+    tej, tey,  tem = frame_arrays(split.test_df,  RAW_JOINT_XY_COLS)
+    teb, _,    _   = frame_arrays(split.test_df,  RAW_JOINT_Z_COLS)
 
     model = TwoStreamMLP(
-        joint_dim=len(JOINT_COLS),
-        bone_dim=len(bone_angle_cols),
+        joint_dim=len(RAW_JOINT_XY_COLS),
+        bone_dim=len(RAW_JOINT_Z_COLS),
         num_classes=num_classes,
     )
 

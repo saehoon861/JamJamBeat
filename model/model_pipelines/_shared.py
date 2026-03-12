@@ -29,6 +29,11 @@ HAND_CONNECTIONS = [
 JOINT_COLS = [f"n{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
 BONE_COLS  = [f"b{axis}{i}" for i in range(21) for axis in ("x", "y", "z", "l")]
 
+# Raw landmark 컬럼 (전처리 없는 원시 CSV 용)
+RAW_JOINT_COLS    = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]   # 63d
+RAW_JOINT_XY_COLS = [f"{axis}{i}" for i in range(21) for axis in ("x", "y")]        # 42d (two_stream stream1)
+RAW_JOINT_Z_COLS  = [f"z{i}" for i in range(21)]                                    # 21d (two_stream stream2)
+
 
 # ──────────────────────────────────────────────────────
 # SplitData
@@ -196,6 +201,7 @@ class LandmarkImageDataset(Dataset):
         y: np.ndarray,
         meta: list[dict[str, Any]],
         image_size: int = 96,
+        raw_coords: bool = False,
     ):
         if Image is None:
             raise ImportError("Pillow(PIL)가 필요합니다: uv pip install pillow")
@@ -203,18 +209,26 @@ class LandmarkImageDataset(Dataset):
         self.y          = y.astype(np.int64)
         self.meta       = meta
         self.image_size = image_size
+        self.raw_coords = raw_coords
 
     @staticmethod
     def _norm_to_px(v: np.ndarray, size: int) -> np.ndarray:
-        # 전처리된 좌표 범위를 화면 좌표계로 안정적으로 투영한다.
+        # 전처리된 정규화 좌표 [-1.2, 1.2] → 픽셀 좌표
         clipped = np.clip(v, -1.2, 1.2)
         return ((clipped + 1.2) / 2.4) * (size - 1)
+
+    @staticmethod
+    def _raw_to_px(v: np.ndarray, size: int) -> np.ndarray:
+        # 원시 MediaPipe 좌표 [0, 1] → 픽셀 좌표
+        clipped = np.clip(v, 0.0, 1.0)
+        return clipped * (size - 1)
 
     def _render(self, joint_vec: np.ndarray) -> np.ndarray:
         # 21개 랜드마크를 연결선 + 점으로 그려 CNN이 읽을 입력 텐서를 만든다.
         pts = joint_vec.reshape(21, 3)
-        x = self._norm_to_px(pts[:, 0], self.image_size)
-        y = (self.image_size - 1) - self._norm_to_px(pts[:, 1], self.image_size)
+        to_px = self._raw_to_px if self.raw_coords else self._norm_to_px
+        x = to_px(pts[:, 0], self.image_size)
+        y = (self.image_size - 1) - to_px(pts[:, 1], self.image_size)
 
         img  = Image.new("L", (self.image_size, self.image_size), color=0)
         draw = ImageDraw.Draw(img)

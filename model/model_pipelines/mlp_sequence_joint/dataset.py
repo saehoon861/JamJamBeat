@@ -1,7 +1,7 @@
 # mlp_sequence_joint/dataset.py - joint(63d) sliding-window sequence dataset builder for a simple sequence MLP
 from __future__ import annotations
 
-from _shared import JOINT_COLS, SequenceDataset, SplitData, sequence_arrays
+from _shared import RAW_JOINT_COLS, SequenceDataset, SplitData, sequence_arrays
 from .model import SequenceJointMLP
 
 
@@ -19,11 +19,11 @@ def build(
     입력: (B, T=seq_len, D=63) sliding window on joint-only features
     """
     # sequence_arrays는 각 윈도우의 마지막 프레임 gesture를 라벨로 사용한다.
-    trX, try_, trm = sequence_arrays(split.train_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
-    vaX, vay, vam = sequence_arrays(split.val_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
-    teX, tey, tem = sequence_arrays(split.test_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    trX, try_, trm = sequence_arrays(split.train_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    vaX, vay, vam = sequence_arrays(split.val_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    teX, tey, tem = sequence_arrays(split.test_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
 
-    model = SequenceJointMLP(seq_len=seq_len, input_dim=len(JOINT_COLS), num_classes=num_classes)
+    model = SequenceJointMLP(seq_len=seq_len, input_dim=len(RAW_JOINT_COLS), num_classes=num_classes)
 
     return (
         model,

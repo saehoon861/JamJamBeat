@@ -55,7 +55,7 @@ if str(MODEL_PIPELINES_DIR) not in sys.path:
     sys.path.insert(0, str(MODEL_PIPELINES_DIR))
 
 from evaluation_runtime import DEFAULT_CLASS_NAMES, EvaluationConfig, evaluate_predictions
-from _shared import JOINT_COLS, BONE_COLS, SplitData, detect_angle_cols
+from _shared import JOINT_COLS, BONE_COLS, RAW_JOINT_COLS, SplitData, detect_angle_cols
 
 
 # -----------------------------------------------------------------------------
@@ -137,20 +137,24 @@ def load_preprocessed_data(csv_paths: list[Path]) -> pd.DataFrame:
     merged = merged.dropna(subset=["gesture"]).copy()
     merged["gesture"] = merged["gesture"].astype(int)
 
-    # v2 파이프라인은 joint / bone / angle feature가 모두 계산된 CSV를 전제로 한다.
-    missing_joint = [c for c in JOINT_COLS if c not in merged.columns]
-    missing_bone = [c for c in BONE_COLS if c not in merged.columns]
-    if missing_joint or missing_bone:
+    # 전처리 CSV (nx*/bx* 컬럼) 또는 raw CSV (x*/y*/z* 컬럼) 둘 다 허용한다.
+    has_preprocessed = all(c in merged.columns for c in JOINT_COLS[:3])
+    has_raw = all(c in merged.columns for c in RAW_JOINT_COLS[:3])
+
+    if not has_preprocessed and not has_raw:
         raise ValueError(
-            "Input must be preprocessed *_output.csv with joint/bone features. "
-            f"Missing joint: {missing_joint[:5]}... bone: {missing_bone[:5]}..."
+            "Input CSV에 유효한 landmark 컬럼이 없습니다. "
+            "전처리 CSV (nx0,ny0...) 또는 raw CSV (x0,y0,z0...) 중 하나여야 합니다."
         )
 
     angle_cols = detect_angle_cols(merged)
-    if len(angle_cols) < 4:
-        raise ValueError("Could not detect angle columns (flex_*/abd_*).")
 
-    merged = merged.dropna(subset=JOINT_COLS + BONE_COLS + angle_cols).reset_index(drop=True)
+    # 실제 존재하는 컬럼만 dropna 대상으로 사용한다.
+    feature_cols = [c for c in (JOINT_COLS + BONE_COLS + angle_cols) if c in merged.columns]
+    if not feature_cols:
+        feature_cols = [c for c in RAW_JOINT_COLS if c in merged.columns]
+
+    merged = merged.dropna(subset=feature_cols).reset_index(drop=True)
     return merged
 
 

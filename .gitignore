@@ -12,10 +12,11 @@ venv/
 env/
 .env
 
-# raw video data
+# raw data
 data/labeled_data/*.csv
 data/raw_data/*.mp4
 data/total_data/*.csv
+data/processed_scenarios/*.csv
 
 # AI Assistants & Tools
 .claude/

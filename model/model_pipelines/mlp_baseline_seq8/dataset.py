@@ -1,7 +1,7 @@
 # mlp_baseline_seq8/dataset.py - joint(63d) sliding-window sequence Dataset 빌더 (window_size=8 고정)
 from __future__ import annotations
 
-from _shared import JOINT_COLS, SequenceDataset, SplitData, sequence_arrays
+from _shared import RAW_JOINT_COLS, SequenceDataset, SplitData, sequence_arrays
 from .model import MLPBaselineSeq
 
 SEQ_LEN = 8  # window size 고정
@@ -23,11 +23,11 @@ def build(
     seq_len 인자는 무시하고 SEQ_LEN=8 고정.
     """
     # 이 실험은 비교 공정성을 위해 window size를 항상 8로 고정한다.
-    trX, try_, trm = sequence_arrays(split.train_df, JOINT_COLS, seq_len=SEQ_LEN, stride=seq_stride)
-    vaX, vay, vam  = sequence_arrays(split.val_df,   JOINT_COLS, seq_len=SEQ_LEN, stride=seq_stride)
-    teX, tey, tem  = sequence_arrays(split.test_df,  JOINT_COLS, seq_len=SEQ_LEN, stride=seq_stride)
+    trX, try_, trm = sequence_arrays(split.train_df, RAW_JOINT_COLS, seq_len=SEQ_LEN, stride=seq_stride)
+    vaX, vay, vam  = sequence_arrays(split.val_df,   RAW_JOINT_COLS, seq_len=SEQ_LEN, stride=seq_stride)
+    teX, tey, tem  = sequence_arrays(split.test_df,  RAW_JOINT_COLS, seq_len=SEQ_LEN, stride=seq_stride)
 
-    model = MLPBaselineSeq(seq_len=SEQ_LEN, input_dim=len(JOINT_COLS), num_classes=num_classes)
+    model = MLPBaselineSeq(seq_len=SEQ_LEN, input_dim=len(RAW_JOINT_COLS), num_classes=num_classes)
 
     return (
         model,

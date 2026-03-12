@@ -51,11 +51,27 @@
 * `data/total_data/` 위치에 `total_data.csv`라는 이름으로 통합 데이터 파일을 준비합니다.
 * 파일명이 다를 경우 `runners/run_preprocess.py`의 18라인 인근에서 로드할 파일명을 직접 수정할 수 있습니다.
 
-### 2단계: 시나리오 설정
-* `config.py` 파일의 `SCENARIOS` 딕셔너리를 수정하여 원하는 전처리/정규화 조합만 선택하거나 새 시나리오를 추가할 수 있습니다.
+### 2단계: config 설정
+* `SCENARIOS` 딕셔너리를 수정하여 원하는 전처리/정규화 조합만 선택하거나 새 시나리오를 추가할 수 있습니다.
+* `PROCESSED_DIR`를 수정해 전처리 작업 후 저장될 경로를 지정할 수 있습니다.
+* `MARGIN_FRAME` 변수를 수정해 다운샘플링 시 제스처 전이 구간(마진) 프레임 배제 마진을 조절할 수 있습니다.
 
 ### 3단계: 파이프라인 실행
 프로젝트 루트(`JamJamBeat/`) 경로에서 아래 명령어를 실행합니다.
 ```bash
 uv run python src/dataset/offline_pipeline/runners/run_preprocess.py
+```
+
+
+
+
+### 추가단계: 검증
+비율 통계 확인 - outputdir에 존재하는 모든 데이터들에 대한 비율 통계확인
+```bash
+uv run python src/dataset/offline_pipeline/tests/test_downsampled.py
+```
+
+정규화 시각화 확인 - 지정 데이터에 대해 랜덤으로 1~6클래스의 프레임을 시각화.
+```bash
+uv run python src/dataset/offline_pipeline/tests/test_normalization.py data/processed_scenarios/ds_1_pos_scale.csv
 ```

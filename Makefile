@@ -21,8 +21,8 @@ SCHEDULER_NAME ?= ReduceLROnPlateau
 MODEL_PATH ?= /home/kimsaehoon/workspace/JamJamBeat/checkpoints/best_model.pth
 VALIDATION_SPLIT_RATIO ?= 0.2
 TEST_SPLIT_RATIO ?= 0.1
-SAVE_CONFUSION_MATRIX_PATH ?= /home/kimsaehoon/workspace/JamJamBeat/checkpoints/confusion_matrix.csv
-SAVE_PREDICTIONS_PATH ?= /home/kimsaehoon/workspace/JamJamBeat/checkpoints/test_predictions.csv
+SAVE_CONFUSION_MATRIX_PATH ?= /home/kimsaehoon/workspace/JamJamBeat/checkpoints/confusion_matrix_newdata.csv
+SAVE_PREDICTIONS_PATH ?= /home/kimsaehoon/workspace/JamJamBeat/checkpoints/test_predictions_newdata.csv
 
 data-mlp:
 	$(PYTHONPATH_CMD) uv run python src/dataset/gesture_dataset.py

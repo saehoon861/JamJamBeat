@@ -312,7 +312,7 @@ def create_dataloaders(
 
 if __name__ == "__main__":
     # 디버깅용: gesture_dataset.py 단독 실행해서 데이터 확인
-    csv_path = "/home/kimsaehoon/workspace/JamJamBeat/src/dataset/man1_right_for_poc.csv"
+    csv_path = "/home/kimsaehoon/workspace/JamJamBeat/data/total_data_0309.csv"
 
     feature_columns = []
     for i in range(0, 21):

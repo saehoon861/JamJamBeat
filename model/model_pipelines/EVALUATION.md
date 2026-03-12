@@ -21,28 +21,35 @@
 
 ## 2. 출력 파일 구조
 
-실험 하나가 끝나면 아래 경로에 파일이 생성된다.
+`run_all.py` 배치 실행 시 아래 경로에 파일이 생성된다.
 
 ```
 model/model_evaluation/pipelines/
-└── {model_id}/
-    └── {yyyymmdd_HHMMSS}/
-        ├── preds_test.csv          ← 프레임별 예측 원본
-        ├── model.pt                ← 학습된 모델 가중치
-        ├── train_history.csv       ← epoch별 loss/acc
-        ├── run_summary.json        ← 전체 메트릭 요약
-        └── evaluation/
-            ├── confusion_matrix.csv   ← 혼동 행렬 (수치)
-            ├── confusion_matrix.png   ← 혼동 행렬 (시각화)
-            ├── per_class_report.csv   ← 클래스별 P/R/F1
-            ├── latency_cdf.png        ← 추론 지연 분포
-            └── metrics_summary.json   ← 핵심 지표 JSON
+├── latest_suite.json
+└── {yyyymmdd_HHMMSS}__{dataset_tag}/
+    ├── comparison_suite.json      ← 이번 배치 입력 CSV / 모델 목록 메타데이터
+    ├── comparison_results.csv     ← 이번 배치 전체 비교표
+    └── {model_id}/
+        └── {yyyymmdd_HHMMSS}/
+            ├── preds_test.csv          ← 프레임별 예측 원본
+            ├── model.pt                ← 학습된 모델 가중치
+            ├── train_history.csv       ← epoch별 loss/acc
+            ├── run_summary.json        ← 전체 메트릭 요약
+            └── evaluation/
+                ├── dataset_info.json      ← 입력 CSV / split 정보
+                ├── confusion_matrix.csv   ← 혼동 행렬 (수치)
+                ├── confusion_matrix.png   ← 혼동 행렬 (시각화)
+                ├── per_class_report.csv   ← 클래스별 P/R/F1
+                ├── latency_cdf.png        ← 추론 지연 분포
+                └── metrics_summary.json   ← 핵심 지표 JSON
 ```
 
 전체 실험 비교 결과:
 ```
-model/model_evaluation/pipelines/comparison_results.csv
+model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
 ```
+
+`run_pipeline.py` 단독 실행은 기존처럼 `model/model_evaluation/pipelines/{model_id}/{timestamp}/` 구조를 유지한다.
 
 ---
 
@@ -212,7 +219,8 @@ python model/model_pipelines/run_all.py \
 python model/model_pipelines/run_all.py --epochs 50
 
 # 결과 확인
-cat model/model_evaluation/pipelines/comparison_results.csv
+cat model/model_evaluation/pipelines/latest_suite.json
+cat model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
 ```
 
 ---

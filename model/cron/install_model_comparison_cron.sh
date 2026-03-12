@@ -4,16 +4,15 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # JamJamBeat v2 model comparison cron installer
 # -----------------------------------------------------------------------------
-# Creates 9 cron jobs (one job per model pipeline from model_comparison_v2.md):
+# Creates 8 cron jobs (one job per model pipeline from model_comparison_v2.md):
 #   1) mlp_baseline
 #   2) mlp_embedding
 #   3) two_stream_mlp
 #   4) cnn1d_tcn
 #   5) transformer_embedding
-#   6) mediapipe_hand_landmarker
-#   7) mobilenetv3_small
-#   8) shufflenetv2_x0_5
-#   9) efficientnet_b0
+#   6) mobilenetv3_small
+#   7) shufflenetv2_x0_5
+#   8) efficientnet_b0
 #
 # Usage:
 #   bash model/cron/install_model_comparison_cron.sh
@@ -80,7 +79,7 @@ awk -v start="$START_MARK" -v end="$END_MARK" '
   cat "$TMP_CLEAN"
   echo "$START_MARK"
   echo "# Auto-generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  echo "# JamJamBeat model comparison v2 (9 pipelines)"
+  echo "# JamJamBeat model comparison v2 (8 pipelines)"
 
   # Daily staggered schedule (UTC)
   # minute hour day month weekday command
@@ -89,10 +88,9 @@ awk -v start="$START_MARK" -v end="$END_MARK" '
   echo "35 2 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id two_stream_mlp --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/two_stream_mlp.log 2>&1"
   echo "50 3 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id cnn1d_tcn --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/cnn1d_tcn.log 2>&1"
   echo "5 5 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id transformer_embedding --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/transformer_embedding.log 2>&1"
-  echo "20 6 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id mediapipe_hand_landmarker --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/mediapipe_hand_landmarker.log 2>&1"
-  echo "35 7 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id mobilenetv3_small --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/mobilenetv3_small.log 2>&1"
-  echo "50 8 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id shufflenetv2_x0_5 --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/shufflenetv2_x0_5.log 2>&1"
-  echo "5 10 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id efficientnet_b0 --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/efficientnet_b0.log 2>&1"
+  echo "20 6 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id mobilenetv3_small --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/mobilenetv3_small.log 2>&1"
+  echo "35 7 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id shufflenetv2_x0_5 --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/shufflenetv2_x0_5.log 2>&1"
+  echo "50 8 * * * cd ${PROJECT_ROOT} && ${PYTHON_BIN} ${RUNNER} --model-id efficientnet_b0 --csv-path ${DATA_1} --csv-path ${DATA_2} --csv-path ${DATA_3} --csv-path ${DATA_4} --output-root ${OUTPUT_ROOT} --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} >> ${LOG_DIR}/efficientnet_b0.log 2>&1"
 
   echo "$END_MARK"
 } > "$TMP_NEW"

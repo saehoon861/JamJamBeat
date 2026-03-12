@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# watch_progress.sh - 9개 모델 파이프라인 진행 상황을 2분마다 출력
+# watch_progress.sh - 모델 파이프라인 진행 상황을 2분마다 출력
 #
 # Usage:
 #   bash model/cron/watch_progress.sh
@@ -22,7 +22,6 @@ MODELS=(
   "two_stream_mlp"
   "cnn1d_tcn"
   "transformer_embedding"
-  "mediapipe_hand_landmarker"
   "mobilenetv3_small"
   "shufflenetv2_x0_5"
   "efficientnet_b0"
@@ -146,7 +145,8 @@ print_report() {
     fi
   done
 
-  local pending_count=$(( 9 - done_count - running_count - error_count ))
+  local total_count=${#MODELS[@]}
+  local pending_count=$(( total_count - done_count - running_count - error_count ))
 
   echo "┌─────────────────────────────────────────────────────────────────┐"
   printf "│  JamJamBeat 모델 비교 진행 현황  [%s]  │\n" "$now"
@@ -181,8 +181,8 @@ print_report() {
   done
 
   echo "├────┴──────────────────────────────┴────────────────────────────┤"
-  printf "│  완료: %d/9  실행중: %d  오류: %d  대기: %d  (다음 갱신: %ds 후)%s│\n" \
-    "$done_count" "$running_count" "$error_count" "$pending_count" \
+  printf "│  완료: %d/%d  실행중: %d  오류: %d  대기: %d  (다음 갱신: %ds 후)%s│\n" \
+    "$done_count" "$total_count" "$running_count" "$error_count" "$pending_count" \
     "$INTERVAL" "         "
   echo "└─────────────────────────────────────────────────────────────────┘"
   echo

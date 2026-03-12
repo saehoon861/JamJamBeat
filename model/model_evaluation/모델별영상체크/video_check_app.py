@@ -68,12 +68,6 @@ FINGER_PAIRS = [
 ]
 
 SUPPORTED_VIDEO_EXTS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
-JOINT_ONLY_SEQUENCE_MODELS = {
-    "mlp_sequence_joint",
-    "mlp_temporal_pooling",
-    "mlp_sequence_delta",
-    "mlp_baseline_seq8",
-}
 
 
 @dataclass(slots=True)
@@ -99,6 +93,8 @@ class FeaturePack:
     raw_landmarks: np.ndarray
     normalized_landmarks: np.ndarray
     joint: np.ndarray
+    joint_xy: np.ndarray
+    joint_z: np.ndarray
     bone: np.ndarray
     angle: np.ndarray
     full: np.ndarray
@@ -142,6 +138,8 @@ class RuntimeModel:
     neutral_idx: int
     seq_len: int
     image_size: int
+    input_dim: int | None
+    aux_input_dim: int | None
 
 
 def format_timestamp(frame_idx: int, fps: float) -> str:
@@ -157,24 +155,34 @@ def discover_runs() -> list[RunInfo]:
     """결과 폴더에서 checkpoint run들을 스캔해 dropdown 후보를 만든다."""
     runs: list[RunInfo] = []
 
-    for checkpoint_path in sorted(RUNS_ROOT.glob("*/*/model.pt"), reverse=True):
+    for checkpoint_path in sorted(RUNS_ROOT.rglob("model.pt"), reverse=True):
         run_dir = checkpoint_path.parent
         summary_path = run_dir / "run_summary.json"
         mode = "unknown"
         macro_f1: float | None = None
+        suite_name: str | None = None
+        model_id = run_dir.parent.name
 
         if summary_path.exists():
             try:
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                model_id = str(summary.get("model_id") or model_id)
                 mode = str(summary.get("mode", "unknown"))
                 macro_f1 = summary.get("metrics", {}).get("macro_avg", {}).get("f1")
             except Exception:
                 pass
 
-        model_id = run_dir.parent.name
+        try:
+            rel = run_dir.relative_to(RUNS_ROOT)
+            if len(rel.parts) >= 3:
+                suite_name = rel.parts[0]
+        except ValueError:
+            suite_name = None
+
         stamp = run_dir.name
         f1_text = f"{macro_f1:.4f}" if isinstance(macro_f1, (int, float)) else "-"
-        display_name = f"{model_id} | {stamp} | mode={mode} | macro_f1={f1_text}"
+        suite_text = f"{suite_name} | " if suite_name else ""
+        display_name = f"{model_id} | {suite_text}{stamp} | mode={mode} | macro_f1={f1_text}"
 
         runs.append(
             RunInfo(
@@ -233,73 +241,74 @@ def instantiate_model(
     state_dict: dict[str, Any],
     num_classes: int,
     seq_len_hint: int,
-) -> tuple[torch.nn.Module, int]:
+) -> tuple[torch.nn.Module, int, int | None, int | None]:
     """checkpoint state_dict shape를 읽어 정확한 model 클래스를 복원한다."""
     mod = importlib.import_module(f"{model_id}.model")
 
-    if model_id in {"mlp_baseline", "mediapipe_hand_landmarker", "mlp_baseline_full"}:
+    if model_id in {"mlp_baseline", "mlp_baseline_full"}:
         input_dim = int(state_dict["net.0.weight"].shape[1])
         model = mod.MLPBaseline(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, input_dim, None
 
     if model_id == "mlp_baseline_seq8":
         flat_dim = int(state_dict["net.0.weight"].shape[1])
         seq_len = 8
         input_dim = flat_dim // seq_len
         model = mod.MLPBaselineSeq(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len
+        return model, seq_len, input_dim, None
 
     if model_id == "mlp_sequence_joint":
         input_dim = int(state_dict["net.1.weight"].shape[1])
         seq_len = seq_len_hint or max(input_dim // 63, 1)
-        model = mod.SequenceJointMLP(seq_len=seq_len, input_dim=63, num_classes=num_classes)
-        return model, seq_len
+        feature_dim = input_dim // max(seq_len, 1)
+        model = mod.SequenceJointMLP(seq_len=seq_len, input_dim=feature_dim, num_classes=num_classes)
+        return model, seq_len, feature_dim, None
 
     if model_id == "mlp_temporal_pooling":
         input_dim = int(state_dict["frame_embed.1.weight"].shape[1])
         model = mod.TemporalPoolingMLP(input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len_hint or DEFAULT_SEQ_LEN
+        return model, seq_len_hint or DEFAULT_SEQ_LEN, input_dim, None
 
     if model_id == "mlp_sequence_delta":
         flat_dim = int(state_dict["net.1.weight"].shape[1])
         seq_len = seq_len_hint or max(flat_dim // 126, 1)
         input_dim = flat_dim // seq_len
         model = mod.SequenceDeltaMLP(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len
+        return model, seq_len, input_dim, None
 
     if model_id == "mlp_embedding":
         input_dim = int(state_dict["embed.0.weight"].shape[1])
         model = mod.MLPEmbedding(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, input_dim, None
 
     if model_id == "two_stream_mlp":
         joint_dim = int(state_dict["joint_stream.net.0.weight"].shape[1])
         bone_dim = int(state_dict["bone_stream.net.0.weight"].shape[1])
         model = mod.TwoStreamMLP(joint_dim=joint_dim, bone_dim=bone_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, joint_dim, bone_dim
 
     if model_id == "cnn1d_tcn":
         input_dim = int(state_dict["net.0.weight"].shape[1])
         model = mod.TCN1DClassifier(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, input_dim, None
 
     if model_id == "transformer_embedding":
         input_dim = int(state_dict["frame_embed.weight"].shape[1])
         seq_len = int(state_dict["pos_embed"].shape[1])
         model = mod.TemporalTransformer(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len
+        return model, seq_len, input_dim, None
 
     if model_id == "mobilenetv3_small":
         model = mod.MobileNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, None, None
 
     if model_id == "shufflenetv2_x0_5":
         model = mod.ShuffleNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, None, None
 
     if model_id == "efficientnet_b0":
         model = mod.EfficientNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
+        return model, DEFAULT_SEQ_LEN, None, None
 
     raise ValueError(f"Unsupported model_id: {model_id}")
 
@@ -318,7 +327,12 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
     mode = str(checkpoint.get("mode") or run_info.mode)
     seq_len_hint = int(checkpoint.get("seq_len") or DEFAULT_SEQ_LEN)
     image_size = int(checkpoint.get("image_size") or DEFAULT_IMAGE_SIZE)
-    model, seq_len = instantiate_model(model_id, state_dict, num_classes, seq_len_hint=seq_len_hint)
+    model, seq_len, input_dim, aux_input_dim = instantiate_model(
+        model_id,
+        state_dict,
+        num_classes,
+        seq_len_hint=seq_len_hint,
+    )
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
@@ -333,6 +347,8 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
         neutral_idx=detect_neutral_idx(class_names),
         seq_len=seq_len,
         image_size=image_size,
+        input_dim=input_dim,
+        aux_input_dim=aux_input_dim,
     )
 
 
@@ -436,6 +452,8 @@ def extract_feature_pack(raw_landmarks: np.ndarray) -> FeaturePack:
     """raw landmark 1프레임에서 모든 런타임 입력 표현을 동시에 생성한다."""
     normalized = normalize_landmarks(raw_landmarks)
     joint = normalized.reshape(-1).astype(np.float32)
+    joint_xy = normalized[:, :2].reshape(-1).astype(np.float32)
+    joint_z = normalized[:, 2].reshape(-1).astype(np.float32)
     bone = compute_bone_features(normalized).reshape(-1).astype(np.float32)
     angle = compute_angle_features(normalized).astype(np.float32)
     bone_angle = np.concatenate([bone, angle]).astype(np.float32)
@@ -445,6 +463,8 @@ def extract_feature_pack(raw_landmarks: np.ndarray) -> FeaturePack:
         raw_landmarks=raw_landmarks.astype(np.float32),
         normalized_landmarks=normalized,
         joint=joint,
+        joint_xy=joint_xy,
+        joint_z=joint_z,
         bone=bone,
         angle=angle,
         full=full,
@@ -505,10 +525,31 @@ def neutral_probs(class_count: int, neutral_idx: int) -> list[float]:
     return probs
 
 
+def select_feature_vector(features: FeaturePack, expected_dim: int) -> np.ndarray:
+    """checkpoint의 실제 입력 차원에 맞는 feature 표현을 선택한다."""
+    candidates = {
+        int(features.joint.shape[0]): features.joint,
+        int(features.joint_xy.shape[0]): features.joint_xy,
+        int(features.joint_z.shape[0]): features.joint_z,
+        int(features.bone.shape[0]): features.bone,
+        int(features.angle.shape[0]): features.angle,
+        int(features.bone_angle.shape[0]): features.bone_angle,
+        int(features.full.shape[0]): features.full,
+    }
+    vector = candidates.get(int(expected_dim))
+    if vector is None:
+        supported = ", ".join(str(dim) for dim in sorted(candidates))
+        raise ValueError(
+            f"Unsupported runtime feature dim: {expected_dim}. "
+            f"Supported dims from feature pack: {supported}"
+        )
+    return vector
+
+
 def add_runtime_delta_features(seq: np.ndarray) -> np.ndarray:
     """
-    seq: (T, 63)
-    returns: (T, 126) = [joint, delta]
+    seq: (T, D)
+    returns: (T, 2D) = [base_feature, delta]
     """
     # 학습 때와 동일하게 runtime에서도 delta 채널을 즉석에서 합성한다.
     delta = np.zeros_like(seq, dtype=np.float32)
@@ -532,32 +573,45 @@ def predict_from_features(
     class_count = len(runtime.class_names)
 
     if runtime.mode == "frame":
-        # frame 계열은 joint-only 또는 full feature 둘 중 하나를 직접 넣는다.
-        if runtime.model_id in {"mlp_baseline", "mediapipe_hand_landmarker"}:
-            tensor = torch.from_numpy(features.joint).unsqueeze(0).to(runtime.device)
-            logits = runtime.model(tensor)
-        else:
-            tensor = torch.from_numpy(features.full).unsqueeze(0).to(runtime.device)
-            logits = runtime.model(tensor)
+        if runtime.input_dim is None:
+            raise ValueError(f"Missing runtime input_dim for frame model: {runtime.model_id}")
+        vector = select_feature_vector(features, runtime.input_dim)
+        tensor = torch.from_numpy(vector).unsqueeze(0).to(runtime.device)
+        logits = runtime.model(tensor)
 
     elif runtime.mode == "two_stream":
-        # two-stream은 joint와 bone+angle을 별도 tensor로 유지한다.
-        joint = torch.from_numpy(features.joint).unsqueeze(0).to(runtime.device)
-        bone = torch.from_numpy(features.bone_angle).unsqueeze(0).to(runtime.device)
-        logits = runtime.model(joint, bone)
+        if runtime.input_dim is None or runtime.aux_input_dim is None:
+            raise ValueError(f"Missing runtime stream dims for two_stream model: {runtime.model_id}")
+        joint_vec = select_feature_vector(features, runtime.input_dim)
+        aux_vec = select_feature_vector(features, runtime.aux_input_dim)
+        joint = torch.from_numpy(joint_vec).unsqueeze(0).to(runtime.device)
+        aux = torch.from_numpy(aux_vec).unsqueeze(0).to(runtime.device)
+        logits = runtime.model(joint, aux)
 
     elif runtime.mode == "sequence":
+        if runtime.input_dim is None:
+            raise ValueError(f"Missing runtime input_dim for sequence model: {runtime.model_id}")
+
         # sequence 계열은 프레임마다 buffer를 채우고 seq_len이 찰 때부터 예측 가능하다.
-        if runtime.model_id in JOINT_ONLY_SEQUENCE_MODELS:
-            seq_buffer.append(features.joint)
+        if runtime.model_id == "mlp_sequence_delta":
+            if runtime.input_dim % 2 != 0:
+                raise ValueError(f"Unexpected delta input_dim for {runtime.model_id}: {runtime.input_dim}")
+            base_vec = select_feature_vector(features, runtime.input_dim // 2)
         else:
-            seq_buffer.append(features.full)
+            base_vec = select_feature_vector(features, runtime.input_dim)
+
+        seq_buffer.append(base_vec)
         if len(seq_buffer) < runtime.seq_len:
             return "warmup", runtime.neutral_idx, 0.0, neutral_probs(class_count, runtime.neutral_idx)
 
         seq = np.stack(list(seq_buffer), axis=0).astype(np.float32)
         if runtime.model_id == "mlp_sequence_delta":
             seq = add_runtime_delta_features(seq)
+            if seq.shape[1] != runtime.input_dim:
+                raise ValueError(
+                    f"Delta feature mismatch for {runtime.model_id}: "
+                    f"got {seq.shape[1]}, expected {runtime.input_dim}"
+                )
         tensor = torch.from_numpy(seq).unsqueeze(0).to(runtime.device)
         logits = runtime.model(tensor)
 
@@ -877,7 +931,7 @@ class VideoCheckApp:
 
 def run_cli(run_dir: Path, video_path: Path) -> None:
     """GUI 없이 특정 run/video 조합을 바로 재생하는 CLI 진입점."""
-    run_dir = run_dir.resolve()
+    run_dir = resolve_run_dir_arg(run_dir)
     video_path = video_path.resolve()
     checkpoint_path = run_dir / "model.pt"
     if not checkpoint_path.exists():
@@ -906,10 +960,43 @@ def run_cli(run_dir: Path, video_path: Path) -> None:
     playback(runtime, analyzed)
 
 
+def resolve_run_dir_arg(path: Path) -> Path:
+    """CLI의 --run-dir 인자로 run 폴더 또는 model 폴더(latest.json)를 모두 허용한다."""
+    candidate = path.resolve()
+
+    if candidate.is_file() and candidate.name == "latest.json":
+        latest = json.loads(candidate.read_text(encoding="utf-8"))
+        latest_run = Path(str(latest["latest_run"]))
+        return latest_run.resolve()
+
+    if (candidate / "model.pt").exists():
+        return candidate
+
+    latest_json = candidate / "latest.json"
+    if latest_json.exists():
+        latest = json.loads(latest_json.read_text(encoding="utf-8"))
+        latest_run = Path(str(latest["latest_run"]))
+        return latest_run.resolve()
+
+    raise FileNotFoundError(
+        "Run directory not found. Expected either "
+        "`.../{suite_name}/{model_id}/{timestamp}/model.pt` or "
+        "`.../{suite_name}/{model_id}/latest.json`."
+    )
+
+
 def parse_args() -> argparse.Namespace:
     """GUI 모드와 CLI 모드를 나누는 최소 인자만 받는다."""
     parser = argparse.ArgumentParser(description="JamJamBeat trained-model video viewer")
-    parser.add_argument("--run-dir", type=Path, default=None, help="Run directory containing model.pt")
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Run directory containing model.pt, or a model directory containing latest.json "
+            "(e.g. model/model_evaluation/pipelines/{suite_name}/{model_id})"
+        ),
+    )
     parser.add_argument("--video", type=Path, default=None, help="Video path to analyze")
     parser.add_argument(
         "--device",

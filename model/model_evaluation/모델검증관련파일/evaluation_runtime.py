@@ -12,6 +12,7 @@ Outputs (per experiment run):
 - confusion_matrix.png
 - latency_cdf.png
 - metrics_summary.json
+- dataset_info.json
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ class EvaluationConfig:
     vote_n: int = 7
     debounce_k: int = 3
     fallback_fps: float = 30.0
+    dataset_info: dict | None = None
 
 
 def _safe_div(n: float, d: float) -> float:
@@ -112,14 +114,30 @@ def build_classification_report(
     return report_df, summary
 
 
+def _infer_run_label(output_path: Path) -> str:
+    """evaluation 출력 경로에서 model_id / run timestamp를 추론한다."""
+    try:
+        eval_dir = output_path.parent
+        run_dir = eval_dir.parent
+        model_id = run_dir.parent.name
+        run_id = run_dir.name
+        return f"{model_id} | {run_id}"
+    except Exception:
+        return output_path.stem
+
+
 def save_confusion_matrix_plot(
     cm: np.ndarray,
     class_names: list[str],
     output_path: Path,
+    accuracy: float,
+    macro_f1: float,
+    total_samples: int,
 ) -> None:
     """행 정규화 confusion matrix를 시각화해서 PNG로 저장한다."""
     row_sum = cm.sum(axis=1, keepdims=True)
     normalized = np.divide(cm, row_sum, out=np.zeros_like(cm, dtype=float), where=row_sum != 0)
+    run_label = _infer_run_label(output_path)
 
     fig, ax = plt.subplots(figsize=(9, 7))
     im = ax.imshow(normalized, interpolation="nearest", cmap="Blues", vmin=0.0, vmax=1.0)
@@ -132,7 +150,10 @@ def save_confusion_matrix_plot(
         yticklabels=class_names,
         ylabel="True label",
         xlabel="Predicted label",
-        title="Normalized Confusion Matrix",
+        title=(
+            "Normalized Confusion Matrix\n"
+            f"{run_label} | acc={accuracy:.4f} | macro_f1={macro_f1:.4f} | n={total_samples}"
+        ),
     )
 
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
@@ -141,9 +162,18 @@ def save_confusion_matrix_plot(
         for j in range(normalized.shape[1]):
             val = normalized[i, j]
             color = "white" if val > 0.5 else "black"
-            ax.text(j, i, f"{val:.2f}", ha="center", va="center", color=color, fontsize=8)
+            count = int(cm[i, j])
+            ax.text(
+                j,
+                i,
+                f"{count}\n{val:.2f}",
+                ha="center",
+                va="center",
+                color=color,
+                fontsize=7,
+            )
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
@@ -306,13 +336,30 @@ def latency_summary(latency_ms: np.ndarray) -> dict:
     }
 
 
-def save_latency_cdf_plot(latency_ms: np.ndarray, output_path: Path) -> None:
+def _format_ms(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.4f}ms"
+
+
+def save_latency_cdf_plot(
+    latency_ms: np.ndarray,
+    output_path: Path,
+    latency_metrics: dict,
+) -> None:
     """latency 분포를 CDF 형태로 저장해 모델 간 tail latency를 비교한다."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    run_label = _infer_run_label(output_path)
 
     fig, ax = plt.subplots(figsize=(8, 5))
     if latency_ms.size == 0:
-        ax.text(0.5, 0.5, "No latency data", ha="center", va="center")
+        ax.text(
+            0.5,
+            0.5,
+            f"{run_label}\nNo latency data",
+            ha="center",
+            va="center",
+        )
         ax.set_axis_off()
     else:
         x = np.sort(latency_ms)
@@ -329,10 +376,27 @@ def save_latency_cdf_plot(latency_ms: np.ndarray, output_path: Path) -> None:
         ax.axvline(200.0, linestyle="-", color="red", alpha=0.5, label="target 200ms")
         ax.set_xlabel("Total Latency (ms)")
         ax.set_ylabel("CDF")
-        ax.set_title("End-to-End Latency CDF")
+        ax.set_title(f"End-to-End Latency CDF\n{run_label}")
+        stats_text = (
+            f"count={latency_metrics.get('count', 0)}\n"
+            f"mean={_format_ms(latency_metrics.get('mean_ms'))}\n"
+            f"p50={_format_ms(latency_metrics.get('p50_ms'))}\n"
+            f"p95={_format_ms(latency_metrics.get('p95_ms'))}\n"
+            f"p99={_format_ms(latency_metrics.get('p99_ms'))}"
+        )
+        ax.text(
+            0.98,
+            0.02,
+            stats_text,
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9, "edgecolor": "#cccccc"},
+        )
         ax.legend(fontsize=8)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 
@@ -346,6 +410,7 @@ def evaluate_predictions(
     cfg = config or EvaluationConfig(class_names=DEFAULT_CLASS_NAMES)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    dataset_info = cfg.dataset_info or {}
 
     required = {"gesture", "pred_class", "p_max"}
     missing = required - set(df_preds.columns)
@@ -363,7 +428,14 @@ def evaluate_predictions(
     cm_df = pd.DataFrame(cm, index=cfg.class_names, columns=cfg.class_names)
     cm_df.to_csv(out_dir / "confusion_matrix.csv")
     report_df.to_csv(out_dir / "per_class_report.csv", index=False)
-    save_confusion_matrix_plot(cm, cfg.class_names, out_dir / "confusion_matrix.png")
+    save_confusion_matrix_plot(
+        cm,
+        cfg.class_names,
+        out_dir / "confusion_matrix.png",
+        accuracy=base_summary["accuracy"],
+        macro_f1=base_summary["macro_avg"]["f1"],
+        total_samples=base_summary["total_samples"],
+    )
 
     # class0 관련 메트릭은 neutral 축에서의 누락 / 오발동을 따로 보기 위한 지표다.
     class0_fp = int(cm[1:, cfg.neutral_class_id].sum()) if num_classes > 1 else 0
@@ -391,10 +463,11 @@ def evaluate_predictions(
     if "latency_total_ms" in df_preds.columns:
         latency_arr = df_preds["latency_total_ms"].dropna().to_numpy(dtype=np.float32)
     latency_metrics = latency_summary(latency_arr)
-    save_latency_cdf_plot(latency_arr, out_dir / "latency_cdf.png")
+    save_latency_cdf_plot(latency_arr, out_dir / "latency_cdf.png", latency_metrics=latency_metrics)
 
     # 최종 summary는 run_summary.json에 바로 들어갈 수 있는 compact 구조만 유지한다.
     summary = {
+        "dataset_info": dataset_info,
         "accuracy": base_summary["accuracy"],
         "macro_avg": base_summary["macro_avg"],
         "total_samples": base_summary["total_samples"],
@@ -402,6 +475,9 @@ def evaluate_predictions(
         "fp_per_min_metrics": fp_min_metrics,
         "latency": latency_metrics,
     }
+
+    with (out_dir / "dataset_info.json").open("w", encoding="utf-8") as f:
+        json.dump(dataset_info, f, ensure_ascii=False, indent=2)
 
     with (out_dir / "metrics_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)

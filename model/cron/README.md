@@ -1,13 +1,13 @@
 # JamJamBeat Model Comparison Cron
 
-`model_comparison_v2.md` 기준 9개 파이프라인을 cron으로 분리 실행하는 스크립트 모음입니다.
+`model_comparison_v2.md` 기준 8개 파이프라인을 cron으로 분리 실행하는 스크립트 모음입니다.
 
 ## 구성 파일
 
 - `run_model_pipeline.py`  
   단일 모델 파이프라인 실행 + 평가 지표 산출
 - `install_model_comparison_cron.sh`  
-  9개 cron job 설치
+  8개 cron job 설치
 - `uninstall_model_comparison_cron.sh`  
   설치된 cron block 제거
 
@@ -20,17 +20,16 @@
 - `model/data_fusion/man3_right_for_poc_output.csv`
 - `model/data_fusion/woman1_right_for_poc_output.csv`
 
-## 실행 모델 (9개)
+## 실행 모델 (8개)
 
 1. `mlp_baseline`
 2. `mlp_embedding`
 3. `two_stream_mlp`
 4. `cnn1d_tcn`
 5. `transformer_embedding`
-6. `mediapipe_hand_landmarker`
-7. `mobilenetv3_small`
-8. `shufflenetv2_x0_5`
-9. `efficientnet_b0`
+6. `mobilenetv3_small`
+7. `shufflenetv2_x0_5`
+8. `efficientnet_b0`
 
 ## 평가 출력
 

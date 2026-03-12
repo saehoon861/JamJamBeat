@@ -1,6 +1,6 @@
 # Model Video Check
 
-This folder contains a viewer that loads a trained checkpoint from `model/model_evaluation/pipelines/*/*/model.pt`, runs MediaPipe hand tracking on a selected video, and overlays the model prediction on the video.
+This folder contains a viewer that loads a trained checkpoint from `model/model_evaluation/pipelines/**/model.pt`, runs MediaPipe hand tracking on a selected video, and overlays the model prediction on the video.
 
 ## Entry Point
 
@@ -28,9 +28,11 @@ Optional direct launch without the dropdown UI:
 
 ```bash
 python3.11 model/model_evaluation/모델별영상체크/video_check_app.py \
-  --run-dir model/model_evaluation/pipelines/cnn1d_tcn/20260310_082304 \
+  --run-dir model/model_evaluation/pipelines/20260312_120000__man1_right_for_poc__man2_right_for_poc/cnn1d_tcn \
   --video data/raw_data/4_slow_right_man3.mp4
 ```
+
+`--run-dir`에는 실제 run timestamp 폴더 또는 `latest.json`이 있는 모델 폴더 둘 다 넣을 수 있다.
 
 ## Controls
 

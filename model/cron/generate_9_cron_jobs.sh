@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# JamJamBeat v2 9개 모델 파이프라인 cron 파일 생성기
+# JamJamBeat v2 모델 파이프라인 cron 파일 생성기
 # 참고: model/model_comparison_v2.md
 #
 # 생성만 수행합니다. 설치는 install_cron_jobs.sh에서 수행하세요.
@@ -33,7 +33,6 @@ MODELS=(
   "two_stream_mlp"
   "cnn1d_tcn"
   "transformer_embedding"
-  "mediapipe_hand_landmarker"
   "mobilenetv3_small"
   "shufflenetv2_x0_5"
   "efficientnet_b0"
@@ -54,7 +53,7 @@ done
 
 {
   echo "# ------------------------------------------------------------------"
-  echo "# JamJamBeat model comparison v2 (9 jobs)"
+  echo "# JamJamBeat model comparison v2 (8 jobs)"
   echo "# Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
   echo "# ------------------------------------------------------------------"
   echo "SHELL=/bin/bash"

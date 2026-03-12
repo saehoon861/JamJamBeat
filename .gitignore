@@ -46,3 +46,4 @@ model/model_evaluation/pipelines/
 model/model_evaluation/runs/
 model/model_evaluation/cron_logs/
 model/cron_logs/
+wandb/

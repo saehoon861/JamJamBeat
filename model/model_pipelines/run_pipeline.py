@@ -19,7 +19,7 @@ import json
 import random
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +106,53 @@ def resolve_paths(csv_paths: list[str]) -> list[Path]:
             p = PROJECT_ROOT / p
         resolved.append(p.resolve())
     return resolved
+
+
+def _source_groups(df: pd.DataFrame, group_col: str = "__source_group") -> list[str]:
+    """summary/evaluation 기록용 source group 목록을 정렬해서 반환한다."""
+    if group_col not in df.columns:
+        return []
+    return sorted(str(v) for v in df[group_col].dropna().unique().tolist())
+
+
+def _rows_by_source_group(df: pd.DataFrame, group_col: str = "__source_group") -> dict[str, int]:
+    """DataFrame 내 source group별 row 수를 JSON-friendly dict로 만든다."""
+    if group_col not in df.columns:
+        return {}
+    counts = df[group_col].value_counts().sort_index()
+    return {str(group): int(count) for group, count in counts.items()}
+
+
+def build_dataset_info(
+    csv_paths: list[Path],
+    merged_df: pd.DataFrame,
+    split: SplitData,
+) -> dict[str, Any]:
+    """run/evaluation 폴더에 같이 저장할 데이터셋 메타를 구성한다."""
+    return {
+        "input_csv_paths": [str(p) for p in csv_paths],
+        "input_csv_names": [p.name for p in csv_paths],
+        "source_groups": _source_groups(merged_df),
+        "total_rows": int(len(merged_df)),
+        "rows_by_source_group": _rows_by_source_group(merged_df),
+        "split": {
+            "train": {
+                "rows": int(len(split.train_df)),
+                "source_groups": _source_groups(split.train_df),
+                "rows_by_source_group": _rows_by_source_group(split.train_df),
+            },
+            "val": {
+                "rows": int(len(split.val_df)),
+                "source_groups": _source_groups(split.val_df),
+                "rows_by_source_group": _rows_by_source_group(split.val_df),
+            },
+            "test": {
+                "rows": int(len(split.test_df)),
+                "source_groups": _source_groups(split.test_df),
+                "rows_by_source_group": _rows_by_source_group(split.test_df),
+            },
+        },
+    }
 
 
 def load_preprocessed_data(csv_paths: list[Path]) -> pd.DataFrame:
@@ -450,13 +497,15 @@ def run(args: argparse.Namespace) -> dict:
 
     # 동일 source group이 train / test에 동시에 들어가지 않도록 먼저 split한다.
     split = split_by_group(df, seed=args.seed)
+    dataset_info = build_dataset_info(csv_paths, df, split)
 
     # 평가 리포트와 checkpoint 저장에 같은 class ordering을 사용한다.
     class_names = args.class_names if args.class_names else DEFAULT_CLASS_NAMES
     num_classes = len(class_names)
 
     # 모델별 / 실행시각별 폴더를 분리해 실험 결과를 누적 저장한다.
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    KST = timezone(timedelta(hours=9))
+    timestamp = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
     out_root = Path(args.output_root)
     if not out_root.is_absolute():
         out_root = PROJECT_ROOT / out_root
@@ -474,6 +523,12 @@ def run(args: argparse.Namespace) -> dict:
         num_classes=num_classes,
     )
     model = model.to(device)
+    dataset_info["dataset_sample_counts"] = {
+        "train": int(len(train_ds)),
+        "val": int(len(val_ds)),
+        "test": int(len(test_ds)),
+    }
+    dataset_info["mode"] = mode
 
     # train loader만 weighted sampler를 사용하고, val / test는 원본 분포를 유지한다.
     train_labels = np.array(getattr(train_ds, "y"), dtype=np.int64)
@@ -570,6 +625,7 @@ def run(args: argparse.Namespace) -> dict:
         vote_n=args.vote_n,
         debounce_k=args.debounce_k,
         fallback_fps=args.fallback_fps,
+        dataset_info=dataset_info,
     )
     metrics_summary = evaluate_predictions(preds_df, eval_dir, eval_cfg)
 
@@ -596,11 +652,21 @@ def run(args: argparse.Namespace) -> dict:
         "mode": mode,
         "device": str(device),
         "inputs": [str(p) for p in csv_paths],
+        "hyperparameters": {
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+            "optimizer": "AdamW",
+            "weight_decay": args.weight_decay,
+            "patience": args.patience,
+            "focal_gamma": args.focal_gamma,
+        },
         "split_sizes": {
             "train": int(len(split.train_df)),
             "val": int(len(split.val_df)),
             "test": int(len(split.test_df)),
         },
+        "dataset_info": dataset_info,
         "dataset_sizes": {
             "train": int(len(train_ds)),
             "val": int(len(val_ds)),

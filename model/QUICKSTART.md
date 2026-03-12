@@ -65,7 +65,7 @@ uv run python model_pipelines/run_all.py
 완료 후 비교 결과가 아래 경로에 저장된다:
 
 ```
-model_evaluation/pipelines/comparison_results.csv
+model_evaluation/pipelines/{suite_name}/comparison_results.csv
 ```
 
 ---
@@ -116,34 +116,44 @@ uv run python model_pipelines/run_all.py --epochs 50 --batch-size 64
 
 ## 6. 실행 결과 위치
 
+`run_all.py` 배치 실행 기준 구조:
+
 ```
 model_evaluation/pipelines/
-└── {model_id}/
-    ├── latest.json              ← 최신 실험 경로 포인터
-    └── {yyyymmdd_HHMMSS}/
-        ├── model.pt             ← 학습된 가중치
-        ├── preds_test.csv       ← 테스트 예측값
-        ├── train_history.csv    ← epoch별 loss/acc
-        ├── run_summary.json     ← 전체 메트릭 요약
-        └── evaluation/
-            ├── metrics_summary.json
-            ├── confusion_matrix.png
-            ├── per_class_report.csv
-            └── latency_cdf.png
+├── latest_suite.json            ← 가장 최근 run_all suite 포인터
+└── {yyyymmdd_HHMMSS}__{dataset_tag}/
+    ├── comparison_suite.json    ← 이번 배치의 입력 CSV / 모델 목록 메타데이터
+    ├── comparison_results.csv   ← 이번 배치의 전체 비교표
+    └── {model_id}/
+        ├── latest.json          ← 이 suite 안에서의 최신 실험 포인터
+        └── {yyyymmdd_HHMMSS}/
+            ├── model.pt             ← 학습된 가중치
+            ├── preds_test.csv       ← 테스트 예측값
+            ├── train_history.csv    ← epoch별 loss/acc
+            ├── run_summary.json     ← 전체 메트릭 요약
+            └── evaluation/
+                ├── dataset_info.json    ← 입력 CSV / split source group 정보
+                ├── metrics_summary.json
+                ├── confusion_matrix.png
+                ├── per_class_report.csv
+                └── latency_cdf.png
 ```
+
+`run_pipeline.py` 단독 실행은 기존처럼 `model_evaluation/pipelines/{model_id}/{timestamp}/` 아래에 바로 저장된다.
 
 ---
 
 ## 7. 결과 빠르게 확인
 
 ```bash
-# 전체 모델 비교표
-cat model_evaluation/pipelines/comparison_results.csv
+# 가장 최근 batch 확인
+cat model_evaluation/pipelines/latest_suite.json
+
+# 해당 suite 안의 비교표 확인
+cat model_evaluation/pipelines/{suite_name}/comparison_results.csv
 
 # 특정 모델 메트릭
-cat model_evaluation/pipelines/mlp_baseline/latest.json
-# → latest_run 경로 확인 후
-cat {latest_run경로}/run_summary.json
+cat model_evaluation/pipelines/{suite_name}/mlp_baseline/latest.json
 ```
 
 ---
@@ -166,9 +176,11 @@ uv run python "model_evaluation/모델별영상체크/video_check_app.py"
 
 ```bash
 uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
-  --run-dir model_evaluation/pipelines/mlp_baseline/20260310_082223 \
+  --run-dir model_evaluation/pipelines/{suite_name}/mlp_baseline \
   --video ../data/raw_data/4_slow_right_man3.mp4
 ```
+
+`--run-dir`에는 모델 폴더(`latest.json` 기준)나 실제 timestamp run 폴더 둘 다 사용할 수 있다.
 
 ### 재생 컨트롤
 

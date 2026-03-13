@@ -197,11 +197,26 @@ def draw_overlay(frame: np.ndarray, ef: ErrorFrame, fps: float, class_names: lis
     pred_name = class_names[ef.pred_idx] if ef.pred_idx < len(class_names) else str(ef.pred_idx)
     gt_color   = _LABEL_COLORS.get(gt_name, _DEFAULT_COLOR)
     pred_color = (0, 220, 0) if ef.gt_idx == ef.pred_idx else (0, 0, 255)
-    label_y = h - 14
-    cv2.putText(out, f"GT: {gt_name}",
-                (8, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.85, gt_color, 2, cv2.LINE_AA)
-    cv2.putText(out, f"PRED: {pred_name}  ({ef.confidence:.2f})",
-                (w // 2, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.85, pred_color, 2, cv2.LINE_AA)
+    label_font_scale = 0.85 * 1.2
+    label_thickness = 2
+    label_x = 24
+    pred_text = f"PRED: {pred_name}  ({ef.confidence:.2f})"
+    gt_text = f"GT: {gt_name}"
+    pred_size, pred_base = cv2.getTextSize(pred_text, cv2.FONT_HERSHEY_SIMPLEX,
+                                           label_font_scale, label_thickness)
+    gt_size, gt_base = cv2.getTextSize(gt_text, cv2.FONT_HERSHEY_SIMPLEX,
+                                       label_font_scale, label_thickness)
+    guide_gap = 56
+    line_gap = 18
+    gt_y = h - guide_gap
+    pred_y = max(bar_h + pred_size[1] + pred_base + 8,
+                 gt_y - gt_size[1] - gt_base - line_gap)
+    cv2.putText(out, pred_text,
+                (label_x, pred_y), cv2.FONT_HERSHEY_SIMPLEX, label_font_scale,
+                pred_color, label_thickness, cv2.LINE_AA)
+    cv2.putText(out, gt_text,
+                (label_x, gt_y), cv2.FONT_HERSHEY_SIMPLEX, label_font_scale,
+                gt_color, label_thickness, cv2.LINE_AA)
 
     # 우측 상단 확률 바
     bar_top, bar_max_w = bar_h + 6, 110

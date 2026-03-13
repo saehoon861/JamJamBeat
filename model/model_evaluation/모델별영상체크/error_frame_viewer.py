@@ -64,7 +64,7 @@ _COLOR_CONTEXT = (0, 200, 255)   # 노랑 — context 프레임 테두리
 KEY_LEFT  = 65361
 KEY_RIGHT = 65363
 
-SOURCE_FILE_ALL = "── 전체 ──"
+SOURCE_FILE_ALL = "[ All ]"
 
 
 # ── 데이터 클래스 ──────────────────────────────────────────────────────────────
@@ -103,18 +103,21 @@ def resolve_run_dir(path_str: str) -> Path:
 
 
 # ── 탐색 ──────────────────────────────────────────────────────────────────────
+_GT_CSV_NAMES = [
+    "man1_right_for_poc.csv",
+    "man2_right_for_poc.csv",
+    "man3_right_for_poc.csv",
+    "woman1_right_for_poc.csv",
+]
+
+
 def discover_gt_csvs() -> list[Path]:
-    """data_fusion/ 아래의 CSV 중 source_file·frame_idx·gesture 컬럼을 가진 파일을 탐색."""
-    required = {"source_file", "frame_idx", "gesture"}
+    """ground truth CSV 4개만 반환한다. 존재하는 파일만 포함."""
     result: list[Path] = []
-    for p in sorted(DATA_FUSION_ROOT.glob("*.csv")):
-        try:
-            with p.open(encoding="utf-8") as f:
-                header = set(f.readline().strip().split(","))
-            if required.issubset(header):
-                result.append(p)
-        except Exception:
-            pass
+    for name in _GT_CSV_NAMES:
+        p = DATA_FUSION_ROOT / name
+        if p.exists():
+            result.append(p)
     return result
 
 

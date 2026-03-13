@@ -244,66 +244,62 @@ uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
 
 ## 10. 오류 프레임 분석 (예측 vs Ground Truth 비교)
 
-학습된 모델의 추론 결과를 ground truth 라벨과 프레임 단위로 비교해, **틀린 프레임만** 오버레이 영상으로 저장한다.
+학습된 모델의 추론 결과를 ground truth 라벨과 프레임 단위로 비교해, **틀린 프레임만** 오버레이로 확인하고 영상으로 저장한다.
 
 **사전 조건:** 프로젝트 루트에 `hand_landmarker.task` 파일이 있어야 한다.
 
-**ground truth CSV:** `source_file`, `frame_idx`, `gesture` 컬럼이 있는 라벨 CSV
-
-```
-data_fusion/man1_right_for_poc.csv
-data_fusion/man2_right_for_poc.csv
-data_fusion/man3_right_for_poc.csv
-data_fusion/woman1_right_for_poc.csv
-```
-
-### 단일 CSV 분석
+### UI 모드 (드롭다운으로 Run / CSV / source_file 선택)
 
 ```bash
+uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py"
+```
+
+드롭다운에서 Trained Run, Ground Truth CSV, Source File(전체 또는 개별)을 선택 후:
+- **Analyze & View** — 추론 후 OpenCV 창에서 오류 프레임 탐색
+- **Export MP4** — 오류 프레임 영상 + 요약 CSV 저장
+
+### CLI 모드 (직접 지정 + 저장)
+
+```bash
+# 단일 CSV
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
   --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
   --csv data_fusion/man1_right_for_poc.csv
-```
 
-### 4개 CSV 전체 분석 + 앞뒤 context 포함
-
-```bash
+# 4개 CSV 전체 + 앞뒤 5프레임 context
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
-  --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
+  --run-dir model_evaluation/pipelines/mlp_baseline \
   --csv data_fusion/man1_right_for_poc.csv \
   --csv data_fusion/man2_right_for_poc.csv \
   --csv data_fusion/man3_right_for_poc.csv \
   --csv data_fusion/woman1_right_for_poc.csv \
   --context-frames 5
-```
 
-### latest.json 포인터 사용 (가장 최근 run 자동 선택)
-
-```bash
-uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
-  --run-dir model_evaluation/pipelines/mlp_baseline \
-  --csv data_fusion/man1_right_for_poc.csv
-```
-
-### 특정 source_file만 선택 분석
-
-```bash
+# 특정 source_file만
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
   --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
   --csv data_fusion/man1_right_for_poc.csv \
   --source-filter 3_fast_right_man1 3_slow_right_man1
 ```
 
-### 주요 옵션
+### 재생 컨트롤 (OpenCV 창)
+
+| 키 | 동작 |
+|----|------|
+| `Space` | 재생 / 일시정지 |
+| `A` / `←` | 이전 오류 프레임 |
+| `D` / `→` | 다음 오류 프레임 |
+| `R` | 처음으로 |
+| `Q` / `Esc` | 종료 |
+
+### CLI 주요 옵션
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
 | `--run-dir` | (필수) | model.pt 위치 또는 latest.json 있는 폴더 |
 | `--csv` | (필수) | ground truth CSV. 반복 사용 가능 |
-| `--output-dir` | `run_dir/error_analysis/` | 출력 저장 폴더 |
 | `--context-frames` | `0` | 오류 프레임 앞뒤로 포함할 프레임 수 |
 | `--source-filter` | 전체 | 분석할 source_file 이름 목록 |
-| `--fps` | `10.0` | 출력 영상 FPS |
 
 ### 출력 결과
 

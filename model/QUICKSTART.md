@@ -238,7 +238,85 @@ uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
 
 ---
 
-## 9. PoC 수용 기준
+## 9. 오류 프레임 분석 (예측 vs Ground Truth 비교)
+
+학습된 모델의 추론 결과를 ground truth 라벨과 프레임 단위로 비교해, **틀린 프레임만** 오버레이 영상으로 저장한다.
+
+**사전 조건:** 프로젝트 루트에 `hand_landmarker.task` 파일이 있어야 한다.
+
+**ground truth CSV:** `source_file`, `frame_idx`, `gesture` 컬럼이 있는 라벨 CSV
+
+```
+data_fusion/man1_right_for_poc.csv
+data_fusion/man2_right_for_poc.csv
+data_fusion/man3_right_for_poc.csv
+data_fusion/woman1_right_for_poc.csv
+```
+
+### 단일 CSV 분석
+
+```bash
+uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
+  --csv data_fusion/man1_right_for_poc.csv
+```
+
+### 4개 CSV 전체 분석 + 앞뒤 context 포함
+
+```bash
+uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
+  --csv data_fusion/man1_right_for_poc.csv \
+  --csv data_fusion/man2_right_for_poc.csv \
+  --csv data_fusion/man3_right_for_poc.csv \
+  --csv data_fusion/woman1_right_for_poc.csv \
+  --context-frames 5
+```
+
+### latest.json 포인터 사용 (가장 최근 run 자동 선택)
+
+```bash
+uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline \
+  --csv data_fusion/man1_right_for_poc.csv
+```
+
+### 특정 source_file만 선택 분석
+
+```bash
+uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
+  --csv data_fusion/man1_right_for_poc.csv \
+  --source-filter 3_fast_right_man1 3_slow_right_man1
+```
+
+### 주요 옵션
+
+| 옵션 | 기본값 | 설명 |
+|------|--------|------|
+| `--run-dir` | (필수) | model.pt 위치 또는 latest.json 있는 폴더 |
+| `--csv` | (필수) | ground truth CSV. 반복 사용 가능 |
+| `--output-dir` | `run_dir/error_analysis/` | 출력 저장 폴더 |
+| `--context-frames` | `0` | 오류 프레임 앞뒤로 포함할 프레임 수 |
+| `--source-filter` | 전체 | 분석할 source_file 이름 목록 |
+| `--fps` | `10.0` | 출력 영상 FPS |
+
+### 출력 결과
+
+```
+run_dir/error_analysis/
+├── error_frames_{model_id}.mp4   ← 오류 프레임 모음 영상
+└── error_summary.csv             ← 프레임별 오류 요약표
+```
+
+영상 오버레이 기호:
+- **빨간 테두리** = 실제 오류 프레임
+- **노란 테두리** = context 프레임 (주변)
+- 하단 좌: `GT: {클래스}` / 하단 우: `PRED: {클래스} (확률)`
+
+---
+
+## 10. PoC 수용 기준
 
 | 지표 | 기준 |
 |------|------|

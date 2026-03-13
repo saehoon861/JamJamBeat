@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>아이들 악기 소리 테스트</title>
+  <style>
+    body {
+      font-family: 'Noto Sans KR', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+
+    h1 {
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+      margin-bottom: 30px;
+    }
+
+    .instruments-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      max-width: 1200px;
+      width: 100%;
+    }
+
+    .instrument-card {
+      background: white;
+      border-radius: 20px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .instrument-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+    }
+
+    .instrument-title {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .instrument-description {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 15px;
+      line-height: 1.4;
+    }
+
+    .note-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .note-btn {
+      flex: 1;
+      min-width: 45px;
+      padding: 10px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .note-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .note-btn:active {
+      transform: scale(0.95);
+    }
+
+    .play-btn {
+      width: 100%;
+      padding: 15px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .play-btn:hover {
+      transform: scale(1.02);
+      box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+    }
+
+    .play-btn:active {
+      transform: scale(0.98);
+    }
+
+    .unlock-btn {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 15px 30px;
+      border: none;
+      border-radius: 50px;
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+      transition: all 0.2s;
+    }
+
+    .unlock-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+    }
+
+    .unlock-btn.active {
+      background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+
+    .emoji {
+      font-size: 40px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <button class="unlock-btn" id="unlockBtn">🔊 소리 활성화</button>
+
+  <h1>🎵 아이들을 위한 6가지 멜로디 악기 🎵</h1>
+
+  <div class="instruments-grid">
+    <!-- 1. 쿵 (북/드럼) -->
+    <div class="instrument-card">
+      <div class="emoji">🥁</div>
+      <div class="instrument-title">1. 쿵 (북/드럼)</div>
+      <div class="instrument-description">심장 박동처럼 일정한 중심 박자를 잡아줍니다. (안정감)</div>
+      <div class="note-buttons">
+        <button class="note-btn" data-instrument="drum" data-note="0">도</button>
+        <button class="note-btn" data-instrument="drum" data-note="1">레</button>
+        <button class="note-btn" data-instrument="drum" data-note="2">미</button>
+        <button class="note-btn" data-instrument="drum" data-note="3">파</button>
+        <button class="note-btn" data-instrument="drum" data-note="4">솔</button>
+      </div>
+    </div>
+
+    <!-- 2. 챵 (탬버린/심벌즈) -->
+    <div class="instrument-card">
+      <div class="emoji">🎺</div>
+      <div class="instrument-title">2. 챵 (탬버린/심벌즈)</div>
+      <div class="instrument-description">중간중간 흥을 돋우는 화려한 리듬을 넣습니다. (에너지)</div>
+      <div class="note-buttons">
+        <button class="note-btn" data-instrument="tambourine" data-note="0">도</button>
+        <button class="note-btn" data-instrument="tambourine" data-note="1">레</button>
+        <button class="note-btn" data-instrument="tambourine" data-note="2">미</button>
+        <button class="note-btn" data-instrument="tambourine" data-note="3">파</button>
+        <button class="note-btn" data-instrument="tambourine" data-note="4">솔</button>
+      </div>
+    </div>
+
+    <!-- 3. 도레미 (실로폰/건반) -->
+    <div class="instrument-card">
+      <div class="emoji">🎹</div>
+      <div class="instrument-title">3. 도레미 (실로폰/건반)</div>
+      <div class="instrument-description">중심이 되는 예쁜 멜로디를 연주합니다. (선율)</div>
+      <div class="note-buttons">
+        <button class="note-btn" data-instrument="xylophone" data-note="0">도</button>
+        <button class="note-btn" data-instrument="xylophone" data-note="1">레</button>
+        <button class="note-btn" data-instrument="xylophone" data-note="2">미</button>
+        <button class="note-btn" data-instrument="xylophone" data-note="3">파</button>
+        <button class="note-btn" data-instrument="xylophone" data-note="4">솔</button>
+        <button class="note-btn" data-instrument="xylophone" data-note="5">라</button>
+        <button class="note-btn" data-instrument="xylophone" data-note="6">시</button>
+      </div>
+    </div>
+
+    <!-- 4. 휘파람 (리코더/플루트) -->
+    <div class="instrument-card">
+      <div class="emoji">🎶</div>
+      <div class="instrument-title">4. 휘파람 (리코더/플루트)</div>
+      <div class="instrument-description">새소리처럼 높고 맑은 포인트 멜로디를 더합니다. (장식)</div>
+      <div class="note-buttons">
+        <button class="note-btn" data-instrument="whistle" data-note="0">도</button>
+        <button class="note-btn" data-instrument="whistle" data-note="1">레</button>
+        <button class="note-btn" data-instrument="whistle" data-note="2">미</button>
+        <button class="note-btn" data-instrument="whistle" data-note="3">파</button>
+        <button class="note-btn" data-instrument="whistle" data-note="4">솔</button>
+      </div>
+    </div>
+
+    <!-- 5. 랜덤 동물 소리 -->
+    <div class="instrument-card">
+      <div class="emoji">🐾</div>
+      <div class="instrument-title">5. 랜덤 동물 소리</div>
+      <div class="instrument-description">어떤 동물이 나올지 모르는 깜짝 재미 요소입니다. (서프라이즈)</div>
+      <button class="play-btn" data-instrument="animal">🎲 랜덤 동물 소리!</button>
+    </div>
+
+    <!-- 6. 반짝 (트라이앵글/종) -->
+    <div class="instrument-card">
+      <div class="emoji">✨</div>
+      <div class="instrument-title">6. 반짝 (트라이앵글/종)</div>
+      <div class="instrument-description">곡의 시작, 끝, 혹은 분위기가 바뀔 때 신비로움을 줍니다. (전환)</div>
+      <div class="note-buttons">
+        <button class="note-btn" data-instrument="triangle" data-note="0">도</button>
+        <button class="note-btn" data-instrument="triangle" data-note="1">레</button>
+        <button class="note-btn" data-instrument="triangle" data-note="2">미</button>
+        <button class="note-btn" data-instrument="triangle" data-note="3">파</button>
+        <button class="note-btn" data-instrument="triangle" data-note="4">솔</button>
+        <button class="note-btn" data-instrument="triangle" data-note="5">라</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as Audio from './src/js/audio.js';
+
+    const unlockBtn = document.getElementById('unlockBtn');
+    let audioUnlocked = false;
+
+    // 소리 활성화 버튼
+    unlockBtn.addEventListener('click', async () => {
+      const success = await Audio.unlockAudioContext();
+      if (success) {
+        audioUnlocked = true;
+        unlockBtn.textContent = '🔊 소리 활성화됨!';
+        unlockBtn.classList.add('active');
+        console.log('오디오 컨텍스트 활성화 성공!');
+      } else {
+        console.error('오디오 컨텍스트 활성화 실패');
+      }
+    });
+
+    // 악기 소리 재생 함수 매핑
+    const instrumentFunctions = {
+      drum: Audio.playKids_Drum,
+      tambourine: Audio.playKids_Tambourine,
+      xylophone: Audio.playKids_Xylophone,
+      whistle: Audio.playKids_Whistle,
+      animal: Audio.playKids_AnimalSurprise,
+      triangle: Audio.playKids_Triangle
+    };
+
+    // 음표 버튼 클릭 이벤트
+    document.querySelectorAll('.note-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!audioUnlocked) {
+          alert('먼저 "소리 활성화" 버튼을 클릭해주세요!');
+          return;
+        }
+
+        const instrument = btn.dataset.instrument;
+        const note = parseInt(btn.dataset.note);
+        const playFunction = instrumentFunctions[instrument];
+
+        if (playFunction) {
+          playFunction(note);
+
+          // 버튼 시각 효과
+          btn.style.transform = 'scale(0.9)';
+          setTimeout(() => {
+            btn.style.transform = 'scale(1)';
+          }, 100);
+        }
+      });
+    });
+
+    // 랜덤 동물 소리 버튼
+    document.querySelectorAll('.play-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!audioUnlocked) {
+          alert('먼저 "소리 활성화" 버튼을 클릭해주세요!');
+          return;
+        }
+
+        const instrument = btn.dataset.instrument;
+        const playFunction = instrumentFunctions[instrument];
+
+        if (playFunction) {
+          playFunction();
+
+          // 버튼 시각 효과
+          btn.style.transform = 'scale(0.95)';
+          setTimeout(() => {
+            btn.style.transform = 'scale(1)';
+          }, 100);
+        }
+      });
+    });
+
+    // 키보드 지원 (옵션)
+    document.addEventListener('keydown', (e) => {
+      if (!audioUnlocked) return;
+
+      const keyMap = {
+        // 드럼: z, x, c, v, b
+        'z': { instrument: 'drum', note: 0 },
+        'x': { instrument: 'drum', note: 1 },
+        'c': { instrument: 'drum', note: 2 },
+        'v': { instrument: 'drum', note: 3 },
+        'b': { instrument: 'drum', note: 4 },
+
+        // 실로폰: a, s, d, f, g, h, j
+        'a': { instrument: 'xylophone', note: 0 },
+        's': { instrument: 'xylophone', note: 1 },
+        'd': { instrument: 'xylophone', note: 2 },
+        'f': { instrument: 'xylophone', note: 3 },
+        'g': { instrument: 'xylophone', note: 4 },
+        'h': { instrument: 'xylophone', note: 5 },
+        'j': { instrument: 'xylophone', note: 6 },
+
+        // 동물: Space
+        ' ': { instrument: 'animal', note: null }
+      };
+
+      const key = e.key.toLowerCase();
+      if (keyMap[key]) {
+        const { instrument, note } = keyMap[key];
+        const playFunction = instrumentFunctions[instrument];
+        if (playFunction) {
+          if (note !== null) {
+            playFunction(note);
+          } else {
+            playFunction();
+          }
+        }
+        e.preventDefault();
+      }
+    });
+
+    console.log('🎵 아이들 악기 테스트 페이지 로드 완료!');
+    console.log('키보드 단축키:');
+    console.log('- 드럼: z, x, c, v, b');
+    console.log('- 실로폰: a, s, d, f, g, h, j');
+    console.log('- 동물: 스페이스바');
+  </script>
+</body>
+</html>

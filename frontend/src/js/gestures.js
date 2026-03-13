@@ -58,7 +58,7 @@ export function detectGesture(landmarks, now, sessionStarted) {
 
 const DEFAULT_CONFIDENCE_ENTER = 0.58;
 const DEFAULT_CONFIDENCE_HOLD = 0.46;
-const DEFAULT_STABLE_FRAMES = 2;
+const DEFAULT_STABLE_FRAMES = 1;
 const DEFAULT_CLEAR_FRAMES = 1;
 
 function parseNumberParam(name, fallback, min, max) {
@@ -73,11 +73,21 @@ const STABLE_FRAMES = Math.round(parseNumberParam("gestureStableFrames", DEFAULT
 const CLEAR_FRAMES = Math.round(parseNumberParam("gestureClearFrames", DEFAULT_CLEAR_FRAMES, 1, 6));
 
 const CLASS_SPECIFIC_ENTER = {
-  Pinky: parseNumberParam("gestureEnterPinky", 0.42, 0.2, 0.95)
+  Pinky: parseNumberParam("gestureEnterPinky", 0.36, 0.2, 0.95),
+  Animal: parseNumberParam("gestureEnterAnimal", 0.34, 0.2, 0.95),
+  KHeart: parseNumberParam("gestureEnterKHeart", 0.36, 0.2, 0.95)
 };
 
 const CLASS_SPECIFIC_HOLD = {
-  Pinky: parseNumberParam("gestureHoldPinky", 0.32, 0.1, CLASS_SPECIFIC_ENTER.Pinky)
+  Pinky: parseNumberParam("gestureHoldPinky", 0.24, 0.1, CLASS_SPECIFIC_ENTER.Pinky),
+  Animal: parseNumberParam("gestureHoldAnimal", 0.22, 0.1, CLASS_SPECIFIC_ENTER.Animal),
+  KHeart: parseNumberParam("gestureHoldKHeart", 0.24, 0.1, CLASS_SPECIFIC_ENTER.KHeart)
+};
+
+const CLASS_SPECIFIC_STABLE_FRAMES = {
+  Pinky: Math.round(parseNumberParam("gestureStableFramesPinky", 1, 1, 8)),
+  Animal: Math.round(parseNumberParam("gestureStableFramesAnimal", 1, 1, 8)),
+  KHeart: Math.round(parseNumberParam("gestureStableFramesKHeart", 1, 1, 8))
 };
 
 const stableState = {
@@ -121,9 +131,13 @@ function normalizeModelLabel(rawLabel) {
   ) return "OpenPalm"; // 손바닥 관련 이름들을 하나로 통일합니다.
   if (label === "v" || label === "isv" || label === "class3") return "V"; // 브이 관련 이름들을 하나로 통일합니다.
   if (label === "pinky" || label === "ispinky" || label === "pinky class" || label === "pinky_class" || label === "class4" || label === "class 4" || label === "4") return "Pinky"; // 새끼손가락 제스처 이름을 맞춥니다.
-  if (label === "animal" || label === "isanimal" || label === "class5") return "Animal"; // 애니멀 제스처 이름을 맞춥니다.
-  if (label === "k-heart" || label === "kheart" || label === "is_k_heart" || label === "class6") return "KHeart"; // K-하트 제스처 이름을 맞춥니다.
+  if (label === "animal" || label === "isanimal" || label === "class5" || label === "class 5" || label === "5") return "Animal"; // 애니멀 제스처 이름을 맞춥니다.
+  if (label === "k-heart" || label === "kheart" || label === "is_k_heart" || label === "class6" || label === "class 6" || label === "6") return "KHeart"; // K-하트 제스처 이름을 맞춥니다.
   return "None"; // 어디에도 해당하지 않으면 인식 실패로 처리합니다.
+}
+
+function getStableFramesForLabel(label) {
+  return CLASS_SPECIFIC_STABLE_FRAMES[label] ?? STABLE_FRAMES;
 }
 
 function mapRulesToResult(rules) {
@@ -175,7 +189,7 @@ function stabilize(rawResult) {
       stableState.candidateFrames = 1; // 첫 번째 등장으로 기록합니다.
     }
 
-    if (stableState.candidateFrames >= STABLE_FRAMES) {
+    if (stableState.candidateFrames >= getStableFramesForLabel(rawResult.label)) {
       stableState.stableLabel = rawResult.label; // 여러 번 반복되면 최종 동작으로 채택합니다.
       stableState.confidence = rawResult.confidence; // 그때의 확신도도 저장합니다.
       stableState.source = rawResult.source; // 규칙인지 모델인지도 같이 저장합니다.

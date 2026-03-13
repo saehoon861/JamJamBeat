@@ -4,6 +4,40 @@
 // "어두운색의 살집 있는 말랑말랑한 손" 디자인이 포함되어 있습니다.
 
 let smoothedHandLandmarks = null;
+let smoothedRenderScale = 1;
+
+const TARGET_PALM_PX_RATIO = 0.14;
+const MIN_TARGET_PALM_PX = 84;
+const MAX_TARGET_PALM_PX = 150;
+const MIN_RENDER_SCALE = 0.85;
+const MAX_RENDER_SCALE = 2.6;
+
+function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY) {
+    const wrist = stable?.[0];
+    const middleMcp = stable?.[9];
+    if (!wrist || !middleMcp) return smoothedRenderScale;
+
+    const wx = toCanvasX(wrist.x);
+    const wy = toCanvasY(wrist.y);
+    const mx = toCanvasX(middleMcp.x);
+    const my = toCanvasY(middleMcp.y);
+
+    const measuredPalmPx = Math.max(1, Math.hypot(wx - mx, wy - my));
+    const targetPalmPx = clampNumber(
+        Math.min(canvas.width, canvas.height) * TARGET_PALM_PX_RATIO,
+        MIN_TARGET_PALM_PX,
+        MAX_TARGET_PALM_PX
+    );
+
+    const instantScale = clampNumber(targetPalmPx / measuredPalmPx, MIN_RENDER_SCALE, MAX_RENDER_SCALE);
+    smoothedRenderScale += (instantScale - smoothedRenderScale) * 0.22;
+
+    return smoothedRenderScale;
+}
 
 // 손의 떨림을 줄이기 위해 이전 좌표와 현재 좌표를 보간(Interpolation)하는 함수
 // 손이 떨리는 것을 방지하기 위해, 이전 위치와 현재 위치를 자연스럽게 이어주는 '부드러운 보정' 기능입니다.
@@ -13,7 +47,7 @@ export function getSmoothedLandmarks(rawLandmarks) {
         return smoothedHandLandmarks;
     }
 
-    const smoothing = 0.42; // 값이 작을수록 더 부드럽지만 반응 속도가 약간 느려짐
+    const smoothing = 0.68; // 값이 클수록 손 움직임을 더 빠르게 따라갑니다.
     smoothedHandLandmarks = smoothedHandLandmarks.map((prev, i) => {
         const next = rawLandmarks[i];
         return {
@@ -35,15 +69,30 @@ export function drawHand(ctx, landmarks, canvas, t) {
     const toCanvasX = (x) => (1 - x) * canvas.width; // 좌우 반전 처리
     const toCanvasY = (y) => y * canvas.height;
 
+    const rawPoint = (idx) => ({ x: toCanvasX(stable[idx].x), y: toCanvasY(stable[idx].y) });
+    const rawPalmPoints = [17, 13, 9, 5, 1, 0].map(rawPoint);
+
+    let cx = 0, cy = 0;
+    rawPalmPoints.forEach((p) => { cx += p.x; cy += p.y; });
+    cx /= rawPalmPoints.length; cy /= rawPalmPoints.length;
+
+    const renderScale = computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY);
+
     // 특정 랜드마크의 픽셀 좌표를 반환하는 헬퍼
-    const point = (idx) => ({ x: toCanvasX(stable[idx].x), y: toCanvasY(stable[idx].y) });
+    const point = (idx) => {
+        const p = rawPoint(idx);
+        return {
+            x: cx + (p.x - cx) * renderScale,
+            y: cy + (p.y - cy) * renderScale
+        };
+    };
 
     // 손바닥 영역을 구성하는 포인트들
     const palmIndices = [17, 13, 9, 5, 1, 0];
     const palmPoints = palmIndices.map(point);
 
     // 손바닥 중심 계산
-    let cx = 0, cy = 0;
+    cx = 0; cy = 0;
     palmPoints.forEach((p) => { cx += p.x; cy += p.y; });
     cx /= palmPoints.length; cy /= palmPoints.length;
 
@@ -147,11 +196,11 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
     // 2. 손가락 그리기
     const fingers = [
-        { joints: [1, 2, 3, 4], color: "#ffd8ee", shadow: "#d988b5", size: 19.5 },
-        { joints: [5, 6, 7, 8], color: "#ffd0ea", shadow: "#d581ae", size: 19 },
-        { joints: [9, 10, 11, 12], color: "#ffcee8", shadow: "#cf78a7", size: 20.2 },
-        { joints: [13, 14, 15, 16], color: "#ffc8e5", shadow: "#c96f9f", size: 18.8 },
-        { joints: [17, 18, 19, 20], color: "#ffc2df", shadow: "#bf6596", size: 18 }
+        { joints: [1, 2, 3, 4], color: "#ffd8ee", shadow: "#d988b5", size: 15.6 },
+        { joints: [5, 6, 7, 8], color: "#ffd0ea", shadow: "#d581ae", size: 15.2 },
+        { joints: [9, 10, 11, 12], color: "#ffcee8", shadow: "#cf78a7", size: 16.2 },
+        { joints: [13, 14, 15, 16], color: "#ffc8e5", shadow: "#c96f9f", size: 15.1 },
+        { joints: [17, 18, 19, 20], color: "#ffc2df", shadow: "#bf6596", size: 14.4 }
     ];
 
     fingers.forEach((finger, fIdx) => {
@@ -163,13 +212,13 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
         // 마디 연결 그리기 (끝으로 갈수록 얇아지는 Tapering 적용)
         for (let i = 1; i < pts.length; i++) {
-            const r = Math.max(9.5, finger.size - i * 2.1);
+            const r = Math.max(7.2, finger.size - i * 1.95);
             drawCapsule(pts[i - 1], pts[i], r, finger.color, finger.shadow);
         }
 
         // 관절 노드 그리기 (젤리 같은 느낌이 나도록 동그랗게 그립니다)
         pts.forEach((p, i) => {
-            const r = Math.max(9.4, finger.size - i * 2.05);
+            const r = Math.max(7.0, finger.size - i * 1.9);
             drawJoint(p.x, p.y, r, "rgba(255, 245, 252, 0.76)", finger.color);
         });
     });
@@ -178,7 +227,7 @@ export function drawHand(ctx, landmarks, canvas, t) {
     const tipColors = ["#ffc5e7", "#ffbbe1", "#ffc0e4", "#ffb2db", "#ffa9d6"];
     [4, 8, 12, 16, 20].forEach((idx, i) => {
         const p = point(idx);
-        const r = 13 + Math.sin(t * 8 + i) * 1.6;
+        const r = 9 + Math.sin(t * 8 + i) * 1.2;
         drawJoint(p.x, p.y, r, "rgba(255,255,255,0.88)", tipColors[i]);
         // 상단 반짝임
         drawJoint(p.x - r * 0.3, p.y - r * 0.3, r * 0.42, "rgba(255,255,255,0.74)", "rgba(255,255,255,0)");

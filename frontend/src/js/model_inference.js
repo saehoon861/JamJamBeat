@@ -1,8 +1,10 @@
 // [model_inference.js] AI 선생님에게 "이 손모양이 뭐야?"라고 물어보고 답을 받아오는 '통신병' 역할의 파일입니다.
 // 복잡한 손동작은 컴퓨터가 직접 계산하기 어렵기 때문에 AI의 도움을 받습니다.
 
-const REQUEST_TIMEOUT_MS = 220;
-const REQUEST_INTERVAL_MS = 70;
+import { getConfiguredModelEndpoint } from "./env_config.js";
+
+const REQUEST_TIMEOUT_MS = 180;
+const REQUEST_INTERVAL_MS = 45;
 const FAIL_OPEN_AFTER = 5;
 const DISABLE_FOR_MS = 1200;
 
@@ -14,13 +16,7 @@ let lastPrediction = null; // 가장 최근에 받은 AI 예측 결과를 저장
 
 // AI 선생님이 어디 계시는지(서버 주소) 확인하는 기능입니다.
 function getConfiguredEndpoint() {
-  const queryEndpoint = new URLSearchParams(window.location.search).get("inferEndpoint"); // URL에 직접 적은 서버 주소를 확인합니다.
-  if (queryEndpoint && queryEndpoint.trim()) return queryEndpoint.trim(); // 있으면 그 주소를 가장 우선으로 사용합니다.
-
-  const globalEndpoint = window.__JAMJAM_MODEL_ENDPOINT; // 전역 변수로 미리 넣어둔 주소도 확인합니다.
-  if (typeof globalEndpoint === "string" && globalEndpoint.trim()) return globalEndpoint.trim(); // 올바른 문자열이면 사용합니다.
-
-  return null; // 둘 다 없으면 모델 서버를 쓰지 않습니다.
+  return getConfiguredModelEndpoint(); // URL/전역/.env 우선순위로 주소를 가져옵니다.
 }
 
 // 카메라로 찍은 손 위치 데이터가 올바른 형식인지 검사하고 정리하는 기능입니다.

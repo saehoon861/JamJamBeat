@@ -1,14 +1,25 @@
-import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
-import * as Renderer from "./renderer.js";
-import { resolveGesture } from "./gestures.js";
-import { getModelPrediction, getModelInferenceStatus } from "./model_inference.js";
+// [performance.js] 손 인식/모델 성능을 눈으로 확인하는 '점검실' 같은 파일입니다.
+// 카메라에서 손을 읽고, 규칙 기반 판정과 모델 기반 판정을 비교해서 화면에 보여줍니다.
 
+// MediaPipe 손 인식 도구를 가져옵니다.
+import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+// 손을 예쁘게 그리는 렌더러 모듈입니다.
+import * as Renderer from "./renderer.js";
+// 최종 제스처 결론을 내리는 함수입니다.
+import { resolveGesture } from "./gestures.js";
+// 모델의 원본 예측 결과와 통신 상태를 읽어옵니다.
+import { getModelPrediction, getModelInferenceStatus } from "./model_inference.js";
+import { getConfiguredModelEndpoint } from "./env_config.js";
+
+// 성능 로그를 localStorage 에 저장할 때 쓸 이름입니다.
 const PERF_LOG_KEY = "jamjam.perf.logs.v1";
 
+// 성능 페이지에서 쓸 비디오와 캔버스입니다.
 const video = document.getElementById("perfVideo");
 const canvas = document.getElementById("perfCanvas");
 const ctx = canvas.getContext("2d");
 
+// 아래는 성능 페이지 곳곳의 표시 칸들을 미리 연결해두는 부분입니다.
 const statusEl = document.getElementById("perfStatus");
 const testBtn = document.getElementById("perfTestButton");
 const resetBtn = document.getElementById("perfClearButton");
@@ -43,10 +54,12 @@ const DEFAULT_INFER_FPS = 30;
 const MIN_INFER_FPS = 8;
 const MAX_INFER_FPS = 60;
 
+// 숫자를 너무 작거나 크지 않게 특정 범위 안에 묶습니다.
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+// URL 설정값을 보고 성능 페이지에서 손 인식을 얼마나 자주 돌릴지 계산합니다.
 function getInferIntervalMs() {
   const raw = Number(new URLSearchParams(window.location.search).get("inferFps"));
   const fps = Number.isFinite(raw) ? clamp(Math.round(raw), MIN_INFER_FPS, MAX_INFER_FPS) : DEFAULT_INFER_FPS;
@@ -55,27 +68,25 @@ function getInferIntervalMs() {
 
 const INFER_INTERVAL_MS = getInferIntervalMs();
 
+// 현재 연결할 모델 서버 주소를 찾습니다.
 function getConfiguredEndpoint() {
-  const queryEndpoint = new URLSearchParams(window.location.search).get("inferEndpoint");
-  if (queryEndpoint && queryEndpoint.trim()) return queryEndpoint.trim();
-
-  const globalEndpoint = window.__JAMJAM_MODEL_ENDPOINT;
-  if (typeof globalEndpoint === "string" && globalEndpoint.trim()) return globalEndpoint.trim();
-
-  return null;
+  return getConfiguredModelEndpoint();
 }
 
+// GPU 로 돌릴지 CPU 로 돌릴지 선택합니다.
 function parseDelegate() {
   const raw = (new URLSearchParams(window.location.search).get("mpDelegate") || "gpu").trim().toUpperCase();
   return raw === "CPU" ? "CPU" : "GPU";
 }
 
+// 규칙 기반 / 모델 기반 / 혼합 모드 중 무엇을 쓸지 URL 에서 읽습니다.
 function getGestureModeFromUrl() {
   const raw = (new URLSearchParams(window.location.search).get("gestureMode") || "hybrid").trim().toLowerCase();
   if (raw === "rules" || raw === "model" || raw === "hybrid") return raw;
   return "hybrid";
 }
 
+// 현재 제스처 모드에 맞춰 성능 페이지 버튼 문구를 바꿉니다.
 function updateRuleToggleButton() {
   const mode = getGestureModeFromUrl();
   const enabled = mode !== "model";
@@ -88,6 +99,7 @@ function updateRuleToggleButton() {
   }
 }
 
+// 버튼을 누르면 URL 의 gestureMode 값을 바꾸고 페이지를 다시 엽니다.
 function toggleRuleBasedMode() {
   const params = new URLSearchParams(window.location.search);
   const mode = getGestureModeFromUrl();
@@ -97,17 +109,20 @@ function toggleRuleBasedMode() {
   window.location.search = params.toString();
 }
 
+// 비디오 영역 크기에 맞춰 성능용 캔버스 크기도 같이 맞춥니다.
 function setCanvasSize() {
   const rect = video.getBoundingClientRect();
   canvas.width = Math.max(1, Math.round(rect.width));
   canvas.height = Math.max(1, Math.round(rect.height));
 }
 
+// 숫자를 고정 소수점 문자열로 보기 좋게 바꿉니다.
 function formatNumber(value, digits = 3) {
   if (!Number.isFinite(value)) return "-";
   return value.toFixed(digits);
 }
 
+// 저장된 지연 시간 로그를 localStorage 에서 읽어옵니다.
 function readLatencyLogs() {
   try {
     const raw = localStorage.getItem(PERF_LOG_KEY);
@@ -119,6 +134,7 @@ function readLatencyLogs() {
   }
 }
 
+// 영어 라벨이나 class 번호를 사람이 읽기 쉬운 한국어 이름으로 바꿉니다.
 function toDisplayGestureLabel(label, classId = null) {
   const normalized = String(label || "").trim().toLowerCase();
   if (normalized === "none" || normalized === "class0" || classId === 0) return "아무것도 아님";
@@ -143,6 +159,7 @@ function formatMs(value) {
   return Number.isFinite(value) ? value.toFixed(1) : "-";
 }
 
+// 저장된 지연 시간 로그를 표와 요약 통계로 화면에 그려줍니다.
 function renderLatencyLogPanel() {
   const logs = readLatencyLogs();
   const soundLogs = logs.filter((log) => log?.soundKey !== "audio_unlock" && log?.soundKey !== "audio_unlock_fail");
@@ -192,6 +209,7 @@ function renderLatencyLogPanel() {
   });
 }
 
+// 네트워크 연결 상태와 최신 랜드마크 상태를 오른쪽 패널에 반영합니다.
 function updateNetworkPanel() {
   const status = getModelInferenceStatus(performance.now());
   netEndpointEl.textContent = getConfiguredEndpoint() || "(없음)";
@@ -202,9 +220,10 @@ function updateNetworkPanel() {
   renderLatencyLogPanel();
 }
 
+// 성능 페이지에서도 MediaPipe 손 인식 엔진을 준비합니다.
 async function initMediaPipe() {
   const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  const modelAssetPath = new URL("../../public/hand_landmarker.task", import.meta.url).toString();
+  const modelAssetPath = "/hand_landmarker.task";
 
   const preferred = parseDelegate();
   const fallback = preferred === "GPU" ? "CPU" : "GPU";
@@ -224,6 +243,7 @@ async function initMediaPipe() {
   }
 }
 
+// 성능 페이지용 카메라를 켜고 비디오 요소에 연결합니다.
 async function initCamera() {
   cameraStream = await navigator.mediaDevices.getUserMedia({
     video: {
@@ -238,6 +258,7 @@ async function initCamera() {
   setCanvasSize();
 }
 
+// 손이 안 잡혔을 때 오른쪽 결과 칸을 기본 상태로 되돌립니다.
 function resetPanel() {
   rawLabelEl.textContent = "-";
   rawConfidenceEl.textContent = "-";
@@ -248,6 +269,8 @@ function resetPanel() {
   benchResultEl.textContent = "아직 실행 전";
 }
 
+// 성능 페이지의 메인 루프입니다.
+// 손을 그리고, 모델/규칙 결과를 읽고, 각종 상태 패널도 계속 갱신합니다.
 function drawAndInfer() {
   if (!handLandmarker) {
     requestAnimationFrame(drawAndInfer);
@@ -268,14 +291,17 @@ function drawAndInfer() {
     try {
       const result = handLandmarker.detectForVideo(video, now);
       if (result.landmarks.length > 0) {
+        // 첫 번째 손을 대표 랜드마크로 사용합니다.
         latestLandmarks = result.landmarks[0];
         Renderer.drawHand(ctx, latestLandmarks, canvas, now * 0.001);
 
         if (pendingBenchmark && !testBtn.disabled) {
+          // 사용자가 벤치마크 버튼을 눌렀다면, 손이 잡힌 다음 바로 벤치마크를 실행합니다.
           pendingBenchmark = false;
           runBenchmark();
         }
 
+        // raw 는 모델 서버가 준 원본 값, finalGesture 는 최종 결론입니다.
         const raw = getModelPrediction(latestLandmarks, now);
         const finalGesture = resolveGesture(latestLandmarks, now, true);
 
@@ -298,6 +324,7 @@ function drawAndInfer() {
   requestAnimationFrame(drawAndInfer);
 }
 
+// 현재 손 좌표를 벤치마크 요청용 JSON 형식으로 바꿉니다.
 function getBenchmarkPayload() {
   const landmarks = Array.isArray(latestLandmarks) && latestLandmarks.length >= 21
     ? latestLandmarks.slice(0, 21).map((p) => ({
@@ -316,6 +343,7 @@ function getBenchmarkPayload() {
   };
 }
 
+// fetch 요청에 제한 시간을 추가하는 보조 함수입니다.
 async function postWithTimeout(url, payload, timeoutMs) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);

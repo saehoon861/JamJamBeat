@@ -18,7 +18,7 @@ let windGain = null; // 바람 소리 크기를 조절합니다.
 let birdTimer = null; // 새소리 발생 주기를 관리합니다.
 let dropTimer = null; // 나뭇잎 소리 발생 주기를 관리합니다.
 
-const SAMPLE_BASE = "/public/assets/sounds"; // 소리 파일들이 저장된 기본 폴더 주소입니다.
+const SAMPLE_BASE = "/assets/sounds"; // 소리 파일들이 저장된 기본 폴더 주소입니다.
 const SAMPLE_URLS = { // 각 악기별 실제 소리 파일 위치들입니다.
   drum: [`${SAMPLE_BASE}/드럼.mp3`, `${SAMPLE_BASE}/drum.mp3`, `${SAMPLE_BASE}/drum-mushroom.mp3`], // 드럼 소리입니다.
   xylophone: [`${SAMPLE_BASE}/피리.mp3`, `${SAMPLE_BASE}/whistle.mp3`, `${SAMPLE_BASE}/xylophone.mp3`, `${SAMPLE_BASE}/xylophone-vine.mp3`], // 피리(백합) 소리 우선입니다.
@@ -34,6 +34,20 @@ const SAMPLE_URLS = { // 각 악기별 실제 소리 파일 위치들입니다.
 const sampleBuffers = new Map();
 const sampleLoadPromises = new Map();
 let playbackContext = null;
+let transportAnchorSec = null;
+
+const INSTRUMENT_GRID_SEC = 0.3;
+const TRANSPORT_LOOKAHEAD_SEC = 0.02;
+const MIN_RETRIGGER_SEC = 0.12;
+
+const instrumentScheduleState = {
+  drum: { lastTime: -Infinity, nextGrid: 0 },
+  tambourine: { lastTime: -Infinity, nextGrid: 0 },
+  xylophone: { lastTime: -Infinity, nextGrid: 0 },
+  whistle: { lastTime: -Infinity, nextGrid: 0 },
+  triangle: { lastTime: -Infinity, nextGrid: 0 },
+  animal: { lastTime: -Infinity, nextGrid: 0 }
+};
 
 export function setPlaybackContext(context) {
   playbackContext = context && typeof context === "object" ? { ...context } : null;
@@ -59,6 +73,34 @@ function emitSoundPlayed(soundKey, playMode) {
 
 function nowTime() { // 현재 소리 엔진의 정확한 시각을 알려줍니다.
   return audioCtx ? audioCtx.currentTime : 0; // 엔진이 켜져 있으면 시간을, 아니면 0을 돌려줍니다.
+}
+
+function reserveInstrumentStart(instrumentType) {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return nowTime();
+
+  if (transportAnchorSec === null) {
+    transportAnchorSec = ctx.currentTime;
+  }
+
+  if (!instrumentScheduleState[instrumentType]) {
+    instrumentScheduleState[instrumentType] = { lastTime: -Infinity, nextGrid: 0 };
+  }
+  const state = instrumentScheduleState[instrumentType];
+  const now = ctx.currentTime + TRANSPORT_LOOKAHEAD_SEC;
+
+  if (now - state.lastTime < MIN_RETRIGGER_SEC) {
+    return state.lastTime;
+  }
+
+  const relative = Math.max(0, now - transportAnchorSec);
+  const grid = Math.ceil(relative / INSTRUMENT_GRID_SEC);
+  const scheduled = transportAnchorSec + (grid * INSTRUMENT_GRID_SEC);
+
+  state.lastTime = scheduled;
+  state.nextGrid = grid + 1;
+
+  return scheduled;
 }
 
 function clearScheduledTimers() { // 예약된 소리 일정들을 모두 취소하는 기능입니다.
@@ -689,4 +731,357 @@ export function playAnimalRoll() { // 특별한 '동물 구르기' 소리를 냅
     osc.start(t); // 재생!
     osc.stop(t + 0.16);
   });
+}
+
+// --- 아래는 아이들을 위한 6가지 새로운 멜로디 악기입니다 ---
+// 모든 악기는 C 메이저 스케일 기반으로 조화롭게 연주됩니다.
+
+// 모든 악기가 "같은 음악 흐름" 안에서 움직이도록 공통 코드 진행을 정의합니다.
+// 시간이 지나면 C -> Am -> F -> G 순서로 넘어가며, 각 악기는 현재 코드에 어울리는 음만 고르게 됩니다.
+// 코드가 너무 빨리 바뀌면 멜로디가 안정되기 전에 넘어가므로, 조금 더 천천히 진행시킵니다.
+const HARMONY_SECTION_SEC = 3.2;
+const HARMONY_PROGRESSION = [
+  {
+    name: "C",
+    drum: [130.81, 130.81, 196.0, 164.81],
+    tambourine: [659.25, 659.25, 783.99, 659.25],
+    xylophone: [523.25, 659.25, 587.33, 783.99, 659.25],
+    whistle: [523.25, 587.33, 659.25, 587.33],
+    triangle: [783.99, 1046.5, 783.99]
+  },
+  {
+    name: "Am",
+    drum: [110.0, 110.0, 164.81, 220.0],
+    tambourine: [659.25, 659.25, 880.0, 659.25],
+    xylophone: [659.25, 880.0, 783.99, 987.77, 880.0],
+    whistle: [659.25, 783.99, 880.0, 783.99],
+    triangle: [880.0, 1046.5, 880.0]
+  },
+  {
+    name: "F",
+    drum: [87.31, 87.31, 130.81, 174.61],
+    tambourine: [698.46, 698.46, 783.99, 698.46],
+    xylophone: [698.46, 783.99, 659.25, 880.0, 783.99],
+    whistle: [698.46, 783.99, 880.0, 783.99],
+    triangle: [698.46, 880.0, 698.46]
+  },
+  {
+    name: "G",
+    drum: [98.0, 98.0, 146.83, 196.0],
+    tambourine: [783.99, 783.99, 987.77, 783.99],
+    xylophone: [783.99, 987.77, 880.0, 783.99, 698.46],
+    whistle: [783.99, 880.0, 987.77, 880.0],
+    triangle: [783.99, 987.77, 783.99]
+  }
+];
+
+// 각 악기가 연주할 때마다 다음 음으로 진행하기 위한 카운터
+let drumBeatIndex = 0;
+let tambourineBeatIndex = 0;
+let xyloBeatIndex = 0;
+let whistleBeatIndex = 0;
+let triangleBeatIndex = 0;
+
+function getCurrentHarmonyFrame() {
+  const ctx = ensureAudioContext();
+  if (!ctx) return HARMONY_PROGRESSION[0];
+  const sectionIndex = Math.floor(ctx.currentTime / HARMONY_SECTION_SEC) % HARMONY_PROGRESSION.length;
+  return HARMONY_PROGRESSION[sectionIndex];
+}
+
+function getAutoHarmonyFrequency(trackName, beatIndex) {
+  const frame = getCurrentHarmonyFrame();
+  const pattern = frame?.[trackName];
+  if (!Array.isArray(pattern) || pattern.length === 0) return null;
+  return pattern[beatIndex % pattern.length];
+}
+
+// 1. 쿵 (북/드럼) - 심장 박동처럼 일정한 중심 박자 (안정감)
+// 베이스 라인: C - C - G - G - A - A - G (도도솔솔라라솔)
+export function playKids_Drum() {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+  emitSoundPlayed("kids_drum", "synth");
+
+  // 현재 코드 진행에 맞는 베이스 음을 선택합니다.
+  const freq = getAutoHarmonyFrequency("drum", drumBeatIndex) || 130.81;
+  drumBeatIndex++;
+
+  const t = reserveInstrumentStart("drum");
+  const kick = ctx.createOscillator();
+  const kickGain = ctx.createGain();
+
+  kick.type = "sine";
+  kick.frequency.setValueAtTime(freq * 1.3, t);
+  kick.frequency.exponentialRampToValueAtTime(freq, t + 0.08);
+
+  kickGain.gain.setValueAtTime(0.001, t);
+  kickGain.gain.exponentialRampToValueAtTime(0.72, t + 0.01);
+  kickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+
+  kick.connect(kickGain);
+  connectSource(kickGain, 0.08, 0.04);
+  kick.start(t);
+  kick.stop(t + 0.42);
+}
+
+// 2. 챵 (탬버린/심벌즈) - 화려한 리듬, 에너지
+// note 값을 직접 주면 그 음을, 생략하면 현재 코드 진행에 맞는 음을 자동으로 고릅니다.
+export function playKids_Tambourine(note) {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+  emitSoundPlayed("kids_tambourine", "synth");
+
+  const scale = [523.25, 587.33, 659.25, 698.46, 783.99]; // C5, D5, E5, F5, G5
+  const hasExplicitNote = Number.isFinite(note);
+  const freq = hasExplicitNote
+    ? scale[note % scale.length]
+    : (getAutoHarmonyFrequency("tambourine", tambourineBeatIndex) || scale[0]);
+  if (!hasExplicitNote) tambourineBeatIndex++;
+  const t = reserveInstrumentStart("tambourine");
+
+  // 메탈릭한 소리를 위한 노이즈
+  const src = ctx.createBufferSource();
+  const high = ctx.createBiquadFilter();
+  const ring = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+
+  src.buffer = createNoiseBuffer(ctx, 0.15, 0.8);
+  high.type = "highpass";
+  high.frequency.value = 3000;
+  ring.type = "bandpass";
+  ring.frequency.value = freq * 1.75;
+  ring.Q.value = 2.5;
+
+  gain.gain.setValueAtTime(0.001, t);
+  gain.gain.exponentialRampToValueAtTime(0.3, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+
+  src.connect(high);
+  high.connect(ring);
+  ring.connect(gain);
+  connectSource(gain, 0.12, 0.06);
+
+  src.start(t);
+  src.stop(t + 0.2);
+}
+
+// 3. 도레미 (실로폰/건반) - 예쁜 멜로디, 선율
+// 메인 게임에서 호출할 때는 note 없이 호출되어 자동 멜로디가 흐르도록 설계했습니다.
+export function playKids_Xylophone(note) {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+  emitSoundPlayed("kids_xylophone", "synth");
+
+  const scale = [523.25, 587.33, 659.25, 698.46, 783.99, 880.00, 987.77]; // C5-B5
+  const hasExplicitNote = Number.isFinite(note);
+  const freq = hasExplicitNote
+    ? scale[note % scale.length]
+    : (getAutoHarmonyFrequency("xylophone", xyloBeatIndex) || scale[0]);
+  if (!hasExplicitNote) xyloBeatIndex++;
+  const t = reserveInstrumentStart("xylophone");
+
+  const carrier = ctx.createOscillator();
+  const modulator = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  carrier.type = "sine";
+  modulator.type = "sine";
+  carrier.frequency.setValueAtTime(freq, t);
+  modulator.frequency.setValueAtTime(freq * 2.4, t); // 배음을 조금 줄여 덜 날카롭게 만듭니다.
+
+  gain.gain.setValueAtTime(0.001, t);
+  gain.gain.linearRampToValueAtTime(0.28, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.36);
+
+  carrier.connect(gain);
+  modulator.connect(gain);
+  connectSource(gain, 0.2, 0.12);
+
+  carrier.start(t);
+  modulator.start(t);
+  carrier.stop(t + 0.38);
+  modulator.stop(t + 0.38);
+}
+
+// 4. 휘파람 (리코더/플루트) - 높고 맑은 포인트 멜로디
+// 메인 게임에서는 카운터 멜로디 역할로 자동 음 선택을 합니다.
+export function playKids_Whistle(note) {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+  emitSoundPlayed("kids_whistle", "synth");
+
+  const scale = [523.25, 587.33, 659.25, 698.46, 783.99]; // C5, D5, E5, F5, G5
+  const hasExplicitNote = Number.isFinite(note);
+  const freq = hasExplicitNote
+    ? scale[note % scale.length]
+    : (getAutoHarmonyFrequency("whistle", whistleBeatIndex) || scale[0]);
+  if (!hasExplicitNote) whistleBeatIndex++;
+  const t = reserveInstrumentStart("whistle");
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const lfo = ctx.createOscillator(); // 비브라토
+  const lfoGain = ctx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(freq, t);
+
+  // 휘파람 특유의 떨림(비브라토)
+  lfo.type = "sine";
+  lfo.frequency.value = 4.2;
+  lfoGain.gain.value = 4.5;
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+
+  gain.gain.setValueAtTime(0.001, t);
+  gain.gain.linearRampToValueAtTime(0.18, t + 0.06);
+  gain.gain.linearRampToValueAtTime(0.15, t + 0.24);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.42);
+
+  osc.connect(gain);
+  connectSource(gain, 0.24, 0.14);
+
+  lfo.start(t);
+  osc.start(t);
+  lfo.stop(t + 0.44);
+  osc.stop(t + 0.44);
+}
+
+// 5. 🐾 랜덤 동물 소리 (Wildcard) - 깜짝 재미 요소
+// 매번 다른 동물 소리 (무작위 음정, 재미있는 효과)
+export function playKids_AnimalSurprise() {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+  emitSoundPlayed("kids_animal", "synth");
+
+  const animalTypes = [
+    { name: "고양이", freqs: [400, 800, 600] },
+    { name: "강아지", freqs: [220, 180, 200] },
+    { name: "새", freqs: [1200, 1400, 1300] },
+    { name: "개구리", freqs: [150, 180, 150] }
+  ];
+
+  const animal = animalTypes[Math.floor(Math.random() * animalTypes.length)];
+  const t = reserveInstrumentStart("animal");
+
+  animal.freqs.forEach((freq, idx) => {
+    const delay = t + idx * 0.12;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = idx === 0 ? "square" : "triangle";
+    osc.frequency.setValueAtTime(freq, delay);
+    osc.frequency.linearRampToValueAtTime(freq * 0.9, delay + 0.1);
+
+    gain.gain.setValueAtTime(0.001, delay);
+    gain.gain.linearRampToValueAtTime(0.26, delay + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, delay + 0.15);
+
+    osc.connect(gain);
+    connectSource(gain, 0.18, 0.08);
+
+    osc.start(delay);
+    osc.stop(delay + 0.17);
+  });
+}
+
+// 6. 반짝 (트라이앵글/종) - 신비로움, 전환
+// 위쪽 하모니를 채워주는 보조 멜로디 역할입니다.
+export function playKids_Triangle(note) {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+  emitSoundPlayed("kids_triangle", "synth");
+
+  const scale = [698.46, 783.99, 880.0, 987.77, 1046.5, 1174.66]; // F5-D6
+  const hasExplicitNote = Number.isFinite(note);
+  const baseFreq = hasExplicitNote
+    ? scale[note % scale.length]
+    : (getAutoHarmonyFrequency("triangle", triangleBeatIndex) || scale[0]);
+  if (!hasExplicitNote) triangleBeatIndex++;
+  const t = reserveInstrumentStart("triangle");
+
+  // 종소리는 여러 배음이 함께 울립니다
+  [
+    { ratio: 1, vol: 0.18 },
+    { ratio: 2.4, vol: 0.08 },
+    { ratio: 4.8, vol: 0.04 }
+  ].forEach((harmonic) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(baseFreq * harmonic.ratio, t);
+
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.linearRampToValueAtTime(harmonic.vol, t + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.52);
+
+    osc.connect(gain);
+    connectSource(gain, 0.26, 0.12);
+
+    osc.start(t);
+    osc.stop(t + 0.54);
+  });
+}
+
+// ========================================
+// 멜로디 시퀀스 시스템 (손동작 유지 시 연속 재생)
+// ========================================
+
+let melodyTimers = {}; // 각 제스처별 타이머 저장
+let melodyIndices = {}; // 각 제스처별 현재 음표 인덱스
+
+// 멜로디 패턴 정의 (각 악기별로 다른 멜로디)
+const melodyPatterns = {
+  drum: [0, 1, 2, 1, 0, 2, 3, 2], // 쿵 드럼 패턴
+  xylophone: [0, 2, 4, 2, 0, 4, 6, 4], // 도레미 실로폰 패턴 (도-미-솔-미...)
+  tambourine: [1, 3, 1, 4, 1, 3, 2, 0], // 챵 탬버린 패턴
+  whistle: [4, 3, 2, 3, 4, 4, 4, 3], // 휘파람 패턴
+  triangle: [0, 2, 4, 5, 4, 2, 0, 1], // 반짝 트라이앵글 패턴
+};
+
+// 멜로디 시퀀스 시작 함수
+export function startMelodySequence(instrumentType, playFunction) {
+  // 이미 재생 중이면 무시
+  if (melodyTimers[instrumentType]) return;
+
+  // 인덱스 초기화
+  melodyIndices[instrumentType] = 0;
+
+  const pattern = melodyPatterns[instrumentType] || [0, 1, 2, 3, 4];
+  const interval = 300; // 300ms마다 다음 음표 재생
+
+  // 첫 음표 즉시 재생
+  const note = pattern[melodyIndices[instrumentType]];
+  playFunction(note);
+  melodyIndices[instrumentType] = (melodyIndices[instrumentType] + 1) % pattern.length;
+
+  // 타이머 시작
+  melodyTimers[instrumentType] = setInterval(() => {
+    const note = pattern[melodyIndices[instrumentType]];
+    playFunction(note);
+    melodyIndices[instrumentType] = (melodyIndices[instrumentType] + 1) % pattern.length;
+  }, interval);
+}
+
+// 멜로디 시퀀스 중지 함수
+export function stopMelodySequence(instrumentType) {
+  if (melodyTimers[instrumentType]) {
+    clearInterval(melodyTimers[instrumentType]);
+    melodyTimers[instrumentType] = null;
+    melodyIndices[instrumentType] = 0;
+  }
+}
+
+// 모든 멜로디 중지
+export function stopAllMelodies() {
+  Object.keys(melodyTimers).forEach((type) => {
+    stopMelodySequence(type);
+  });
+}
+
+// 현재 재생 중인지 확인
+export function isMelodyPlaying(instrumentType) {
+  return !!melodyTimers[instrumentType];
 }

@@ -34,3 +34,32 @@ feature sequence를 입력으로 받아 **제스처 분류 결과를 예측**합
 예시  
 - `tap` → drum sound  
 - `pinch` → snare sound
+
+---
+
+## 5. Vite 빌드/배포 및 환경변수
+
+### 실행 명령
+- 개발 서버: `npm run dev`
+- 프로덕션 빌드: `npm run build`
+- 스테이징 빌드: `npm run build:staging`
+- 프로덕션 모드 명시 빌드: `npm run build:production`
+- 빌드 미리보기: `npm run preview`
+
+### 모델 endpoint 환경 분리
+`model_inference.js`와 `performance.js`는 아래 우선순위로 endpoint를 결정합니다.
+
+1. URL 파라미터 `?inferEndpoint=...`
+2. 전역 오버라이드 `window.__JAMJAM_MODEL_ENDPOINT`
+3. Vite 환경변수 `VITE_MODEL_ENDPOINT`
+
+환경파일:
+- `.env.development`
+- `.env.staging`
+- `.env.production`
+- `.env.example`
+
+예시:
+```env
+VITE_MODEL_ENDPOINT=http://127.0.0.1:8008/infer
+```

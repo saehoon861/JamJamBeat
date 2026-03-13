@@ -249,7 +249,7 @@ function predict() {
 
 async function initMediaPipe() {
   const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  const modelAssetPath = new URL("../../public/hand_landmarker.task", import.meta.url).toString();
+  const modelAssetPath = "/hand_landmarker.task";
   const preferredDelegate = parsePreferredDelegate();
   const fallbackDelegate = preferredDelegate === "GPU" ? "CPU" : "GPU";
 

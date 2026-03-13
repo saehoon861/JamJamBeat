@@ -196,13 +196,13 @@ async function testPlaySound(objectId) {
   } else {
     // 기본 사운드인 경우 - 실제 파일 경로 매핑
     const soundMap = {
-      "drum": "/public/assets/sounds/드럼.mp3",
-      "xylophone": "/public/assets/sounds/피리.mp3",
-      "tambourine": "/public/assets/sounds/피아노.mp3",
-      "pinky": "/public/assets/sounds/심벌즈.mp3",
-      "heart": "/public/assets/sounds/고양이.mp3",
-      "animal": "/public/assets/sounds/고양이.mp3",
-      "fist": "/public/assets/sounds/드럼.mp3"
+      "drum": "/assets/sounds/드럼.mp3",
+      "xylophone": "/assets/sounds/피리.mp3",
+      "tambourine": "/assets/sounds/피아노.mp3",
+      "pinky": "/assets/sounds/심벌즈.mp3",
+      "heart": "/assets/sounds/고양이.mp3",
+      "animal": "/assets/sounds/고양이.mp3",
+      "fist": "/assets/sounds/드럼.mp3"
     };
     audioUrl = soundMap[selectedSound] || soundMap["drum"];
   }

@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JamJam Beat - 모델 성능 페이지</title>
-  <link rel="icon" href="/public/assets/objects/squirrel-effect.png" type="image/png" />
+  <link rel="icon" href="/assets/objects/squirrel-effect.png" type="image/png" />
   <link rel="stylesheet" href="./src/styles/main.css?v=6" />
   <style>
     .perf-shell {
@@ -139,26 +139,26 @@
     <section class="layer layer-background" aria-hidden="true">
       <div class="bg-video-wrap" aria-hidden="true">
         <video class="bg-video bg-video-a is-active" muted playsinline preload="auto" autoplay loop>
-          <source src="/public/assets/forest_cinemagraph.mp4" type="video/mp4" />
+          <source src="/assets/forest_cinemagraph.mp4" type="video/mp4" />
         </video>
       </div>
     </section>
 
     <section class="layer layer-middleground" aria-label="성능 페이지 오브젝트">
       <button class="instrument instrument-drum" type="button" aria-label="고슴도치 드럼">
-        <img class="instrument-art" src="/public/assets/objects/hedgehog-drum.png" alt="" loading="lazy" decoding="async" />
+        <img class="instrument-art" src="/assets/objects/hedgehog-drum.png" alt="" loading="lazy" decoding="async" />
       </button>
       <button class="instrument instrument-xylophone" type="button" aria-label="노래하는 백합">
-        <img class="instrument-art" src="/public/assets/objects/lily-melody.png" alt="" loading="lazy" decoding="async" />
+        <img class="instrument-art" src="/assets/objects/lily-melody.png" alt="" loading="lazy" decoding="async" />
       </button>
       <button class="instrument instrument-tambourine" type="button" aria-label="행운 클로버">
-        <img class="instrument-art" src="/public/assets/objects/clover-chime.png" alt="" loading="lazy" decoding="async" />
+        <img class="instrument-art" src="/assets/objects/clover-chime.png" alt="" loading="lazy" decoding="async" />
       </button>
       <button class="instrument instrument-fern" type="button" aria-label="마법 고사리">
-        <img class="instrument-art" src="/public/assets/objects/magic-fern.png" alt="" loading="lazy" decoding="async" />
+        <img class="instrument-art" src="/assets/objects/magic-fern.png" alt="" loading="lazy" decoding="async" />
       </button>
       <button class="instrument instrument-owl" type="button" aria-label="다람쥐">
-        <img class="instrument-art" src="/public/assets/objects/squirrel-effect.png" alt="" loading="lazy" decoding="async" />
+        <img class="instrument-art" src="/assets/objects/squirrel-effect.png" alt="" loading="lazy" decoding="async" />
       </button>
     </section>
 
@@ -233,9 +233,6 @@
     </section>
   </main>
 
-  <script>
-    window.__JAMJAM_MODEL_ENDPOINT = window.__JAMJAM_MODEL_ENDPOINT || "http://127.0.0.1:8008/infer";
-  </script>
   <script type="module" src="./src/js/performance.js?v=1"></script>
   <style>
     @keyframes rulePulse {

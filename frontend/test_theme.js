@@ -38,10 +38,10 @@ const puppeteer = require('puppeteer');
         // setTimeout을 Promise로 감싸서 "지정한 시간만큼 잠깐 멈추기"를 구현합니다.
         await new Promise(r => setTimeout(r, 2000));
 
-        // 화면 안에서 .theme-card 라는 요소를 찾아 첫 번째 카드를 눌러보려는 단계입니다.
+        // 화면 안에서 .theme-mode-card 라는 요소를 찾아 첫 번째 카드를 눌러보려는 단계입니다.
         console.log("Attempting to click first theme card...");
         // page.$$는 CSS 선택자로 해당 요소들을 전부 배열처럼 가져옵니다.
-        const cards = await page.$$('.theme-card');
+        const cards = await page.$$('.theme-mode-card');
         // 카드가 하나라도 있으면 첫 번째 카드를 클릭합니다.
         if (cards.length > 0) {
             await cards[0].click();
@@ -56,6 +56,11 @@ const puppeteer = require('puppeteer');
         await new Promise(r => setTimeout(r, 1000));
         // 클릭 후 현재 주소(URL)가 어디로 바뀌었는지 확인해서 결과를 기록합니다.
         console.log("Current URL:", page.url());
+
+        // 첫 번째 카드가 calm 모드로 이동하도록 되어 있으므로, URL에 해당 값이 포함되는지 확인합니다.
+        if (!page.url().includes("mode=calm")) {
+            throw new Error(`Unexpected navigation target: ${page.url()}`);
+        }
 
         // 테스트가 끝났으므로 브라우저를 닫아 자원을 정리합니다.
         await browser.close();

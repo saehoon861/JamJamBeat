@@ -1,0 +1,15 @@
+{
+  "name": "jamjambeat-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3002 --strictPort",
+    "build": "vite build",
+    "build:staging": "vite build --mode staging",
+    "build:production": "vite build --mode production",
+    "preview": "vite preview --host 0.0.0.0 --port 3002 --strictPort"
+  },
+  "devDependencies": {
+    "vite": "^2.9.18"
+  }
+}

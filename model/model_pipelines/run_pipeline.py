@@ -99,12 +99,15 @@ def set_seed(seed: int) -> None:
 
 
 def resolve_paths(csv_paths: list[str]) -> list[Path]:
-    """CLI에서 받은 상대 경로를 프로젝트 루트 기준 절대 경로로 정규화한다."""
+    """CLI에서 받은 상대 경로를 절대 경로로 정규화한다.
+    우선순위: CWD 기준 → PROJECT_ROOT 기준
+    """
     resolved: list[Path] = []
     for path in csv_paths:
         p = Path(path)
         if not p.is_absolute():
-            p = PROJECT_ROOT / p
+            cwd_candidate = Path.cwd() / p
+            p = cwd_candidate if cwd_candidate.exists() else PROJECT_ROOT / p
         resolved.append(p.resolve())
     return resolved
 

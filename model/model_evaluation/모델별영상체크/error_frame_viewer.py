@@ -420,6 +420,21 @@ class ErrorFrameApp:
         tk  = self._tk
         ttk = self._ttk
 
+        # WSL2/Linux에서 CJK 폰트가 없으면 한글이 깨지므로 사용 가능한 폰트로 fallback
+        try:
+            import tkinter.font as tkfont
+            default_font = tkfont.nametofont("TkDefaultFont")
+            for candidate in ("Noto Sans CJK KR", "NanumGothic", "Malgun Gothic",
+                              "WenQuanYi Micro Hei", "DejaVu Sans"):
+                try:
+                    default_font.configure(family=candidate, size=10)
+                    self.root.option_add("*Font", default_font)
+                    break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
 
@@ -495,13 +510,18 @@ class ErrorFrameApp:
     def _populate_source_files(self, csv_path: Path) -> None:
         try:
             sfs = load_source_files(csv_path)
-            values = [SOURCE_FILE_ALL] + sfs
+            # 영상 존재 여부 표시: 없으면 "[no video]" 접미어
+            labeled = []
+            for sf in sfs:
+                v = find_video(sf)
+                labeled.append(sf if v else f"{sf}  [no video]")
+            values = [SOURCE_FILE_ALL] + labeled
             self.src_combo["values"] = values
             self.src_var.set(SOURCE_FILE_ALL)
         except Exception as e:
             self.src_combo["values"] = [SOURCE_FILE_ALL]
             self.src_var.set(SOURCE_FILE_ALL)
-            self.status_var.set(f"CSV 읽기 오류: {e}")
+            self.status_var.set(f"CSV read error: {e}")
 
     def _update_info(self) -> None:
         run  = self._run_lookup.get(self.run_var.get())
@@ -531,20 +551,22 @@ class ErrorFrameApp:
         run_info = self._run_lookup.get(self.run_var.get())
         csv_path = self._csv_lookup.get(self.csv_var.get())
         if not run_info:
-            self._mb.showerror("오류", "Trained Run을 선택하세요.")
+            self._mb.showerror("Error", "Select a Trained Run first.")
             return False
         if not csv_path:
-            self._mb.showerror("오류", "Ground Truth CSV를 선택하세요.")
+            self._mb.showerror("Error", "Select a Ground Truth CSV first.")
             return False
 
-        sf_sel = self.src_var.get()
-        source_filter = None if sf_sel == SOURCE_FILE_ALL else {sf_sel}
+        sf_sel_raw = self.src_var.get()
+        # "[no video]" 접미어 제거 후 실제 source_file 이름 추출
+        sf_sel = sf_sel_raw.replace("  [no video]", "").strip()
+        source_filter = None if sf_sel_raw == SOURCE_FILE_ALL else {sf_sel}
         try:
             ctx = int(self.context_var.get())
         except ValueError:
             ctx = 0
 
-        cache_key = (str(run_info.run_dir), str(csv_path), sf_sel, ctx)
+        cache_key = (str(run_info.run_dir), str(csv_path), sf_sel_raw, ctx)
         if cache_key in self._analysis_cache:
             self._last_data, self._last_fps, self._last_error_frames, self._last_class_names = \
                 self._analysis_cache[cache_key]
@@ -555,12 +577,12 @@ class ErrorFrameApp:
         try:
             runtime = self._get_runtime(run_info)
         except Exception as e:
-            self._mb.showerror("모델 로딩 실패", str(e))
+            self._mb.showerror("Model Load Error", str(e))
             return False
 
         gt_all = load_gt(csv_path, source_filter)
         if not gt_all:
-            self._mb.showwarning("데이터 없음", "선택한 source_file에 대한 GT 데이터가 없습니다.")
+            self._mb.showwarning("No Data", "No GT data found for the selected source_file.")
             return False
 
         all_error_frames: list[ErrorFrame] = []
@@ -569,19 +591,20 @@ class ErrorFrameApp:
         total_errors = 0
         total_gt = 0
 
+        missing_videos: list[str] = []
         for i, (sf, gt_map) in enumerate(gt_all.items()):
-            self.status_var.set(f"[{i+1}/{len(gt_all)}] 분석 중: {sf} ...")
+            self.status_var.set(f"[{i+1}/{len(gt_all)}] Analyzing: {sf} ...")
             self.root.update_idletasks()
 
             video_path = find_video(sf)
             if video_path is None:
-                self.status_var.set(f"영상 없음 건너뜀: {sf}")
+                missing_videos.append(sf)
                 continue
 
             try:
                 error_frames, n_err, n_comp = analyze_source(runtime, video_path, gt_map, ctx)
             except Exception as e:
-                self.status_var.set(f"오류: {sf}: {e}")
+                self.status_var.set(f"Error: {sf}: {e}")
                 continue
 
             cap = cv2.VideoCapture(str(video_path))
@@ -603,11 +626,23 @@ class ErrorFrameApp:
         self._last_run_dir      = run_info.run_dir
         self._analysis_cache[cache_key] = (all_rendered, fps_found, all_error_frames, runtime.class_names)
 
+        # 영상 없는 source_file 경고
+        if missing_videos:
+            names = ", ".join(missing_videos)
+            self._mb.showwarning(
+                "Video Not Found",
+                f"No video file found for:\n{names}\n\n"
+                f"Expected location: {RAW_VIDEO_ROOT}",
+            )
+            if not all_rendered:
+                self.status_var.set(f"Skipped all — no video found: {names}")
+                return True  # _last_data=[] → on_analyze에서 처리
+
         actual = sum(1 for e in all_error_frames if not e.is_context)
         self.status_var.set(
-            f"분석 완료 — 오류 {actual} / {total_gt} 프레임  "
+            f"Done — {actual} / {total_gt} error frames  "
             f"({actual/max(total_gt,1):.1%})  |  "
-            f"총 표시 프레임(context 포함): {len(all_rendered)}"
+            f"Total frames (incl. context): {len(all_rendered)}"
         )
         return True
 
@@ -616,7 +651,7 @@ class ErrorFrameApp:
         if not self._run_analysis():
             return
         if not self._last_data:
-            self._mb.showinfo("결과 없음", "오류 프레임이 없습니다. 모델이 모든 프레임을 맞혔습니다.")
+            self._mb.showinfo("No Error Frames", "No error frames found.\nThe model predicted all frames correctly (or videos were not found).")
             return
 
         self.root.withdraw()
@@ -639,7 +674,7 @@ class ErrorFrameApp:
             if not self._run_analysis():
                 return
         if not self._last_data:
-            self._mb.showinfo("결과 없음", "내보낼 오류 프레임이 없습니다.")
+            self._mb.showinfo("No Data", "No error frames to export. Run analysis first.")
             return
 
         run_info = self._run_lookup.get(self.run_var.get())
@@ -655,8 +690,8 @@ class ErrorFrameApp:
         self.root.update_idletasks()
         export_mp4(self._last_data, mp4_path, self._last_fps, self._last_class_names)
         export_summary_csv(self._last_error_frames, csv_path2, self._last_class_names)
-        self.status_var.set(f"저장 완료: {mp4_path.name}")
-        self._mb.showinfo("저장 완료", f"영상: {mp4_path}\n요약: {csv_path2}")
+        self.status_var.set(f"Saved: {mp4_path.name}")
+        self._mb.showinfo("Saved", f"Video: {mp4_path}\nSummary: {csv_path2}")
 
 
 # ── CLI 모드 ──────────────────────────────────────────────────────────────────
@@ -743,9 +778,9 @@ def main() -> None:
     app  = ErrorFrameApp(root)
 
     if not app._run_lookup:
-        messagebox.showwarning("No Runs", f"학습된 run이 없습니다: {vca.RUNS_ROOT}")
+        messagebox.showwarning("No Runs", f"No trained runs found under:\n{vca.RUNS_ROOT}")
     if not app._csv_lookup:
-        messagebox.showwarning("No CSVs", f"GT CSV가 없습니다: {DATA_FUSION_ROOT}")
+        messagebox.showwarning("No CSVs", f"No GT CSVs found under:\n{DATA_FUSION_ROOT}")
 
     root.mainloop()
 

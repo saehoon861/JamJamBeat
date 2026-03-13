@@ -255,8 +255,20 @@ uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py"
 ```
 
 드롭다운에서 Trained Run, Ground Truth CSV, Source File(전체 또는 개별)을 선택 후:
-- **Analyze & View** — 추론 후 OpenCV 창에서 오류 프레임 탐색
+- **Analyze & View** — 백그라운드에서 추론 실행 (UI 응답 유지) → 완료 시 OpenCV 창 + 컨트롤 패널 표시
 - **Export MP4** — 오류 프레임 영상 + 요약 CSV 저장
+
+**컨트롤 패널 버튼 (OpenCV 창 옆에 별도 창으로 표시):**
+
+| 버튼 | 동작 |
+|------|------|
+| `◀◀ -10` | 10프레임 뒤로 |
+| `◀ Prev` | 이전 프레임 |
+| `⏸ Pause` | 재생 / 일시정지 |
+| `Next ▶` | 다음 프레임 |
+| `+10 ▶▶` | 10프레임 앞으로 |
+| `↺ Reset` | 처음으로 |
+| `✕ Quit` | 종료 |
 
 ### CLI 모드 (직접 지정 + 저장)
 
@@ -282,13 +294,15 @@ uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
   --source-filter 3_fast_right_man1 3_slow_right_man1
 ```
 
-### 재생 컨트롤 (OpenCV 창)
+### 재생 컨트롤 (OpenCV 창 키보드)
 
 | 키 | 동작 |
 |----|------|
 | `Space` | 재생 / 일시정지 |
-| `A` / `←` | 이전 오류 프레임 |
-| `D` / `→` | 다음 오류 프레임 |
+| `A` / `←` | 이전 프레임 |
+| `D` / `→` | 다음 프레임 |
+| `Z` | -10 프레임 |
+| `X` | +10 프레임 |
 | `R` | 처음으로 |
 | `Q` / `Esc` | 종료 |
 

@@ -518,12 +518,11 @@ class ErrorFrameApp:
             for sf in sfs:
                 v = find_video(sf)
                 labeled.append(sf if v else f"{sf}  [no video]")
-            values = [SOURCE_FILE_ALL] + labeled
-            self.src_combo["values"] = values
-            self.src_var.set(SOURCE_FILE_ALL)
+            self.src_combo["values"] = labeled
+            self.src_var.set(labeled[0] if labeled else "")
         except Exception as e:
-            self.src_combo["values"] = [SOURCE_FILE_ALL]
-            self.src_var.set(SOURCE_FILE_ALL)
+            self.src_combo["values"] = []
+            self.src_var.set("")
             self.status_var.set(f"CSV read error: {e}")
 
     def _update_info(self) -> None:
@@ -563,7 +562,7 @@ class ErrorFrameApp:
         sf_sel_raw = self.src_var.get()
         # "[no video]" 접미어 제거 후 실제 source_file 이름 추출
         sf_sel = sf_sel_raw.replace("  [no video]", "").strip()
-        source_filter = None if sf_sel_raw == SOURCE_FILE_ALL else {sf_sel}
+        source_filter = {sf_sel} if sf_sel else None
         try:
             ctx = int(self.context_var.get())
         except ValueError:

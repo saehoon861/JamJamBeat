@@ -8,11 +8,20 @@ const REQUEST_INTERVAL_MS = 45;
 const FAIL_OPEN_AFTER = 5;
 const DISABLE_FOR_MS = 1200;
 
-let lastRequestAt = 0; // 마지막으로 AI 서버에 요청한 시각입니다.
-let inFlight = false; // 지금 요청이 날아가는 중인지 표시합니다.
-let consecutiveFailures = 0; // 연속으로 몇 번 실패했는지 셉니다.
-let disabledUntil = 0; // 너무 자주 실패하면 잠시 쉬게 할 끝 시각입니다.
-let lastPrediction = null; // 가장 최근에 받은 AI 예측 결과를 저장합니다.
+const requestStateByHand = new Map();
+
+function getHandRequestState(handKey = "default") {
+  if (!requestStateByHand.has(handKey)) {
+    requestStateByHand.set(handKey, {
+      lastRequestAt: 0,
+      inFlight: false,
+      consecutiveFailures: 0,
+      disabledUntil: 0,
+      lastPrediction: null
+    });
+  }
+  return requestStateByHand.get(handKey);
+}
 
 // AI 선생님이 어디 계시는지(서버 주소) 확인하는 기능입니다.
 function getConfiguredEndpoint() {
@@ -48,12 +57,13 @@ function normalizePrediction(json, tsMs) {
   };
 }
 
-function scheduleModelRequest(landmarks, now) {
+function scheduleModelRequest(landmarks, now, handKey = "default") {
   const endpoint = getConfiguredEndpoint(); // 실제로 요청을 보낼 주소를 알아냅니다.
+  const handState = getHandRequestState(handKey);
   if (!endpoint) return; // 주소가 없으면 요청하지 않습니다.
-  if (inFlight) return; // 이미 요청 중이면 새 요청을 보내지 않습니다.
-  if (now < disabledUntil) return; // 실패가 많아서 쉬는 시간이라면 요청하지 않습니다.
-  if (now - lastRequestAt < REQUEST_INTERVAL_MS) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
+  if (handState.inFlight) return; // 이미 요청 중이면 새 요청을 보내지 않습니다.
+  if (now < handState.disabledUntil) return; // 실패가 많아서 쉬는 시간이라면 요청하지 않습니다.
+  if (now - handState.lastRequestAt < REQUEST_INTERVAL_MS) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
 
   const payloadLandmarks = sanitizeLandmarks(landmarks); // 손 좌표를 안전한 형식으로 정리합니다.
   if (!payloadLandmarks) return; // 손 좌표가 이상하면 요청을 보내지 않습니다.
@@ -65,8 +75,8 @@ function scheduleModelRequest(landmarks, now) {
     landmarks: payloadLandmarks // 손 좌표 본문을 넣습니다.
   };
 
-  inFlight = true; // 이제 요청이 진행 중이라고 표시합니다.
-  lastRequestAt = now; // 마지막 요청 시각을 지금으로 갱신합니다.
+  handState.inFlight = true; // 이제 요청이 진행 중이라고 표시합니다.
+  handState.lastRequestAt = now; // 마지막 요청 시각을 지금으로 갱신합니다.
 
   const controller = new AbortController(); // 너무 오래 걸리면 요청을 끊기 위한 장치입니다.
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS); // 제한 시간이 지나면 강제로 취소합니다.
@@ -85,32 +95,34 @@ function scheduleModelRequest(landmarks, now) {
       const prediction = normalizePrediction(json, tsMs); // 받은 JSON을 우리 형식으로 정리합니다.
       if (!prediction) throw new Error("INVALID_PAYLOAD"); // 형식이 이상하면 오류로 처리합니다.
 
-      lastPrediction = prediction; // 최근 예측 결과를 새 값으로 교체합니다.
-      consecutiveFailures = 0; // 성공했으니 실패 횟수는 다시 0으로 만듭니다.
+      handState.lastPrediction = prediction; // 최근 예측 결과를 새 값으로 교체합니다.
+      handState.consecutiveFailures = 0; // 성공했으니 실패 횟수는 다시 0으로 만듭니다.
     })
     .catch(() => {
-      consecutiveFailures += 1; // 실패가 났으니 실패 횟수를 1 올립니다.
-      if (consecutiveFailures >= FAIL_OPEN_AFTER) {
-        disabledUntil = performance.now() + DISABLE_FOR_MS; // 너무 많이 실패했으니 잠깐 요청을 멈춥니다.
-        consecutiveFailures = 0; // 다음 휴식 이후를 위해 실패 횟수를 초기화합니다.
+      handState.consecutiveFailures += 1; // 실패가 났으니 실패 횟수를 1 올립니다.
+      if (handState.consecutiveFailures >= FAIL_OPEN_AFTER) {
+        handState.disabledUntil = performance.now() + DISABLE_FOR_MS; // 너무 많이 실패했으니 잠깐 요청을 멈춥니다.
+        handState.consecutiveFailures = 0; // 다음 휴식 이후를 위해 실패 횟수를 초기화합니다.
       }
     })
     .finally(() => {
       clearTimeout(timeoutId); // 타임아웃 타이머를 정리합니다.
-      inFlight = false; // 요청이 끝났다고 표시합니다.
+      handState.inFlight = false; // 요청이 끝났다고 표시합니다.
     });
 }
 
 // AI에게 현재 내 손 모양 데이터를 보내고, AI가 생각하는 정답이 무엇인지 가져오는 기능입니다.
-export function getModelPrediction(landmarks, now = performance.now()) {
-  scheduleModelRequest(landmarks, now); // 필요하면 새 요청을 예약하거나 바로 보냅니다.
-  return lastPrediction; // 지금 시점에서 가장 최근에 받은 답을 돌려줍니다.
+export function getModelPrediction(landmarks, now = performance.now(), handKey = "default") {
+  const handState = getHandRequestState(handKey);
+  scheduleModelRequest(landmarks, now, handKey); // 필요하면 새 요청을 예약하거나 바로 보냅니다.
+  return handState.lastPrediction; // 지금 시점에서 가장 최근에 받은 답을 돌려줍니다.
 }
 
 export function getModelInferenceStatus(now = performance.now()) {
+  const states = [...requestStateByHand.values()];
   return {
     endpointConfigured: Boolean(getConfiguredEndpoint()), // 서버 주소가 설정되어 있는지 알려줍니다.
-    inFlight, // 현재 요청 중인지 알려줍니다.
-    disabled: now < disabledUntil // 잠시 비활성화 상태인지 알려줍니다.
+    inFlight: states.some((state) => state.inFlight), // 현재 요청 중인지 알려줍니다.
+    disabled: states.some((state) => now < state.disabledUntil) // 잠시 비활성화 상태인지 알려줍니다.
   };
 }

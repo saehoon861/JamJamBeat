@@ -90,14 +90,21 @@ const CLASS_SPECIFIC_STABLE_FRAMES = {
   KHeart: Math.round(parseNumberParam("gestureStableFramesKHeart", 1, 1, 8))
 };
 
-const stableState = {
-  candidateLabel: "None",
-  candidateFrames: 0,
-  noneFrames: 0,
-  stableLabel: "None",
-  confidence: 0,
-  source: "rules"
-};
+const stableStateByHand = new Map();
+
+function getStableState(handKey = "default") {
+  if (!stableStateByHand.has(handKey)) {
+    stableStateByHand.set(handKey, {
+      candidateLabel: "None",
+      candidateFrames: 0,
+      noneFrames: 0,
+      stableLabel: "None",
+      confidence: 0,
+      source: "rules"
+    });
+  }
+  return stableStateByHand.get(handKey);
+}
 
 const GESTURE_MODE = (() => {
   const params = new URLSearchParams(window.location.search); // 주소창의 옵션 값을 읽습니다.
@@ -147,7 +154,7 @@ function mapRulesToResult(rules) {
   return { label: "None", confidence: 0, source: "rules" }; // 아니면 아무 제스처도 아니라고 적습니다.
 }
 
-function mapModelToResult(modelPrediction) {
+function mapModelToResult(modelPrediction, stableState) {
   if (!modelPrediction) return null; // 아직 AI 답변이 없으면 더 할 일이 없습니다.
 
   const normalized = normalizeModelLabel(modelPrediction.label); // AI 라벨 이름을 우리 코드 기준 이름으로 바꿉니다.
@@ -168,7 +175,7 @@ function mapModelToResult(modelPrediction) {
 }
 
 // 같은 동작이 여러 번 연달아 인식되어야 "진짜 이 동작을 하고 있구나"라고 확신하는 '안정화' 기능입니다.
-function stabilize(rawResult) {
+function stabilize(rawResult, stableState) {
   if (rawResult.label === "None") {
     stableState.noneFrames += 1; // 아무 동작도 안 보인 프레임 수를 늘립니다.
     stableState.candidateLabel = "None"; // 후보 동작도 비웁니다.
@@ -206,7 +213,7 @@ function stabilize(rawResult) {
 }
 
 // [최종 판단] 규칙(단순 계산)과 모델(AI)의 결과를 종합하여 지금 어떤 손동작인지 최종 결론을 내립니다.
-export function resolveGesture(landmarks, now, sessionStarted) {
+export function resolveGesture(landmarks, now, sessionStarted, handKey = "default") {
   if (!sessionStarted) {
     return {
       label: "None", // 시작 전에는 아무 동작도 없다고 판단합니다.
@@ -217,8 +224,9 @@ export function resolveGesture(landmarks, now, sessionStarted) {
     };
   }
 
-  const modelPrediction = getModelPrediction(landmarks, now); // AI 서버에 물어본 최근 답변을 가져옵니다.
-  const modelResult = mapModelToResult(modelPrediction) || {
+  const stableState = getStableState(handKey);
+  const modelPrediction = getModelPrediction(landmarks, now, handKey); // AI 서버에 물어본 최근 답변을 가져옵니다.
+  const modelResult = mapModelToResult(modelPrediction, stableState) || {
     label: "None", // AI 답변이 없으면 일단 인식 안 됨으로 둡니다.
     confidence: 0, // 신뢰도도 0입니다.
     source: "model" // 출처는 모델이라고 표시합니다.
@@ -240,5 +248,5 @@ export function resolveGesture(landmarks, now, sessionStarted) {
     }
   }
 
-  return stabilize(rawResult); // 마지막으로 흔들리는 결과를 안정화해서 돌려줍니다.
+  return stabilize(rawResult, stableState); // 마지막으로 흔들리는 결과를 안정화해서 돌려줍니다.
 }

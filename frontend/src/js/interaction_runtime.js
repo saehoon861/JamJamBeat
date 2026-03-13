@@ -3,41 +3,22 @@
 const ACTIVE_CLASS_MS = 260;
 const GESTURE_SOUND_MAP = {
   Fist: {
-    id: "drum",
-    type: "drum",
-    playFunc: (audioApi) => audioApi.playKids_Drum(),
-    playbackMode: "melody"
+    id: "drum"
   },
   OpenPalm: {
-    id: "xylophone",
-    type: "xylophone",
-    playFunc: (audioApi) => audioApi.playKids_Xylophone(),
-    playbackMode: "melody"
+    id: "xylophone"
   },
   V: {
-    id: "tambourine",
-    type: "tambourine",
-    playFunc: (audioApi) => audioApi.playKids_Tambourine(),
-    playbackMode: "melody"
+    id: "tambourine"
   },
   Pinky: {
-    id: "owl",
-    type: "whistle",
-    playFunc: (audioApi) => audioApi.playKids_Whistle(),
-    playbackMode: "melody"
+    id: "owl"
   },
   Animal: {
-    id: "fern",
-    type: "animal",
-    playFunc: (audioApi) => audioApi.playKids_AnimalSurprise(),
-    playbackMode: "oneshot",
-    burstType: "pinky"
+    id: "fern"
   },
   KHeart: {
-    id: "fern",
-    type: "triangle",
-    playFunc: (audioApi) => audioApi.playKids_Triangle(),
-    playbackMode: "melody"
+    id: "fern"
   }
 };
 
@@ -56,6 +37,8 @@ export function createInteractionRuntime({
   activateStart,
   registerHit,
   spawnBurst,
+  getInstrumentPlayback,
+  playInstrumentSound,
   instruments,
   interactionMode,
   collisionPadding,
@@ -64,6 +47,18 @@ export function createInteractionRuntime({
   isAdminEditMode,
   isSessionStarted
 }) {
+  const handStateByKey = new Map();
+
+  function getHandState(handKey = "default") {
+    if (!handStateByKey.has(handKey)) {
+      handStateByKey.set(handKey, {
+        lastGestureLabel: "None",
+        currentMelodyType: null
+      });
+    }
+    return handStateByKey.get(handKey);
+  }
+
   function getGestureStartConfidenceFloor(label) {
     if (label === "Pinky" || label === "Animal" || label === "KHeart") return 0.2;
     return 0.3;
@@ -72,12 +67,6 @@ export function createInteractionRuntime({
   // hoverStartedAt / hoverActive 는 시작 버튼 위에 손을 올려둔 시간을 재기 위해 씁니다.
   let hoverStartedAt = 0;
   let hoverActive = false;
-  // lastGestureHitAt / lastGestureLabel 은 같은 제스처가 너무 연속으로 울리는 걸 막기 위한 기록입니다.
-  let lastGestureHitAt = 0;
-  let lastGestureLabel = "None";
-  // 현재 재생 중인 멜로디 타입을 추적합니다.
-  let currentMelodyType = null;
-
   // MediaPipe 손 좌표(0~1 비율)를 실제 화면 픽셀 좌표로 바꿉니다.
   function createInstrumentPoint(landmark, canvas) {
     return {
@@ -110,7 +99,15 @@ export function createInteractionRuntime({
       const remain = Math.max(0, startHoverMs - (now - hoverStartedAt));
       // 남은 시간을 사용자에게 보여줍니다.
       statusText.textContent = `시작까지 ${Math.ceil(remain / 100)}초...`;
-      if (now - hoverStartedAt >= startHoverMs) activateStart();
+      if (now - hoverStartedAt >= startHoverMs) {
+        hoverActive = false;
+        hoverStartedAt = 0;
+        Promise.resolve(audioApi.unlockAudioContext?.())
+          .catch(() => false)
+          .finally(() => {
+            activateStart();
+          });
+      }
     } else {
       hoverActive = false;
       hoverStartedAt = 0;
@@ -194,37 +191,47 @@ export function createInteractionRuntime({
   }
 
   // 특정 제스처가 인식되었을 때 어떤 악기나 효과를 낼지 연결하는 함수입니다.
-  function runGestureReaction(label, now) {
+  function runGestureReaction(label, now, handKey = "default") {
     const instrumentInfo = GESTURE_SOUND_MAP[label];
     if (!instrumentInfo) return;
+    const playback = getInstrumentPlayback(instrumentInfo.id);
+    if (!playback) return;
+    const handState = getHandState(handKey);
 
-    if (instrumentInfo.playbackMode === "oneshot") {
-      if (currentMelodyType) {
-        audioApi.stopMelodySequence(currentMelodyType);
-        currentMelodyType = null;
+    if (playback.playbackMode === "oneshot") {
+      if (handState.currentMelodyType) {
+        audioApi.stopMelodySequence(handState.currentMelodyType);
+        handState.currentMelodyType = null;
       }
-      triggerVisualOnlyById(instrumentInfo.id, now, instrumentInfo.burstType || instrumentInfo.type);
-      audioApi.setPlaybackContext({ instrumentId: instrumentInfo.id, gestureLabel: label, gestureSource: "model", triggerTs: now });
-      instrumentInfo.playFunc(audioApi);
+      triggerInstrumentById(instrumentInfo.id, now, { gestureLabel: label, gestureSource: "model" });
       return;
     }
 
     // 멜로디 시퀀스 시작
-    if (currentMelodyType !== instrumentInfo.type) {
+    if (handState.currentMelodyType !== playback.melodyType) {
       // 이전 멜로디 중지
-      if (currentMelodyType) {
-        audioApi.stopMelodySequence(currentMelodyType);
+      if (handState.currentMelodyType) {
+        audioApi.stopMelodySequence(handState.currentMelodyType);
       }
       // 새 멜로디 시작
-      audioApi.startMelodySequence(instrumentInfo.type, () => instrumentInfo.playFunc(audioApi));
-      currentMelodyType = instrumentInfo.type;
+      const melodyType = `${playback.melodyType}:${handKey}`;
+      audioApi.startMelodySequence(melodyType, (note) => {
+        audioApi.setPlaybackContext({
+          instrumentId: instrumentInfo.id,
+          gestureLabel: `${label}:${handKey}`,
+          gestureSource: `model:${handKey}`,
+          triggerTs: performance.now()
+        });
+        playInstrumentSound(instrumentInfo.id, note);
+      });
+      handState.currentMelodyType = melodyType;
     }
 
     // 시각 효과만 표시 (소리는 멜로디 시퀀스가 재생)
     const instrument = instruments.find((item) => item.id === instrumentInfo.id);
     if (instrument && instrument.el) {
       activateInstrumentElement(instrument);
-      spawnBurst(instrumentInfo.type, instrument.el);
+      spawnBurst(playback.burstType || "pinky", instrument.el);
     }
   }
 
@@ -234,54 +241,54 @@ export function createInteractionRuntime({
   }
 
   // 제스처 모드에서 현재 손모양을 해석하고, 쿨다운/오디오 상태까지 확인한 뒤 반응을 실행합니다.
-  function processGestureTriggers(landmarks, now) {
+  function processGestureTriggers(landmarks, now, handKey = "default") {
     if (!isSessionStarted()) return;
     if (isAdminEditMode()) return;
+    const handState = getHandState(handKey);
 
-    const gesture = resolveGesture(landmarks, now, isSessionStarted());
+    const gesture = resolveGesture(landmarks, now, isSessionStarted(), handKey);
 
     // 제스처가 없거나 신뢰도가 매우 낮으면 멜로디 중지
     const shouldStopMelody = !gesture || gesture.label === "None" ||
-                             (gesture.confidence < getGestureStartConfidenceFloor(gesture.label) && gesture.label !== lastGestureLabel);
+                             (gesture.confidence < getGestureStartConfidenceFloor(gesture.label) && gesture.label !== handState.lastGestureLabel);
 
     if (shouldStopMelody) {
       // 손동작이 없거나 불확실하면 멜로디 중지
-      if (currentMelodyType) {
-        audioApi.stopMelodySequence(currentMelodyType);
-        currentMelodyType = null;
-        statusText.textContent = "멜로디 중지됨";
+      if (handState.currentMelodyType) {
+        audioApi.stopMelodySequence(handState.currentMelodyType);
+        handState.currentMelodyType = null;
+        statusText.textContent = `${handKey} 손 멜로디 중지됨`;
       }
 
       // 모델도 "아무것도 아님"이라고 보면 사용자에게 다시 동작해달라고 안내합니다.
       if (!gesture || gesture.label === "None") {
-        const rawModel = getModelPrediction(landmarks, now);
+        const rawModel = getModelPrediction(landmarks, now, handKey);
         if (rawModel?.classId === 0 || String(rawModel?.label || "").trim().toLowerCase() === "class0") {
-          statusText.textContent = "동작을 다시해주세요.";
+          statusText.textContent = `${handKey} 손 동작을 다시해주세요.`;
         }
       }
-      lastGestureLabel = "None";
+      handState.lastGestureLabel = "None";
       return;
     }
 
     // 제스처가 바뀌었을 때만 새 멜로디 시작
-    if (gesture.label !== lastGestureLabel) {
+    if (gesture.label !== handState.lastGestureLabel) {
       if (!audioApi.getAudioState().running) {
         statusText.textContent = "소리가 꺼져 있어요. '소리 켜기' 버튼을 눌러주세요.";
-        lastGestureLabel = gesture.label;
+        handState.lastGestureLabel = gesture.label;
         return;
       }
 
-      runGestureReaction(gesture.label, now);
+      runGestureReaction(gesture.label, now, handKey);
       showSquirrelEffect();
 
-      lastGestureHitAt = now;
-      lastGestureLabel = gesture.label;
+      handState.lastGestureLabel = gesture.label;
       const displayName = getGestureDisplayName(gesture.label);
-      statusText.textContent = `손동작 ${displayName} 인식! (신뢰도: ${(gesture.confidence * 100).toFixed(0)}%)`;
+      statusText.textContent = `${handKey}손 ${displayName} 인식! (신뢰도: ${(gesture.confidence * 100).toFixed(0)}%)`;
     } else {
       // 같은 제스처가 유지되는 경우 - 신뢰도도 함께 표시
       const displayName = getGestureDisplayName(gesture.label);
-      statusText.textContent = `${displayName} 유지 중... 🎵 (${(gesture.confidence * 100).toFixed(0)}%)`;
+      statusText.textContent = `${handKey}손 ${displayName} 유지 중... 🎵 (${(gesture.confidence * 100).toFixed(0)}%)`;
     }
   }
 
@@ -297,11 +304,13 @@ export function createInteractionRuntime({
     handCursor.style.opacity = 0;
 
     // 손이 사라지면 멜로디도 중지
-    if (currentMelodyType) {
-      audioApi.stopMelodySequence(currentMelodyType);
-      currentMelodyType = null;
-    }
-    lastGestureLabel = "None";
+    handStateByKey.forEach((handState) => {
+      if (handState.currentMelodyType) {
+        audioApi.stopMelodySequence(handState.currentMelodyType);
+        handState.currentMelodyType = null;
+      }
+      handState.lastGestureLabel = "None";
+    });
 
     if (!isSessionStarted()) {
       statusText.textContent = "카메라에 손을 보여주세요.";

@@ -73,19 +73,13 @@ body {
   height: 100%;
   object-fit: cover;
   transform: scale(1.03);
-  filter: saturate(1.0) contrast(1.05) brightness(0.65) blur(3px);
+  filter: saturate(1.15) contrast(1.05) brightness(0.88);
   opacity: 0;
   transition: opacity 520ms linear;
 }
 
 .bg-video.is-active {
   opacity: 1;
-}
-
-/* 시작하기 버튼 클릭 시 숲으로 들어가는 효과 - 한 번만 실행 */
-.landing-overlay.is-hidden ~ .layer-background .bg-video.is-active {
-  animation: zoomIntoForest 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-  animation-iteration-count: 1;
 }
 
 .bg-video.is-preload {
@@ -619,17 +613,6 @@ body {
 
 .landing-admin-link:hover {
   transform: scale(1.03);
-}
-
-@keyframes zoomIntoForest {
-  0% {
-    transform: scale(1.5);
-    filter: saturate(1.0) contrast(1.05) brightness(0.5) blur(10px);
-  }
-  100% {
-    transform: scale(1.03);
-    filter: saturate(1.15) contrast(1.05) brightness(1.0) blur(0px);
-  }
 }
 
 @keyframes fogDriftA {

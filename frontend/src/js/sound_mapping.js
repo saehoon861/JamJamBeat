@@ -2,6 +2,7 @@
 
 // localStorage 에 저장할 때 사용할 이름표(key)입니다.
 export const SOUND_MAPPING_KEY = "jamjam.soundMapping.v1";
+export const CUSTOM_SOUNDS_KEY = "jamjam.customSounds.v1";
 
 // 사용자가 별도 설정을 안 했을 때의 기본 사운드 연결표입니다.
 export const DEFAULT_SOUND_MAPPING = {
@@ -13,7 +14,18 @@ export const DEFAULT_SOUND_MAPPING = {
 };
 
 // 저장된 사운드 매핑을 읽어오되, 이상한 값은 버리고 안전한 기본값과 섞어줍니다.
-export function loadSoundMapping(soundProfiles) {
+export function loadCustomSounds() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_SOUNDS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function loadSoundMapping(soundProfiles, customSounds = loadCustomSounds()) {
   try {
     const raw = localStorage.getItem(SOUND_MAPPING_KEY);
     if (!raw) return { ...DEFAULT_SOUND_MAPPING };
@@ -24,6 +36,11 @@ export function loadSoundMapping(soundProfiles) {
     Object.keys(merged).forEach((instrumentId) => {
       const candidate = String(parsed?.[instrumentId] || "");
       if (candidate in soundProfiles) {
+        merged[instrumentId] = candidate;
+        return;
+      }
+      const customKey = `custom_${instrumentId}`;
+      if (candidate === customKey && customSounds?.[instrumentId]?.data) {
         merged[instrumentId] = candidate;
       }
     });

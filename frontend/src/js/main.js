@@ -9,7 +9,7 @@ import { getModelPrediction } from "./model_inference.js"; // 모델의 원본 �
 import { DEFAULT_LAYOUT, loadInstrumentLayout, applyInstrumentLayout, setupAdminDragMode } from "./instrument_layout.js";
 import { setupSeamlessBackgroundLoop, applySceneMode, createFeverController } from "./scene_runtime.js";
 import { createParticleSystem, restartClassAnimation } from "./particle_system.js";
-import { DEFAULT_SOUND_MAPPING, loadSoundMapping, getSoundProfileForInstrument } from "./sound_mapping.js";
+import { DEFAULT_SOUND_MAPPING, loadCustomSounds, loadSoundMapping, getSoundProfileForInstrument } from "./sound_mapping.js";
 import { createInteractionRuntime } from "./interaction_runtime.js";
 import { createHandTrackingRuntime } from "./hand_tracking_runtime.js";
 
@@ -79,13 +79,13 @@ const PERF_LOG_KEY = "jamjam.perf.logs.v1";
 const PERF_LOG_LIMIT = 200;
 
 const SOUND_PROFILES = {
-  drum: { soundTag: "베이스 멜로디", burstType: "drum", play: () => Audio.playKids_Drum() },
-  xylophone: { soundTag: "메인 멜로디", burstType: "xylophone", play: () => Audio.playKids_Xylophone() },
-  tambourine: { soundTag: "리듬 멜로디", burstType: "tambourine", play: () => Audio.playKids_Tambourine() },
-  pinky: { soundTag: "반짝 하모니", burstType: "pinky", play: () => Audio.playKids_Triangle() },
-  heart: { soundTag: "휘파람 멜로디", burstType: "xylophone", play: () => Audio.playKids_Whistle() },
-  animal: { soundTag: "애니멀 포인트", burstType: "pinky", play: () => Audio.playKids_AnimalSurprise() },
-  fist: { soundTag: "타격", burstType: "fist", play: () => Audio.playFistBeat() }
+  drum: { soundTag: "베이스 멜로디", burstType: "drum", playbackMode: "melody", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
+  xylophone: { soundTag: "메인 멜로디", burstType: "xylophone", playbackMode: "melody", melodyType: "xylophone", play: (note) => Audio.playKids_Xylophone(note) },
+  tambourine: { soundTag: "리듬 멜로디", burstType: "tambourine", playbackMode: "melody", melodyType: "tambourine", play: (note) => Audio.playKids_Tambourine(note) },
+  pinky: { soundTag: "반짝 하모니", burstType: "pinky", playbackMode: "melody", melodyType: "triangle", play: (note) => Audio.playKids_Triangle(note) },
+  heart: { soundTag: "휘파람 멜로디", burstType: "heart", playbackMode: "melody", melodyType: "whistle", play: (note) => Audio.playKids_Whistle(note) },
+  animal: { soundTag: "애니멀 포인트", burstType: "pinky", playbackMode: "oneshot", melodyType: "animal", play: () => Audio.playKids_AnimalSurprise() },
+  fist: { soundTag: "타격", burstType: "fist", playbackMode: "oneshot", melodyType: "fist", play: () => Audio.playFistBeat() }
 };
 
 // 주소창(URL)에 적힌 설정값을 보고, 손 위치를 얼마나 자주 계산할지(FPS) 결정하는 기능입니다.
@@ -112,7 +112,8 @@ function parseInteractionMode() { // 터치로 할지 손동작으로 할지 플
 
 // 프로그램이 동작하면서 기억해야 할 '현재 상태' 값들입니다. (예: 지금 카메라가 켜져 있는지, 피버 타임인지 등)
 const INTERACTION_MODE = parseInteractionMode();
-let soundMapping = loadSoundMapping(SOUND_PROFILES);
+const customSounds = loadCustomSounds();
+let soundMapping = loadSoundMapping(SOUND_PROFILES, customSounds);
 const particleSystem = createParticleSystem(effectCtx, effectCanvas);
 const feverController = createFeverController({
   scene,
@@ -128,11 +129,31 @@ const feverController = createFeverController({
   )
 });
 
-function playMappedInstrumentSound(instrumentId, element) {
-  const profile = getSoundProfileForInstrument(soundMapping, DEFAULT_SOUND_MAPPING, SOUND_PROFILES, instrumentId);
-  profile.play();
-  spawnBurst(profile.burstType, element);
-  return profile.soundTag;
+function getMappedSoundProfile(instrumentId) {
+  const mappedKey = soundMapping?.[instrumentId] || DEFAULT_SOUND_MAPPING[instrumentId] || "drum";
+  const customKey = `custom_${instrumentId}`;
+  if (mappedKey === customKey && customSounds?.[instrumentId]?.data) {
+    const fallbackProfile = getSoundProfileForInstrument(soundMapping, DEFAULT_SOUND_MAPPING, SOUND_PROFILES, instrumentId);
+    return {
+      soundTag: customSounds[instrumentId]?.name || "커스텀 사운드",
+      burstType: fallbackProfile?.burstType || "pinky",
+      playbackMode: "melody",
+      melodyType: fallbackProfile?.melodyType || instrumentId,
+      play: () => {
+        Audio.playCustomSample(customKey, customSounds[instrumentId].data, { wet: 0.18, delay: 0.08, gain: 1.02 });
+      }
+    };
+  }
+  return getSoundProfileForInstrument(soundMapping, DEFAULT_SOUND_MAPPING, SOUND_PROFILES, instrumentId);
+}
+
+function playMappedInstrumentSound(instrumentId, element, { note, spawnEffect = true } = {}) {
+  const profile = getMappedSoundProfile(instrumentId);
+  profile.play(note);
+  if (spawnEffect && element) {
+    spawnBurst(profile.burstType, element);
+  }
+  return profile;
 }
 
 function readPerfLogs() {
@@ -168,10 +189,9 @@ const instruments = [
     el: instrumentElements.drum, // 실제 HTML 이미지를 연결합니다.
     cooldownMs: 320, // 한 번 연주한 뒤 다시 연주하기 위해 기다려야 하는 시간입니다.
     lastHitAt: 0, // 마지막으로 연주된 시간을 기록합니다.
-    onHit() { // 연주되었을 때 실행할 행동입니다.
-      Audio.playKids_Drum();
-      spawnBurst("drum", this.el);
-      return this.soundTag;
+    onHit(note) { // 연주되었을 때 실행할 행동입니다.
+      const profile = playMappedInstrumentSound(this.id, this.el, { note });
+      return profile.soundTag || this.soundTag;
     }
   },
   {
@@ -181,10 +201,9 @@ const instruments = [
     el: instrumentElements.xylophone, // 이미지를 찾습니다.
     cooldownMs: 360, // 대기 시간입니다.
     lastHitAt: 0, // 시간 기록입니다.
-    onHit() { // 누르면 실행합니다.
-      Audio.playKids_Xylophone();
-      spawnBurst("xylophone", this.el);
-      return this.soundTag;
+    onHit(note) { // 누르면 실행합니다.
+      const profile = playMappedInstrumentSound(this.id, this.el, { note });
+      return profile.soundTag || this.soundTag;
     }
   },
   {
@@ -194,10 +213,9 @@ const instruments = [
     el: instrumentElements.tambourine, // 이미지를 찾습니다.
     cooldownMs: 380, // 대기 시간입니다.
     lastHitAt: 0, // 시간 기록입니다.
-    onHit() { // 누르면 실행합니다.
-      Audio.playKids_Tambourine();
-      spawnBurst("tambourine", this.el);
-      return this.soundTag;
+    onHit(note) { // 누르면 실행합니다.
+      const profile = playMappedInstrumentSound(this.id, this.el, { note });
+      return profile.soundTag || this.soundTag;
     }
   },
   {
@@ -207,10 +225,9 @@ const instruments = [
     el: instrumentElements.fern, // 이미지를 찾습니다.
     cooldownMs: 380, // 대기 시간입니다.
     lastHitAt: 0, // 시간 기록입니다.
-    onHit() { // 누르면 실행합니다.
-      Audio.playKids_Triangle();
-      spawnBurst("pinky", this.el);
-      return this.soundTag;
+    onHit(note) { // 누르면 실행합니다.
+      const profile = playMappedInstrumentSound(this.id, this.el, { note });
+      return profile.soundTag || this.soundTag;
     }
   },
   {
@@ -220,10 +237,9 @@ const instruments = [
     el: instrumentElements.owl, // 이미지를 찾습니다.
     cooldownMs: 380, // 대기 시간입니다.
     lastHitAt: 0, // 시간 기록입니다.
-    onHit() { // 누르면 실행합니다.
-      Audio.playKids_Whistle();
-      spawnBurst("heart", this.el);
-      return this.soundTag;
+    onHit(note) { // 누르면 실행합니다.
+      const profile = playMappedInstrumentSound(this.id, this.el, { note });
+      return profile.soundTag || this.soundTag;
     }
   }
 ];
@@ -246,6 +262,8 @@ function updateSoundButtonUI() {
   const state = Audio.getAudioState(); // 현재 소리 설정 상태를 가져옵니다.
   soundUnlockButton.textContent = state.running ? "소리 끄기" : "소리 켜기"; // 소리가 켜져 있으면 '끄기', 꺼져 있으면 '켜기'로 글자를 바꿉니다.
 }
+
+Audio.preloadCustomSounds(customSounds);
 
 function activateStart() { // 게임을 실제로 시작하는 기능입니다.
   sessionStarted = true; // 세션이 시작되었음을 표시합니다.
@@ -427,6 +445,11 @@ const interactionRuntime = createInteractionRuntime({
   activateStart,
   registerHit,
   spawnBurst,
+  getInstrumentPlayback: (instrumentId) => getMappedSoundProfile(instrumentId),
+  playInstrumentSound: (instrumentId, note) => {
+    const element = instrumentElements[instrumentId] || null;
+    return playMappedInstrumentSound(instrumentId, element, { note, spawnEffect: false });
+  },
   instruments,
   interactionMode: INTERACTION_MODE,
   collisionPadding: COLLISION_PADDING,

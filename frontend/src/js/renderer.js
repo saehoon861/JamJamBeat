@@ -3,8 +3,8 @@
 // 캔버스 렌더링 및 시각 효과를 담당하는 모듈입니다.
 // "어두운색의 살집 있는 말랑말랑한 손" 디자인이 포함되어 있습니다.
 
-let smoothedHandLandmarks = null;
-let smoothedRenderScale = 1;
+const smoothedHandLandmarksByKey = new Map();
+const smoothedRenderScaleByKey = new Map();
 
 const TARGET_PALM_PX_RATIO = 0.14;
 const MIN_TARGET_PALM_PX = 84;
@@ -16,10 +16,11 @@ function clampNumber(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
-function computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY) {
+function computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY, smoothingKey = "default") {
     const wrist = stable?.[0];
     const middleMcp = stable?.[9];
-    if (!wrist || !middleMcp) return smoothedRenderScale;
+    const previousScale = smoothedRenderScaleByKey.get(smoothingKey) ?? 1;
+    if (!wrist || !middleMcp) return previousScale;
 
     const wx = toCanvasX(wrist.x);
     const wy = toCanvasY(wrist.y);
@@ -34,21 +35,24 @@ function computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY) {
     );
 
     const instantScale = clampNumber(targetPalmPx / measuredPalmPx, MIN_RENDER_SCALE, MAX_RENDER_SCALE);
-    smoothedRenderScale += (instantScale - smoothedRenderScale) * 0.22;
+    const nextScale = previousScale + (instantScale - previousScale) * 0.22;
+    smoothedRenderScaleByKey.set(smoothingKey, nextScale);
 
-    return smoothedRenderScale;
+    return nextScale;
 }
 
 // 손의 떨림을 줄이기 위해 이전 좌표와 현재 좌표를 보간(Interpolation)하는 함수
 // 손이 떨리는 것을 방지하기 위해, 이전 위치와 현재 위치를 자연스럽게 이어주는 '부드러운 보정' 기능입니다.
-export function getSmoothedLandmarks(rawLandmarks) {
-    if (!smoothedHandLandmarks || smoothedHandLandmarks.length !== rawLandmarks.length) {
-        smoothedHandLandmarks = rawLandmarks.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
-        return smoothedHandLandmarks;
+export function getSmoothedLandmarks(rawLandmarks, smoothingKey = "default") {
+    const previous = smoothedHandLandmarksByKey.get(smoothingKey) || null;
+    if (!previous || previous.length !== rawLandmarks.length) {
+        const seeded = rawLandmarks.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0 }));
+        smoothedHandLandmarksByKey.set(smoothingKey, seeded);
+        return seeded;
     }
 
     const smoothing = 0.68; // 값이 클수록 손 움직임을 더 빠르게 따라갑니다.
-    smoothedHandLandmarks = smoothedHandLandmarks.map((prev, i) => {
+    const nextSmoothed = previous.map((prev, i) => {
         const next = rawLandmarks[i];
         return {
             x: prev.x + (next.x - prev.x) * smoothing,
@@ -56,16 +60,17 @@ export function getSmoothedLandmarks(rawLandmarks) {
             z: (prev.z ?? 0) + ((next.z ?? 0) - (prev.z ?? 0)) * smoothing,
         };
     });
+    smoothedHandLandmarksByKey.set(smoothingKey, nextSmoothed);
 
-    return smoothedHandLandmarks;
+    return nextSmoothed;
 }
 
 // "어두운색의 살집 있는 손"을 그리는 핵심 함수
 // 화면에 실제로 손 모양을 그리는 핵심 기능입니다. 색깔이나 그림자 등을 여기서 입힙니다.
-export function drawHand(ctx, landmarks, canvas, t) {
+export function drawHand(ctx, landmarks, canvas, t, smoothingKey = "default") {
     ctx.save();
     ctx.globalAlpha = 0.92;
-    const stable = getSmoothedLandmarks(landmarks);
+    const stable = getSmoothedLandmarks(landmarks, smoothingKey);
     const toCanvasX = (x) => (1 - x) * canvas.width; // 좌우 반전 처리
     const toCanvasY = (y) => y * canvas.height;
 
@@ -76,7 +81,7 @@ export function drawHand(ctx, landmarks, canvas, t) {
     rawPalmPoints.forEach((p) => { cx += p.x; cy += p.y; });
     cx /= rawPalmPoints.length; cy /= rawPalmPoints.length;
 
-    const renderScale = computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY);
+    const renderScale = computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY, smoothingKey);
 
     // 특정 랜드마크의 픽셀 좌표를 반환하는 헬퍼
     const point = (idx) => {
@@ -235,6 +240,11 @@ export function drawHand(ctx, landmarks, canvas, t) {
 
     ctx.shadowBlur = 0;
     ctx.restore();
+}
+
+export function clearHandSmoothing(smoothingKey) {
+    smoothedHandLandmarksByKey.delete(smoothingKey);
+    smoothedRenderScaleByKey.delete(smoothingKey);
 }
 
 // 떠다니는 음표 효과 생성 (audio.js와 함께 사용)

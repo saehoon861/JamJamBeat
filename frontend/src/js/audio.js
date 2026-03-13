@@ -33,6 +33,8 @@ const SAMPLE_URLS = { // 각 악기별 실제 소리 파일 위치들입니다.
 
 const sampleBuffers = new Map();
 const sampleLoadPromises = new Map();
+const customSampleBuffers = new Map();
+const customSampleLoadPromises = new Map();
 let playbackContext = null;
 let transportAnchorSec = null;
 
@@ -207,10 +209,48 @@ async function loadSampleBuffer(sampleId) {
   return loader; // 작업을 시작하고 약속을 돌려줍니다.
 }
 
+async function loadCustomSampleBuffer(customKey, dataUrl) {
+  const ctx = ensureAudioContext();
+  if (!ctx || !dataUrl) return null;
+
+  if (customSampleBuffers.has(customKey)) {
+    return customSampleBuffers.get(customKey) || null;
+  }
+
+  if (customSampleLoadPromises.has(customKey)) {
+    return customSampleLoadPromises.get(customKey) || null;
+  }
+
+  const loader = (async () => {
+    try {
+      const res = await fetch(dataUrl);
+      if (!res.ok) return null;
+      const ab = await res.arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab.slice(0));
+      customSampleBuffers.set(customKey, buf);
+      return buf;
+    } catch {
+      return null;
+    } finally {
+      customSampleLoadPromises.delete(customKey);
+    }
+  })();
+
+  customSampleLoadPromises.set(customKey, loader);
+  return loader;
+}
+
 // 소리 파일들을 미리 읽어와서 연주할 준비를 해두는 기능입니다.
 function preloadSamples() {
   Object.keys(SAMPLE_URLS).forEach((sampleId) => { // 등록된 모든 소리 이름을 하나씩 꺼냅니다.
     loadSampleBuffer(sampleId); // 각 소리를 미리 불러오기 시작합니다.
+  });
+}
+
+export function preloadCustomSounds(customSoundMap = {}) {
+  Object.entries(customSoundMap).forEach(([instrumentId, soundData]) => {
+    if (!soundData?.data) return;
+    loadCustomSampleBuffer(`custom_${instrumentId}`, soundData.data);
   });
 }
 
@@ -236,6 +276,30 @@ function playSample(sampleId, { wet = 0.22, delay = 0.12, gain = 1 } = {}) {
   emitSoundPlayed(sampleId, "sample");
 
   return true; // 연주 성공을 알립니다.
+}
+
+export function playCustomSample(customKey, dataUrl, { wet = 0.22, delay = 0.12, gain = 1 } = {}) {
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return false;
+  if (!customKey || !dataUrl) return false;
+
+  const buffer = customSampleBuffers.get(customKey);
+  if (!buffer) {
+    loadCustomSampleBuffer(customKey, dataUrl);
+    return false;
+  }
+
+  const src = ctx.createBufferSource();
+  const out = ctx.createGain();
+  out.gain.value = gain;
+
+  src.buffer = buffer;
+  src.connect(out);
+  connectSource(out, wet, delay);
+  src.start();
+  emitSoundPlayed(customKey, "custom-sample");
+
+  return true;
 }
 
 function connectSource(node, wetAmount = 1, delayAmount = 0.22) { // 소리 노드를 여러 효과 필터에 연결하는 기능입니다.

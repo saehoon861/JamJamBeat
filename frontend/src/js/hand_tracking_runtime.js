@@ -18,32 +18,64 @@ export function createHandTrackingRuntime({
   inferIntervalMs,
   landmarkStaleMs
 }) {
+  const HAND_KEYS = ["left", "right"];
   // lastVideoTime 은 "이 프레임을 이미 처리했는지" 확인하려고 저장하는 값입니다.
   let lastVideoTime = -1;
   // lastInferenceAt 은 마지막으로 손 인식을 돌린 시각입니다.
   let lastInferenceAt = 0;
   // cachedLandmarks 는 가장 최근에 찾은 손 좌표를 잠깐 기억해두는 저장소입니다.
-  let cachedLandmarks = null;
+  let cachedHands = [];
   // cachedLandmarksAt 은 위 좌표를 언제 저장했는지 기록합니다.
   let cachedLandmarksAt = 0;
+
+  function normalizeHandedness(result) {
+    const raw = Array.isArray(result?.handednesses) ? result.handednesses : [];
+    return raw.map((entry) => {
+      const first = Array.isArray(entry) ? entry[0] : entry;
+      const label = String(first?.displayName || first?.categoryName || "").trim().toLowerCase();
+      if (label === "left" || label === "right") return label;
+      return null;
+    });
+  }
+
+  function buildHandsWithKeys(result) {
+    const hands = Array.isArray(result?.landmarks) ? result.landmarks : [];
+    const handedness = normalizeHandedness(result);
+    const usedKeys = new Set();
+
+    return hands.map((landmarks, index) => {
+      const preferredKey = handedness[index];
+      let handKey = preferredKey;
+
+      if (!handKey || usedKeys.has(handKey)) {
+        handKey = HAND_KEYS.find((candidate) => !usedKeys.has(candidate)) || `hand-${index}`;
+      }
+      usedKeys.add(handKey);
+
+      return { handKey, landmarks };
+    });
+  }
 
   // 직전에 찾은 손 좌표가 아직 너무 오래되지 않았다면,
   // 새 계산 결과가 없어도 화면에 손 모양을 잠깐 계속 보여줍니다.
   function renderCachedHand(now) {
-    const cacheFresh = cachedLandmarks && now - cachedLandmarksAt <= landmarkStaleMs;
+    const cacheFresh = cachedHands.length > 0 && now - cachedLandmarksAt <= landmarkStaleMs;
     if (cacheFresh) {
-      // 저장된 손 좌표를 다시 그립니다.
-      renderer.drawHand(handCtx, cachedLandmarks, handCanvas, now * 0.001);
+      // 저장된 손 좌표들을 다시 그립니다.
+      cachedHands.forEach((hand) => {
+        renderer.drawHand(handCtx, hand.landmarks, handCanvas, now * 0.001, hand.handKey);
+      });
       // 검지 끝 좌표를 손 커서 위치로 변환합니다.
-      const pointer = interactionRuntime.createInstrumentPoint(cachedLandmarks[8], handCanvas);
+      const primaryHand = cachedHands.find((hand) => hand.handKey === "right") || cachedHands[0];
+      const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
       // 커서를 실제 화면 위치로 옮깁니다.
       interactionRuntime.setPointer(pointer);
       return;
     }
 
-    if (cachedLandmarks) {
+    if (cachedHands.length > 0) {
       // 저장된 좌표가 너무 오래됐으면 버리고 커서를 숨깁니다.
-      cachedLandmarks = null;
+      cachedHands = [];
       handCursor.style.opacity = 0;
     }
   }
@@ -61,32 +93,36 @@ export function createHandTrackingRuntime({
   function handleDetectionResult(result, now) {
     if (result.landmarks.length === 0) {
       // 손이 하나도 안 보이면 저장된 좌표를 지우고 UI도 초기 상태로 돌립니다.
-      cachedLandmarks = null;
+      cachedHands = [];
       cachedLandmarksAt = 0;
       interactionRuntime.resetTrackingState();
       return;
     }
 
     // 여러 손이 감지될 수 있으므로 hands 배열로 받습니다.
-    const hands = result.landmarks;
-    // 메인 커서와 제스처 판정은 첫 번째 손을 대표로 사용합니다.
-    const landmarks = hands[0];
-    cachedLandmarks = landmarks;
+    const hands = buildHandsWithKeys(result);
+    const primaryHand = hands.find((hand) => hand.handKey === "right") || hands[0];
+    const landmarks = primaryHand.landmarks;
+    cachedHands = hands;
     cachedLandmarksAt = now;
 
     // 검지 끝을 화면 좌표로 바꾸고, 시작 버튼 hover 같은 UI 반응을 처리합니다.
-    const pointer = interactionRuntime.createInstrumentPoint(landmarks[8], handCanvas);
-    interactionRuntime.processLandingHover(pointer, now);
+    hands.forEach((hand) => {
+      const pointer = interactionRuntime.createInstrumentPoint(hand.landmarks[8], handCanvas);
+      interactionRuntime.processLandingHover(pointer, now);
+    });
 
     // 모든 손의 손가락 끝 좌표들을 모아서 터치 충돌 판정에 사용합니다.
     const triggerPoints = hands.flatMap((hand) =>
-      [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(hand[idx], handCanvas))
+      [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(hand.landmarks[idx], handCanvas))
     );
 
     // 손가락 끝이 악기에 닿았는지 검사합니다.
     interactionRuntime.processInstrumentCollision(triggerPoints, now);
     // 첫 번째 손 기준으로 제스처 판정도 실행합니다.
-    interactionRuntime.processGestureTriggers(landmarks, now);
+    hands.forEach((hand) => {
+      interactionRuntime.processGestureTriggers(hand.landmarks, now, hand.handKey);
+    });
   }
 
   // predict() 는 requestAnimationFrame 으로 계속 반복되는 메인 루프입니다.

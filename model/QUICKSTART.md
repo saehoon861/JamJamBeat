@@ -61,7 +61,7 @@ flex_*, abd_*   손가락 굽힘/벌어짐 각도  (9개)
 uv run python model_pipelines/run_all.py
 ```
 
-13개 모델을 순서대로 학습 → 평가 → 저장한다.
+14개 모델을 순서대로 학습 → 평가 → 저장한다.
 완료 후 비교 결과가 아래 경로에 저장된다:
 
 ```
@@ -78,11 +78,11 @@ uv run python model_pipelines/run_pipeline.py --model-id mlp_baseline
 
 **선택 가능한 model-id:**
 ```
-mlp_baseline          mlp_baseline_full     mlp_baseline_seq8
-mlp_sequence_joint    mlp_sequence_delta    mlp_temporal_pooling
-mlp_embedding         two_stream_mlp        cnn1d_tcn
-transformer_embedding mobilenetv3_small     shufflenetv2_x0_5
-efficientnet_b0
+mlp_original          mlp_baseline          mlp_baseline_full
+mlp_baseline_seq8     mlp_sequence_joint    mlp_temporal_pooling
+mlp_sequence_delta    mlp_embedding         two_stream_mlp
+cnn1d_tcn             transformer_embedding mobilenetv3_small
+shufflenetv2_x0_5     efficientnet_b0
 ```
 
 ---
@@ -100,22 +100,26 @@ uv run python model_pipelines/run_all.py \
 
 4개 파일 대신 하나로 합친 CSV를 넣고, 내부에서 비율로 train/val/test를 나눌 수 있다.
 
-> 단일 CSV를 넣으면 source group이 1개 → 자동으로 **row-level 랜덤 split** 이 적용된다.
+> 단일 CSV를 넣으면 `source_file` 컬럼 기준으로 **source_file별 블록 단위 내부 split** 이 적용된다.
+> 각 source_file 안에서 `seq_len` 크기 블록 단위로 나눠 train/val/test에 고르게 배분하므로
+> 모든 클래스가 세 split 모두에 포함되는 것이 보장된다.
 > 기본 비율은 8:1:1이며 `--train-ratio`, `--val-ratio`, `--test-ratio`로 조정 가능하다.
+
+실제 단일 파일 예시: `data_fusion/baseline.csv` (56개 source_file, 45,483행)
 
 ### 단일 모델 실행
 
 ```bash
 uv run python model_pipelines/run_pipeline.py \
     --model-id mlp_baseline \
-    --csv-path data_fusion/merged.csv
+    --csv-path data_fusion/baseline.csv
 ```
 
 비율 직접 지정:
 ```bash
 uv run python model_pipelines/run_pipeline.py \
     --model-id mlp_baseline \
-    --csv-path data_fusion/merged.csv \
+    --csv-path data_fusion/baseline.csv \
     --train-ratio 0.8 --val-ratio 0.1 --test-ratio 0.1
 ```
 
@@ -123,14 +127,14 @@ uv run python model_pipelines/run_pipeline.py \
 
 ```bash
 uv run python model_pipelines/run_all.py \
-    --csv-path data_fusion/merged.csv
+    --csv-path data_fusion/baseline.csv
 ```
 
 ### 이미지 CNN 제외 배치 실행
 
 ```bash
 uv run python model_pipelines/run_no_pretrained.py \
-    --csv-path data_fusion/merged.csv
+    --csv-path data_fusion/baseline.csv
 ```
 
 > 결과 저장 위치는 4개 파일 입력과 동일하게 `model_evaluation/pipelines/{suite_name}/` 아래에 생성된다.
@@ -155,7 +159,7 @@ uv run python model_pipelines/run_all.py --epochs 50 --batch-size 64
 
 ---
 
-## 6. 실행 결과 위치
+## 7. 실행 결과 위치
 
 `run_all.py` 배치 실행 기준 구조:
 
@@ -184,7 +188,7 @@ model_evaluation/pipelines/
 
 ---
 
-## 7. 결과 빠르게 확인
+## 8. 결과 빠르게 확인
 
 ```bash
 # 가장 최근 batch 확인
@@ -199,7 +203,7 @@ cat model_evaluation/pipelines/{suite_name}/mlp_baseline/latest.json
 
 ---
 
-## 8. 모델별 영상 체크 (추론 시각화)
+## 9. 모델별 영상 체크 (추론 시각화)
 
 학습된 모델을 실제 영상에 돌려보고 예측 결과를 오버레이로 확인한다.
 
@@ -238,7 +242,7 @@ uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
 
 ---
 
-## 9. 오류 프레임 분석 (예측 vs Ground Truth 비교)
+## 10. 오류 프레임 분석 (예측 vs Ground Truth 비교)
 
 학습된 모델의 추론 결과를 ground truth 라벨과 프레임 단위로 비교해, **틀린 프레임만** 오버레이 영상으로 저장한다.
 
@@ -316,7 +320,7 @@ run_dir/error_analysis/
 
 ---
 
-## 10. PoC 수용 기준
+## 11. PoC 수용 기준
 
 | 지표 | 기준 |
 |------|------|

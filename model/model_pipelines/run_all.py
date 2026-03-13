@@ -53,12 +53,15 @@ DEFAULT_INPUTS = [
 
 
 def resolve_input_paths(csv_paths: list[str]) -> list[Path]:
-    """suite 메타데이터 기록용으로 입력 CSV 경로를 절대 경로로 맞춘다."""
+    """suite 메타데이터 기록 및 subprocess 전달용으로 입력 CSV 경로를 절대 경로로 맞춘다.
+    우선순위: CWD 기준 → PROJECT_ROOT 기준
+    """
     resolved: list[Path] = []
     for path in csv_paths:
         p = Path(path)
         if not p.is_absolute():
-            p = PROJECT_ROOT / p
+            cwd_candidate = Path.cwd() / p
+            p = cwd_candidate if cwd_candidate.exists() else PROJECT_ROOT / p
         resolved.append(p.resolve())
     return resolved
 
@@ -129,8 +132,8 @@ def build_cmd(model_id: str, args: argparse.Namespace, output_root: Path) -> lis
     """run_pipeline.py에 넘길 공통 CLI 인자를 한 곳에서 조립한다."""
     cmd = [sys.executable, str(PIPELINE_SCRIPT), "--model-id", model_id]
 
-    for p in (args.csv_path or DEFAULT_INPUTS):
-        cmd += ["--csv-path", p]
+    for p in resolve_input_paths(args.csv_path or DEFAULT_INPUTS):
+        cmd += ["--csv-path", str(p)]
 
     cmd += [
         "--output-root", str(output_root),

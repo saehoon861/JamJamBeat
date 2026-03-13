@@ -26,6 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 KST = timezone(timedelta(hours=9))
 
 ALL_MODELS = [
+    "mlp_original",
     "mlp_baseline",
     "mlp_baseline_full",
     "mlp_baseline_seq8",
@@ -148,6 +149,9 @@ def build_cmd(model_id: str, args: argparse.Namespace, output_root: Path) -> lis
         "--vote-n",      str(args.vote_n),
         "--debounce-k",  str(args.debounce_k),
         "--fallback-fps",str(args.fallback_fps),
+        "--train-ratio", str(args.train_ratio),
+        "--val-ratio",   str(args.val_ratio),
+        "--test-ratio",  str(args.test_ratio),
     ]
     return cmd
 
@@ -340,6 +344,11 @@ def main() -> None:
     parser.add_argument("--vote-n",      type=int,   default=7)
     parser.add_argument("--debounce-k",  type=int,   default=5)
     parser.add_argument("--fallback-fps",type=float, default=30.0)
+
+    # train/val/test 비율 (단일 CSV 입력 시 row-level split에 적용)
+    parser.add_argument("--train-ratio", type=float, default=0.8)
+    parser.add_argument("--val-ratio",   type=float, default=0.1)
+    parser.add_argument("--test-ratio",  type=float, default=0.1)
 
     # 공통
     parser.add_argument("--seed",        type=int,   default=42)

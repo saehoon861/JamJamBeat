@@ -245,6 +245,11 @@ def instantiate_model(
     """checkpoint state_dict shape를 읽어 정확한 model 클래스를 복원한다."""
     mod = importlib.import_module(f"{model_id}.model")
 
+    if model_id == "mlp_original":
+        input_dim = int(state_dict["net.0.weight"].shape[1])
+        model = mod.GestureMLP(input_dim=input_dim, num_classes=num_classes)
+        return model, DEFAULT_SEQ_LEN, input_dim, None
+
     if model_id in {"mlp_baseline", "mlp_baseline_full"}:
         input_dim = int(state_dict["net.0.weight"].shape[1])
         model = mod.MLPBaseline(input_dim=input_dim, num_classes=num_classes)

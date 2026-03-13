@@ -62,13 +62,14 @@ from _shared import JOINT_COLS, BONE_COLS, RAW_JOINT_COLS, SplitData, detect_ang
 # Constants
 # -----------------------------------------------------------------------------
 DEFAULT_INPUTS = [
-    "model/data_fusion/man1_right_for_poc_output.csv",
-    "model/data_fusion/man2_right_for_poc_output.csv",
-    "model/data_fusion/man3_right_for_poc_output.csv",
-    "model/data_fusion/woman1_right_for_poc_output.csv",
+    "model/data_fusion/man1_right_for_poc_notnull.csv",
+    "model/data_fusion/man2_right_for_poc_notnull.csv",
+    "model/data_fusion/man3_right_for_poc_notnull.csv",
+    "model/data_fusion/woman1_right_for_poc_notnull.csv",
 ]
 
 MODEL_CHOICES = [
+    "mlp_original",
     "mlp_baseline",
     "mlp_baseline_full",
     "mlp_baseline_seq8",
@@ -205,6 +206,49 @@ def load_preprocessed_data(csv_paths: list[Path]) -> pd.DataFrame:
     return merged
 
 
+def _block_split_single(
+    df: pd.DataFrame,
+    rng: np.random.Generator,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    seq_len: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """단일 source 내에서 seq_len 블록 단위로 train/val/test를 나눈다.
+
+    frame_idx 순으로 정렬 후 seq_len 크기 블록을 셔플해 분배하므로
+    슬라이딩 윈도우가 split 경계를 넘지 않는다.
+    마지막 불완전 블록은 train에 편입한다.
+    """
+    sort_col = "frame_idx" if "frame_idx" in df.columns else None
+    sdf = df.sort_values(sort_col).reset_index(drop=True) if sort_col else df.reset_index(drop=True)
+
+    assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6
+    block_size = max(seq_len, 1)
+    n_rows = len(sdf)
+    n_blocks = n_rows // block_size
+
+    block_idx = np.arange(n_blocks)
+    rng.shuffle(block_idx)
+
+    n_test = max(1, int(round(n_blocks * test_ratio)))
+    n_val  = max(1, int(round(n_blocks * val_ratio)))
+    if n_test + n_val >= n_blocks:
+        n_test, n_val = 1, 1
+
+    test_blocks  = set(block_idx[:n_test])
+    val_blocks   = set(block_idx[n_test:n_test + n_val])
+    train_blocks = set(block_idx[n_test + n_val:])
+
+    row_block = np.arange(n_rows) // block_size
+
+    train_mask = np.array([b in train_blocks or b >= n_blocks for b in row_block])
+    val_mask   = np.array([b in val_blocks   for b in row_block])
+    test_mask  = np.array([b in test_blocks  for b in row_block])
+
+    return sdf[train_mask].copy(), sdf[val_mask].copy(), sdf[test_mask].copy()
+
+
 def split_by_group(
     df: pd.DataFrame,
     group_col: str = "__source_group",
@@ -212,54 +256,67 @@ def split_by_group(
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
     test_ratio: float = 0.1,
+    seq_len: int = 1,
 ) -> SplitData:
     """가능하면 source group 단위로 train / val / test를 나눈다.
 
-    원본 파일 수가 너무 적으면 학습 불능을 피하기 위해 row-level fallback을 사용한다.
+    우선순위:
+    1. __source_group 4개 이상 (기본, 4파일 입력) → group-level split
+    2. source_file 컬럼에 여러 값 존재 (통합 CSV) → source_file 내부 블록 split
+       각 source_file 안에서 seq_len 블록 단위로 나눠 모든 클래스가
+       train/val/test에 고루 포함되도록 보장한다.
+    3. 진짜 단일 source → 전체에 seq_len 블록 단위 split
     """
     assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6
 
     groups = list(df[group_col].dropna().unique())
     rng = np.random.default_rng(seed)
-    rng.shuffle(groups)
 
-    if len(groups) >= 3:
+    if len(groups) >= 4:
+        # 우선순위 1: 4개 이상 파일 → group-level split (기존 동작 유지)
+        rng.shuffle(groups)
         n_groups = len(groups)
         n_test = max(1, int(round(n_groups * test_ratio)))
-        n_val = max(1, int(round(n_groups * val_ratio)))
+        n_val  = max(1, int(round(n_groups * val_ratio)))
 
         if n_test + n_val >= n_groups:
             n_test = 1
-            n_val = 1
+            n_val  = 1
 
-        test_groups = set(groups[:n_test])
-        val_groups = set(groups[n_test:n_test + n_val])
+        test_groups  = set(groups[:n_test])
+        val_groups   = set(groups[n_test:n_test + n_val])
         train_groups = set(groups[n_test + n_val:])
 
         if not train_groups:
-            # guarantee train split non-empty
             spill = list(val_groups)
             train_groups.add(spill[0])
             val_groups.remove(spill[0])
 
         train_df = df[df[group_col].isin(train_groups)].copy()
-        val_df = df[df[group_col].isin(val_groups)].copy()
-        test_df = df[df[group_col].isin(test_groups)].copy()
+        val_df   = df[df[group_col].isin(val_groups)].copy()
+        test_df  = df[df[group_col].isin(test_groups)].copy()
+
+    elif "source_file" in df.columns and df["source_file"].nunique() >= 2:
+        # 우선순위 2: 통합 CSV — source_file별 내부 블록 split
+        # 각 source_file에서 독립적으로 split해 모든 클래스 대표성을 보장한다.
+        train_parts, val_parts, test_parts = [], [], []
+        for _, grp in df.groupby("source_file"):
+            tr, va, te = _block_split_single(
+                grp, rng, train_ratio, val_ratio, test_ratio, seq_len
+            )
+            train_parts.append(tr)
+            val_parts.append(va)
+            test_parts.append(te)
+
+        train_df = pd.concat(train_parts, ignore_index=True)
+        val_df   = pd.concat(val_parts,   ignore_index=True)
+        test_df  = pd.concat(test_parts,  ignore_index=True)
+
     else:
-        # fallback: random row split
-        idx = np.arange(len(df))
-        rng.shuffle(idx)
-
-        n_test = max(1, int(len(idx) * test_ratio))
-        n_val = max(1, int(len(idx) * val_ratio))
-
-        test_idx = idx[:n_test]
-        val_idx = idx[n_test:n_test + n_val]
-        train_idx = idx[n_test + n_val:]
-
-        train_df = df.iloc[train_idx].copy()
-        val_df = df.iloc[val_idx].copy()
-        test_df = df.iloc[test_idx].copy()
+        # 우선순위 3: 진짜 단일 source → seq_len 블록 단위 split
+        train_df, val_df, test_df = _block_split_single(
+            df, rng, train_ratio, val_ratio, test_ratio, seq_len
+        )
 
     return SplitData(
         train_df=train_df.reset_index(drop=True),
@@ -496,7 +553,14 @@ def run(args: argparse.Namespace) -> dict:
     angle_cols = detect_angle_cols(df)
 
     # 동일 source group이 train / test에 동시에 들어가지 않도록 먼저 split한다.
-    split = split_by_group(df, seed=args.seed)
+    split = split_by_group(
+        df,
+        seed=args.seed,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+        test_ratio=args.test_ratio,
+        seq_len=args.seq_len,
+    )
     dataset_info = build_dataset_info(csv_paths, df, split)
 
     # 평가 리포트와 checkpoint 저장에 같은 class ordering을 사용한다.
@@ -723,6 +787,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vote-n", type=int, default=7)
     parser.add_argument("--debounce-k", type=int, default=5)
     parser.add_argument("--fallback-fps", type=float, default=30.0)
+
+    parser.add_argument("--train-ratio", type=float, default=0.8)
+    parser.add_argument("--val-ratio",   type=float, default=0.1)
+    parser.add_argument("--test-ratio",  type=float, default=0.1)
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cpu", choices=["auto", "cpu", "cuda"])

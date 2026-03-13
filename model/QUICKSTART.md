@@ -96,7 +96,48 @@ uv run python model_pipelines/run_all.py \
 
 ---
 
-## 5. 주요 옵션
+## 5. 단일 CSV 입력 + 비율 split
+
+4개 파일 대신 하나로 합친 CSV를 넣고, 내부에서 비율로 train/val/test를 나눌 수 있다.
+
+> 단일 CSV를 넣으면 source group이 1개 → 자동으로 **row-level 랜덤 split** 이 적용된다.
+> 기본 비율은 8:1:1이며 `--train-ratio`, `--val-ratio`, `--test-ratio`로 조정 가능하다.
+
+### 단일 모델 실행
+
+```bash
+uv run python model_pipelines/run_pipeline.py \
+    --model-id mlp_baseline \
+    --csv-path data_fusion/merged.csv
+```
+
+비율 직접 지정:
+```bash
+uv run python model_pipelines/run_pipeline.py \
+    --model-id mlp_baseline \
+    --csv-path data_fusion/merged.csv \
+    --train-ratio 0.8 --val-ratio 0.1 --test-ratio 0.1
+```
+
+### 전체 모델 배치 실행
+
+```bash
+uv run python model_pipelines/run_all.py \
+    --csv-path data_fusion/merged.csv
+```
+
+### 이미지 CNN 제외 배치 실행
+
+```bash
+uv run python model_pipelines/run_no_pretrained.py \
+    --csv-path data_fusion/merged.csv
+```
+
+> 결과 저장 위치는 4개 파일 입력과 동일하게 `model_evaluation/pipelines/{suite_name}/` 아래에 생성된다.
+
+---
+
+## 6. 주요 옵션
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|

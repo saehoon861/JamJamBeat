@@ -137,6 +137,24 @@ def make_landmark_figure(row: pd.Series) -> go.Figure:
     ys = [row[f"y{i}"] for i in range(LANDMARK_COUNT)]
     zs = [row[f"z{i}"] for i in range(LANDMARK_COUNT)]
 
+    # 손 크기에 맞춰 좌표 정규화 (중앙 정렬 및 비율 유지 스케일링)
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+    cz = sum(zs) / len(zs)
+    
+    xs = [x - cx for x in xs]
+    ys = [y - cy for y in ys]
+    zs = [z - cz for z in zs]
+    
+    max_range = max(max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))
+    if max_range == 0:
+        max_range = 1
+        
+    scale = max_range / 1.5
+    xs = [x / scale for x in xs]
+    ys = [y / scale for y in ys]
+    zs = [z / scale for z in zs]
+
     traces = []
 
     # 관절 연결선 추가 (HAND_EDGES 정의 순서)
@@ -370,7 +388,6 @@ def build_app(
         State("cur-idx",   "data"),
         State("drop-list", "data"),
         State("done",      "data"),
-        prevent_initial_call=True,
     )
     def handle_buttons(
         n_prev, n_keep, n_drop,
@@ -393,6 +410,10 @@ def build_app(
             status-bar     - 상태 텍스트
             done-message   - 완료 메시지 HTML
         """
+        if cur_idx is None: cur_idx = 0
+        if drop_list is None: drop_list = []
+        if done is None: done = False
+
         if done:
             return no_update, no_update, no_update, no_update, no_update, no_update, no_update
 
@@ -459,34 +480,6 @@ def build_app(
         )
 
         return new_idx, new_drops, new_done, img_src, fig, status, done_msg
-
-    # ── 콜백: 초기 페이지 로드 시 첫 프레임 렌더링 ──
-    @app.callback(
-        Output("frame-image",    "src",    allow_duplicate=True),
-        Output("landmark-graph", "figure", allow_duplicate=True),
-        Output("status-bar",     "children", allow_duplicate=True),
-        Input("cur-idx",         "data"),
-        State("drop-list",       "data"),
-        prevent_initial_call="initial_duplicate",
-    )
-    def initial_render(cur_idx: int, drop_list: list[int]):
-        """
-        트리거: 페이지 초기 로드 (cur-idx Store 초기값 반영)
-        역할  : 첫 프레임 이미지와 3D 랜드마크를 렌더링한다.
-        """
-        row      = df.iloc[cur_idx]
-        cur_fidx = int(frame_ids[cur_idx])
-        img_path = image_map.get(cur_fidx)
-
-        if img_path and os.path.exists(img_path):
-            rel_path = os.path.relpath(img_path, TESTDATA_DIR)
-            img_src  = f"/assets/{rel_path.replace(os.sep, '/')}?t={int(time.time() * 1000)}"
-        else:
-            img_src = "https://via.placeholder.com/640x360/1a1a2e/666666?text=이미지+없음"
-
-        fig    = make_landmark_figure(row)
-        status = f"프레임 1 / {total}  |  frame_idx={cur_fidx}  |  🟢 KEEP  |  누적 Drop: 0개"
-        return img_src, fig, status
 
     return app
 

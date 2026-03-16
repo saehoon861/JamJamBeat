@@ -104,56 +104,84 @@ def get_user_name() -> str:
             return name
 
 
+DROP_IMAGES_DIR = os.path.join(TESTDATA_DIR, "drop_images")  # 상수에 추가
+
+def _max_idx_from_files(directory: str, gesture: int) -> int:
+    """파일명에서 gesture가 일치하는 frame_idx 최댓값을 반환. 없으면 0."""
+    max_idx = 0
+    if not os.path.isdir(directory):
+        return max_idx
+    for fname in os.listdir(directory):
+        parts = fname.split("_")
+        if len(parts) < 2:
+            continue
+        try:
+            if int(parts[0]) == gesture:
+                max_idx = max(max_idx, int(parts[1]))
+        except ValueError:
+            continue
+    return max_idx
+
+
 def load_initial_indices() -> dict[int, int]:
     """
-    역할: 각 gesture 클래스별 현재 최대 frame_idx를 CSV 마지막 행에서 읽어 초기화한다.
-          행 수가 아닌 마지막 행의 frame_idx 값을 직접 읽어 순번 어긋남을 방지한다.
+    역할: 각 gesture 클래스별 next_frame_idx를 결정한다.
+          CSV, images/, drop_images/ 세 곳의 최댓값을 모두 비교하여
+          어느 쪽에서도 중복이 발생하지 않도록 한다.
     반환: {gesture: next_frame_idx} 형태의 딕셔너리
     """
     indices = {}
     for g in GESTURE_CLASSES:
+        max_idx = 0
+
+        # 1) CSV에서 최댓값
         csv_path = os.path.join(TESTDATA_DIR, f"landmarks_{g}.csv")
         if os.path.exists(csv_path):
             try:
-                # 마지막 행만 효율적으로 읽기
                 with open(csv_path, 'r') as f:
                     reader = csv.reader(f)
-                    last_row = None
+                    next(reader)  # 헤더 스킵
                     for row in reader:
-                        last_row = row
-                if last_row and last_row[0] != "frame_idx":
-                    # 헤더가 아닌 마지막 데이터 행의 frame_idx + 1
-                    indices[g] = int(last_row[0]) + 1
-                else:
-                    indices[g] = 1
-            except (ValueError, IndexError):
-                indices[g] = 1
-        else:
-            # CSV 없으면 1부터 시작
-            indices[g] = 1
+                        try:
+                            max_idx = max(max_idx, int(row[0]))
+                        except (ValueError, IndexError):
+                            continue
+            except StopIteration:
+                pass  # 헤더만 있는 빈 CSV
+
+        # 2) images/{g}/ 파일명에서 최댓값
+        max_idx = max(max_idx, _max_idx_from_files(os.path.join(IMAGES_DIR, str(g)), g))
+
+        # 3) drop_images/ 파일명에서 최댓값
+        max_idx = max(max_idx, _max_idx_from_files(DROP_IMAGES_DIR, g))
+
+        indices[g] = max_idx + 1 if max_idx > 0 else 1
+
     return indices
 
+# 추가: 공유 상태를 담을 변수 (콜백이 별도 스레드에서 호출되므로)
+latest_result: mp_vision.HandLandmarkerResult | None = None
 
 def load_landmarker() -> mp_vision.HandLandmarker:
-    """
-    역할: hand_landmarker.task 파일을 로드하여 HandLandmarker 인스턴스를 반환한다.
-    반환: 초기화된 HandLandmarker 객체
-    """
-    if not os.path.exists(TASK_FILE):
-        print(f"[오류] hand_landmarker.task 파일을 찾을 수 없습니다: {TASK_FILE}")
-        sys.exit(1)
+    def _callback(
+        result: mp_vision.HandLandmarkerResult,
+        output_image: mp.Image,
+        timestamp_ms: int,
+    ) -> None:
+        global latest_result
+        latest_result = result
 
     base_options = mp_python.BaseOptions(model_asset_path=TASK_FILE)
     options = mp_vision.HandLandmarkerOptions(
         base_options=base_options,
-        running_mode=mp_vision.RunningMode.IMAGE,
-        num_hands=1,                          # max_num_hands = 1
+        running_mode=mp_vision.RunningMode.LIVE_STREAM,   # ← IMAGE → LIVE_STREAM
+        num_hands=1,
         min_hand_detection_confidence=0.7,
         min_hand_presence_confidence=0.7,
         min_tracking_confidence=0.7,
+        result_callback=_callback,                        # ← 추가
     )
     return mp_vision.HandLandmarker.create_from_options(options)
-
 
 # ─────────────────────────────────────────────
 # 시각화 유틸
@@ -308,6 +336,8 @@ def main() -> None:
         sys.exit(1)
 
     try:
+        global latest_result
+        latest_result = None
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -319,9 +349,10 @@ def main() -> None:
             # MediaPipe 추론
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            result = landmarker.detect(mp_image)
-
-            hand_detected = bool(result.hand_landmarks)
+            timestamp_ms = int(time.time() * 1000)
+            landmarker.detect_async(mp_image, timestamp_ms)   # 반환값 없음
+            result = latest_result                             # 콜백이 채워준 값 사용
+            hand_detected = bool(result and result.hand_landmarks)
 
             if hand_detected:
                 # 랜드마크 오버레이

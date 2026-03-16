@@ -189,15 +189,34 @@ def make_landmark_figure(row: pd.Series) -> go.Figure:
         paper_bgcolor="#1a1a2e",
         scene=dict(
             aspectmode="cube",
-            xaxis=dict(range=[-1, 1], title="X", color="#aaa", showbackground=False),
+            xaxis=dict(
+                range=[-0.25,0.25],
+                tickmode="linear",
+                tick0=-0.25,
+                dtick=0.25,
+                title="X",
+                color="#aaa",
+                showbackground=False
+            ),
             yaxis=dict(
-                range=[-1, 1],
+                range=[-1,1],
+                tickmode="linear",
+                tick0=-1,
+                dtick=0.25,
+                autorange="reversed",
                 title="Y",
                 color="#aaa",
-                showbackground=False,
-                autorange="reversed",   # MediaPipe y축 반전: 하단→0이 되도록
+                showbackground=False
             ),
-            zaxis=dict(range=[-1, 1], title="Z", color="#aaa", showbackground=False),
+            zaxis=dict(
+                range=[-1,1],
+                tickmode="linear",
+                tick0=-1,
+                dtick=0.5,
+                title="Z",
+                color="#aaa",
+                showbackground=False
+            ),
             bgcolor="#1a1a2e",
         ),
     )
@@ -529,7 +548,7 @@ def main() -> None:
     app = build_app(gesture, df, image_map)
     print("\n[안내] 브라우저에서 http://127.0.0.1:8050 을 열어 검수를 진행하세요.")
     print("[안내] 마지막 프레임에서 Keep/Drop 클릭 시 후처리가 자동 실행됩니다.\n")
-    app.run(debug=False, host="127.0.0.1", port=8050)
+    app.run(debug=True, host="127.0.0.1", port=8050)
 
 
 if __name__ == "__main__":

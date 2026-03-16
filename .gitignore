@@ -16,6 +16,9 @@ env/
 data/labeled_data/*.csv
 data/raw_data/*.mp4
 data/total_data/*.csv
+data/testset/testdata/*.csv
+data/testset/testdata/images/*
+data/testset/testdata/drop_images/*
 data/processed_scenarios/*.csv
 
 # AI Assistants & Tools

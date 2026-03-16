@@ -132,28 +132,33 @@ def make_landmark_figure(row: pd.Series) -> go.Figure:
         row - landmarks_{gesture}.csv의 단일 행 (pd.Series)
     반환: go.Figure 객체
     """
-    # 좌표 추출
-    xs = [row[f"x{i}"] for i in range(LANDMARK_COUNT)]
-    ys = [row[f"y{i}"] for i in range(LANDMARK_COUNT)]
-    zs = [row[f"z{i}"] for i in range(LANDMARK_COUNT)]
+    wx, wy, wz = row["x0"], row["y0"], row["z0"]
+    xs = [row[f"x{i}"] - wx for i in range(LANDMARK_COUNT)]
+    ys = [row[f"y{i}"] - wy for i in range(LANDMARK_COUNT)]
+    zs = [row[f"z{i}"] - wz for i in range(LANDMARK_COUNT)]
 
-    # 손 크기에 맞춰 좌표 정규화 (중앙 정렬 및 비율 유지 스케일링)
-    cx = sum(xs) / len(xs)
-    cy = sum(ys) / len(ys)
-    cz = sum(zs) / len(zs)
+    # z만 x,y 범위에 맞게 스케일 조정
+    xy_range = max(max(xs)-min(xs), max(ys)-min(ys))
+    z_range = max(zs)-min(zs) if max(zs) != min(zs) else 1
+    zs = [z * (xy_range / z_range) for z in zs]
+
+    # # 손 크기에 맞춰 좌표 정규화 (중앙 정렬 및 비율 유지 스케일링)
+    # cx = sum(xs) / len(xs)
+    # cy = sum(ys) / len(ys)
+    # cz = sum(zs) / len(zs)
     
-    xs = [x - cx for x in xs]
-    ys = [y - cy for y in ys]
-    zs = [z - cz for z in zs]
+    # xs = [x - cx for x in xs]
+    # ys = [y - cy for y in ys]
+    # zs = [z - cz for z in zs]
     
-    max_range = max(max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))
-    if max_range == 0:
-        max_range = 1
+    # max_range = max(max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))
+    # if max_range == 0:
+    #     max_range = 1
         
-    scale = max_range / 1.5
-    xs = [x / scale for x in xs]
-    ys = [y / scale for y in ys]
-    zs = [z / scale for z in zs]
+    # scale = max_range / 1.5
+    # xs = [x / scale for x in xs]
+    # ys = [y / scale for y in ys]
+    # zs = [z / scale for z in zs]
 
     traces = []
 

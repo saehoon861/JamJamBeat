@@ -63,13 +63,18 @@ export function createHandTrackingRuntime({
     if (cacheFresh) {
       // 저장된 손 좌표들을 다시 그립니다.
       cachedHands.forEach((hand) => {
-        renderer.drawHand(handCtx, hand.landmarks, handCanvas, now * 0.001, hand.handKey);
+        const currentGesture = interactionRuntime.getCurrentGesture(hand.handKey);
+        renderer.drawHand(handCtx, hand.landmarks, handCanvas, now * 0.001, hand.handKey, currentGesture);
       });
       // 검지 끝 좌표를 손 커서 위치로 변환합니다.
       const primaryHand = cachedHands.find((hand) => hand.handKey === "right") || cachedHands[0];
+      // 모든 손가락 끝 위치를 전달하여 비눗방울 터뜨리기를 시도합니다.
+      const flickerPoints = [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(primaryHand.landmarks[idx], handCanvas));
+      interactionRuntime.processBubbleCollisions(flickerPoints);
+
       const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
       // 커서를 실제 화면 위치로 옮깁니다.
-      interactionRuntime.setPointer(pointer);
+      interactionRuntime.setPointer(pointer, now);
       return;
     }
 
@@ -113,56 +118,58 @@ export function createHandTrackingRuntime({
     });
 
     // 모든 손의 손가락 끝 좌표들을 모아서 터치 충돌 판정에 사용합니다.
-    const triggerPoints = hands.flatMap((hand) =>
-      [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(hand.landmarks[idx], handCanvas))
-    );
+    const triggerPoints = hands.flatMap((hand) => {
+      if (!hand.landmarks) return [];
+      return [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(hand.landmarks[idx], handCanvas));
+    });
 
     // 손가락 끝이 악기에 닿았는지 검사합니다.
     interactionRuntime.processInstrumentCollision(triggerPoints, now);
-    // 첫 번째 손 기준으로 제스처 판정도 실행합니다.
-    hands.forEach((hand) => {
-      interactionRuntime.processGestureTriggers(hand.landmarks, now, hand.handKey);
-    });
+    // 비눗방울과도 닿았는지 검사합니다.
+    interactionRuntime.processBubbleCollisions(triggerPoints);
+    
+    // 첫 번째 손 기준으로 제스처 판정과 커서 위치를 업데이트합니다.
+    if (primaryHand && primaryHand.landmarks) {
+      const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
+      interactionRuntime.setPointer(pointer, now);
+
+      hands.forEach((hand) => {
+        if (hand.landmarks) {
+          interactionRuntime.processGestureTriggers(hand.landmarks, now, hand.handKey);
+        }
+      });
+    }
   }
 
   // predict() 는 requestAnimationFrame 으로 계속 반복되는 메인 루프입니다.
   // 한 프레임마다 손을 그릴지, 새 인식을 돌릴지, 이펙트를 갱신할지를 결정합니다.
   function predict() {
-    const handLandmarker = getHandLandmarker();
-    if (!handLandmarker) {
-      // 손 인식기가 아직 준비되지 않았으면 다음 화면 프레임에서 다시 시도합니다.
-      requestAnimationFrame(predict);
-      return;
-    }
+    try {
+      const handLandmarker = getHandLandmarker();
+      if (!handLandmarker) {
+        requestAnimationFrame(predict);
+        return;
+      }
 
-    // performance.now() 는 현재 시각을 밀리초 단위로 꽤 정확하게 알려줍니다.
-    const now = performance.now();
-    // 이전 프레임의 손 그림을 지웁니다.
-    handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
-    // 피버 타임 종료 여부처럼 프레임마다 확인할 상태를 먼저 갱신합니다.
-    onBeforeFrame(now, getSessionStarted());
-    // 새 인식 결과가 없어도 저장된 손 좌표가 있으면 먼저 그립니다.
-    renderCachedHand(now);
+      const now = performance.now();
+      handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+      onBeforeFrame(now, getSessionStarted());
+      renderCachedHand(now);
 
-    if (shouldRunInference(now)) {
-      // 이번 프레임을 처리했다고 기록합니다.
-      lastVideoTime = video.currentTime;
-      lastInferenceAt = now;
-
-      try {
-        // 현재 영상 프레임에서 손 위치를 계산합니다.
+      if (shouldRunInference(now)) {
+        lastVideoTime = video.currentTime;
+        lastInferenceAt = now;
         const result = handLandmarker.detectForVideo(video, now);
         handleDetectionResult(result, now);
-      } catch (error) {
-        // 손 인식 중 에러는 바깥에서 넘겨준 에러 처리기로 보냅니다.
-        onDetectionError(error);
       }
-    }
 
-    // 손과 별개로 파티클 이펙트도 매 프레임 갱신합니다.
-    particleSystem.updateParticles();
-    // 다음 화면 프레임에서도 predict() 가 다시 실행되게 예약합니다.
-    requestAnimationFrame(predict);
+      particleSystem.updateParticles();
+    } catch (error) {
+      onDetectionError(error);
+    } finally {
+      // 에러가 나더라도 루프는 중단되지 않도록 반드시 다음 프레임을 예약합니다.
+      requestAnimationFrame(predict);
+    }
   }
 
   // 바깥에서는 predict() 만 알면 이 추적 엔진을 시작할 수 있습니다.

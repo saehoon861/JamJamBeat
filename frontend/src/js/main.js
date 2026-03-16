@@ -58,7 +58,7 @@ const COLLISION_PADDING = 12; // 손이 악기에 완전히 닿지 않아도 조
 const START_HOVER_MS = 220; // 시작 버튼 위에 손을 얼마나 오래 올려두어야 게임이 시작되는지 결정하는 시간(0.52초)입니다.
 const FEVER_TRIGGER_WINDOW_MS = 5000; // 피버 타임을 위해 6번의 터치를 모아야 하는 시간 제한(5초)입니다.
 const FEVER_TRIGGER_HITS = 30; // 피버 타임을 터뜨리기 위해 필요한 최소 터치 횟수입니다.
-const FEVER_DURATION_MS = 6200; // 피버 타임이 한 번 시작되면 얼마나 오랫동안 지속될지 결정하는 시간(6.2초)입니다.
+const FEVER_DURATION_MS = 12000; // 피버 타임이 한 번 시작되면 얼마나 오랫동안 지속될지 결정하는 시간(12초)입니다.
 const ENABLE_AMBIENT_AUDIO = false; // 동작 인식 시에만 소리가 나도록 배경 앰비언트는 끕니다.
 
 const DEFAULT_INFER_FPS = 45; // 별도 설정이 없을 때 1초에 몇 번 손 위치를 계산할지 나타냅니다. (기본 45회)
@@ -456,7 +456,9 @@ const interactionRuntime = createInteractionRuntime({
   startHoverMs: START_HOVER_MS,
   gestureCooldownMs: GESTURE_TRIGGER_COOLDOWN_MS,
   isAdminEditMode: () => adminEditMode,
-  isSessionStarted: () => sessionStarted
+  isSessionStarted: () => sessionStarted,
+  feverController,
+  checkBubbleCollision: (points) => particleSystem.checkBubbleCollision(points)
 });
 
 const trackingRuntime = createHandTrackingRuntime({
@@ -470,6 +472,12 @@ const trackingRuntime = createHandTrackingRuntime({
   interactionRuntime,
   onBeforeFrame: (now, started) => {
     feverController.updateFeverState(now, started);
+    // 피버 타임일 때 비눗방울을 무작위로 생성합니다.
+    if (feverController.isFever() && started) {
+      if (Math.random() < 0.05) { // 5% 확률로 조정 (기존 10%)
+        particleSystem.spawnBubble(window.innerWidth, window.innerHeight);
+      }
+    }
   },
   onDetectionError: (error) => {
     console.warn("MediaPipe detection error:", error);

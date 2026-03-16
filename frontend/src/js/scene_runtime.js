@@ -149,6 +149,8 @@ export function createFeverController({
 
   return {
     registerHit,
-    updateFeverState
+    triggerFever,
+    updateFeverState,
+    isFever: () => scene.dataset.fever === "on"
   };
 }

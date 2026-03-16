@@ -65,11 +65,29 @@ export function getSmoothedLandmarks(rawLandmarks, smoothingKey = "default") {
     return nextSmoothed;
 }
 
-// "어두운색의 살집 있는 손"을 그리는 핵심 함수
-// 화면에 실제로 손 모양을 그리는 핵심 기능입니다. 색깔이나 그림자 등을 여기서 입힙니다.
-export function drawHand(ctx, landmarks, canvas, t, smoothingKey = "default") {
+const AVATAR_IMAGES = {
+    "Fist": new Image(),        // drum (hedgehog)
+    "OpenPalm": new Image(),    // xylophone (lily)
+    "V": new Image(),           // tambourine (clover)
+    "Pinky": new Image(),       // owl (squirrel)
+    "Animal": new Image(),      // fern (magic fern)
+    "KHeart": new Image()       // fern (magic fern)
+};
+
+// Initiate image loading
+AVATAR_IMAGES["Fist"].src = "/assets/objects/hedgehog-drum.png";
+AVATAR_IMAGES["OpenPalm"].src = "/assets/objects/lily-melody.png";
+AVATAR_IMAGES["V"].src = "/assets/objects/clover-chime.png";
+AVATAR_IMAGES["Pinky"].src = "/assets/objects/squirrel-effect.png";
+AVATAR_IMAGES["Animal"].src = "/assets/objects/magic-fern.png";
+AVATAR_IMAGES["KHeart"].src = "/assets/objects/magic-fern.png";
+
+
+// "살아있는 오브젝트 기반 아바타"를 그리는 핵심 함수
+// 화면에 실제로 손 모양 대신 캐릭터/식물 오브젝트를 그립니다. 제스처에 따라 다른 모양이 나옵니다.
+export function drawHand(ctx, landmarks, canvas, t, smoothingKey = "default", currentGesture = "None") {
     ctx.save();
-    ctx.globalAlpha = 0.92;
+    ctx.globalAlpha = 0.96;
     const stable = getSmoothedLandmarks(landmarks, smoothingKey);
     const toCanvasX = (x) => (1 - x) * canvas.width; // 좌우 반전 처리
     const toCanvasY = (y) => y * canvas.height;
@@ -101,144 +119,67 @@ export function drawHand(ctx, landmarks, canvas, t, smoothingKey = "default") {
     palmPoints.forEach((p) => { cx += p.x; cy += p.y; });
     cx /= palmPoints.length; cy /= palmPoints.length;
 
-    // --- 내부 유틸리티 그리기 함수 ---
+    // ---------------------------------------------------------
+    // 살아있는 오브젝트 아바타(Living Object Avatar) 그리기
+    // ---------------------------------------------------------
 
-    // 부드러운 곡선으로 연결된 경로 생성 (손바닥용)
-    const drawPalmPath = () => {
-        palmPoints.forEach((p, i) => {
-            const next = palmPoints[(i + 1) % palmPoints.length];
-            const mx = (p.x + next.x) / 2;
-            const my = (p.y + next.y) / 2;
-            if (i === 0) ctx.moveTo(mx, my);
-            else ctx.quadraticCurveTo(p.x, p.y, mx, my);
-        });
-        ctx.closePath();
-    };
+    // 제스처 라벨에 해당하는 아바타 이미지 선택
+    const avatarImg = AVATAR_IMAGES[currentGesture];
 
-    // 입체적인 관절 그리기 (그라데이션 적용)
-    const drawJoint = (x, y, r, core, edge) => {
-        const g = ctx.createRadialGradient(x - r * 0.34, y - r * 0.36, r * 0.22, x, y, r);
-        g.addColorStop(0, core);
-        g.addColorStop(1, edge);
-        ctx.shadowColor = "rgba(255, 186, 218, 0.5)";
-        ctx.shadowBlur = r * 0.7;
-        ctx.fillStyle = g;
+    if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0 && currentGesture !== "None") {
+        // 제스처가 인식된 경우: 해당 오브젝트 이미지를 렌더링
+        const wrist = point(0);
+        const middle = point(9);
+        const handDirX = middle.x - wrist.x;
+        const handDirY = middle.y - wrist.y;
+        
+        // 손목에서 중지 첫 번째 마디를 향하는 방향으로 각도 계산
+        let angle = Math.atan2(handDirY, handDirX) + Math.PI / 2;
+
+        const pulse = 1 + Math.sin(t * 8.0) * 0.05; // 콩닥콩닥 숨쉬는 듯한 박동
+        const baseSize = 140 * renderScale; // 손바닥 크기에 비례하여 아바타 크기 결정
+        
+        // 속도에 따른 찌그러짐(Squash and Stretch) 효과
+        // 이전 손목 위치를 비교하여 속도를 유추할 수 있으나, 일단 시간에 따라 살짝 흔들거리게 적용
+        const swayX = Math.sin(t * 12) * 0.04;
+        const scaleX = pulse + swayX;
+        const scaleY = pulse - swayX;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle * 0.2); // 손의 회전을 완전히 따라가면 부자연스러울 수 있으므로 약간만 반영
+        ctx.scale(scaleX, scaleY);
+        
+        ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+        ctx.shadowBlur = 20;
+
+        // 중앙부를 기준으로 이미지를 그림
+        ctx.drawImage(avatarImg, -baseSize / 2, -baseSize / 2, baseSize, baseSize);
+
+        ctx.restore();
+    } else {
+        // 제스처가 "None"이거나 아직 이미지가 없는 경우: 작은 마법 씨앗(Magic Seed) 그리기 (손바닥 중심 위치)
+        const pulse = 1 + Math.sin(t * 5.0) * 0.1;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(pulse, pulse);
+
+        const seedGrad = ctx.createRadialGradient(0, -2, 0, 0, 0, 16);
+        seedGrad.addColorStop(0, "rgba(255, 255, 255, 1)");
+        seedGrad.addColorStop(0.3, "rgba(220, 255, 200, 0.8)");
+        seedGrad.addColorStop(1, "rgba(100, 200, 100, 0)");
+
+        ctx.fillStyle = seedGrad;
+        ctx.shadowColor = "rgba(100, 255, 100, 0.6)";
+        ctx.shadowBlur = 15;
+        
         ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.arc(0, 0, 16, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowBlur = 0;
-    };
 
-    // 손가락 마디(캡슐 형태) 그리기
-    const drawCapsule = (a, b, radius, color, shadowColor) => {
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const len = Math.max(1, Math.hypot(dx, dy));
-        const nx = -dy / len;
-        const ny = dx / len;
+        ctx.restore();
+    }
 
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        // 아래쪽 그림자 효과
-        ctx.strokeStyle = shadowColor;
-        ctx.lineWidth = radius * 1.32;
-        ctx.beginPath();
-        ctx.moveTo(a.x + 2, a.y + 3);
-        ctx.lineTo(b.x + 2, b.y + 3);
-        ctx.stroke();
-
-        // 메인 살집 색상 (어두운 회색/차콜)
-        ctx.strokeStyle = color;
-        ctx.lineWidth = radius * 1.08;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-
-        // 위쪽 하이라이트 (Glossy 효과)
-        ctx.strokeStyle = "rgba(255,255,255,0.3)";
-        ctx.lineWidth = radius * 0.42;
-        ctx.beginPath();
-        ctx.moveTo(a.x - nx * radius * 0.2, a.y - ny * radius * 0.2);
-        ctx.lineTo(b.x - nx * radius * 0.2, b.y - ny * radius * 0.2);
-        ctx.stroke();
-    };
-
-    // 1. 손바닥 그리기 (심장 박동처럼 미세하게 커졌다가 작아졌다가 하는 효과를 줍니다)
-    const pulse = 1 + Math.sin(t * 5) * 0.015;
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(pulse, pulse);
-    ctx.translate(-cx, -cy);
-
-    // 손바닥 그림자
-    const palmShadow = ctx.createRadialGradient(cx + 10, cy + 12, 10, cx + 10, cy + 12, 100);
-    palmShadow.addColorStop(0, "rgba(35, 45, 48, 0.28)");
-    palmShadow.addColorStop(1, "rgba(35, 45, 48, 0)");
-    ctx.fillStyle = palmShadow;
-    ctx.beginPath();
-    drawPalmPath();
-    ctx.fill();
-
-    // 손바닥 본체 (어두운 차콜 그레이 입체 그라데이션)
-    const palmGrad = ctx.createRadialGradient(cx - 20, cy - 20, 15, cx, cy + 15, 110);
-    palmGrad.addColorStop(0, "#ffe9f4");
-    palmGrad.addColorStop(0.45, "#ffd4e8");
-    palmGrad.addColorStop(1, "#f3a8ca");
-    ctx.fillStyle = palmGrad;
-    ctx.beginPath();
-    drawPalmPath();
-    ctx.fill();
-
-    // 손바닥 상단 하이라이트 Rim
-    ctx.strokeStyle = "rgba(255,255,255,0.62)";
-    ctx.lineWidth = 5.4;
-    ctx.beginPath();
-    ctx.arc(cx - 15, cy - 18, 30, Math.PI * 1.0, Math.PI * 1.9);
-    ctx.stroke();
-    ctx.restore();
-
-    // 2. 손가락 그리기
-    const fingers = [
-        { joints: [1, 2, 3, 4], color: "#ffd8ee", shadow: "#d988b5", size: 15.6 },
-        { joints: [5, 6, 7, 8], color: "#ffd0ea", shadow: "#d581ae", size: 15.2 },
-        { joints: [9, 10, 11, 12], color: "#ffcee8", shadow: "#cf78a7", size: 16.2 },
-        { joints: [13, 14, 15, 16], color: "#ffc8e5", shadow: "#c96f9f", size: 15.1 },
-        { joints: [17, 18, 19, 20], color: "#ffc2df", shadow: "#bf6596", size: 14.4 }
-    ];
-
-    fingers.forEach((finger, fIdx) => {
-        const sway = Math.sin(t * 6 + fIdx * 0.9) * 1.5;
-        const pts = finger.joints.map((idx, i) => {
-            const p = point(idx);
-            return { x: p.x, y: p.y + sway * (i / finger.joints.length) };
-        });
-
-        // 마디 연결 그리기 (끝으로 갈수록 얇아지는 Tapering 적용)
-        for (let i = 1; i < pts.length; i++) {
-            const r = Math.max(7.2, finger.size - i * 1.95);
-            drawCapsule(pts[i - 1], pts[i], r, finger.color, finger.shadow);
-        }
-
-        // 관절 노드 그리기 (젤리 같은 느낌이 나도록 동그랗게 그립니다)
-        pts.forEach((p, i) => {
-            const r = Math.max(7.0, finger.size - i * 1.9);
-            drawJoint(p.x, p.y, r, "rgba(255, 245, 252, 0.76)", finger.color);
-        });
-    });
-
-    // 3. 손가락 끝 포인트 효과 (어두운 테마에 어울리는 은은한 빛)
-    const tipColors = ["#ffc5e7", "#ffbbe1", "#ffc0e4", "#ffb2db", "#ffa9d6"];
-    [4, 8, 12, 16, 20].forEach((idx, i) => {
-        const p = point(idx);
-        const r = 9 + Math.sin(t * 8 + i) * 1.2;
-        drawJoint(p.x, p.y, r, "rgba(255,255,255,0.88)", tipColors[i]);
-        // 상단 반짝임
-        drawJoint(p.x - r * 0.3, p.y - r * 0.3, r * 0.42, "rgba(255,255,255,0.74)", "rgba(255,255,255,0)");
-    });
-
-    ctx.shadowBlur = 0;
     ctx.restore();
 }
 

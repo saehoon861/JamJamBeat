@@ -3,7 +3,9 @@
 // createParticleSystem(...) 은 파티클 목록을 내부에 숨긴 채,
 // "추가하기(spawnBurst)" 와 "업데이트하기(updateParticles)" 만 밖으로 꺼내주는 공장 함수입니다.
 export function createParticleSystem(effectCtx, effectCanvas) {
-  const particles = [];
+  let particles = [];
+  const MAX_BUBBLES = 15; // 동시에 존재할 수 있는 최대 비눗방울 개수
+  const MAX_PARTICLES = 150; // 전체 파티클 개수 제한
 
   // 특정 악기나 제스처 타입에 맞는 색과 양으로 파티클을 생성합니다.
   function spawnBurst(type, element) {
@@ -52,17 +54,42 @@ export function createParticleSystem(effectCtx, effectCanvas) {
     }
   }
 
+  // 비눗방울은 화면 아래쪽에서 생성되어 위로 서서히 올라갑니다.
+  function spawnBubble(canvasWidth, canvasHeight) {
+    const currentBubbles = particles.filter(p => p.type === "bubble").length;
+    if (currentBubbles >= MAX_BUBBLES) return;
+
+    particles.push({
+      type: "bubble",
+      x: Math.random() * canvasWidth,
+      y: canvasHeight + 25,
+      vx: (Math.random() - 0.5) * 1.2,
+      vy: -1.0 - Math.random() * 1.5,
+      gravity: -0.012,
+      life: 200 + Math.random() * 100,
+      maxLife: 300,
+      size: 12 + Math.random() * 20,
+      color: "rgba(255, 255, 255, 0.35)",
+      borderColor: "rgba(173, 216, 230, 0.7)"
+    });
+  }
+
   // 이미 만들어진 파티클들을 한 프레임씩 움직이고, 다 수명이 끝난 건 지웁니다.
   function updateParticles() {
     effectCtx.clearRect(0, 0, effectCanvas.width, effectCanvas.height);
 
+    // 개수가 너무 많으면 오래된 것부터 정리합니다.
+    if (particles.length > MAX_PARTICLES) {
+      particles.splice(0, particles.length - MAX_PARTICLES);
+    }
+
     for (let i = particles.length - 1; i >= 0; i -= 1) {
       const p = particles[i];
-      p.x += p.vx; // 가로로 이동합니다.
-      p.y += p.vy; // 세로로 이동합니다.
-      p.vy += p.gravity; // 시간이 갈수록 아래로 떨어지게 만듭니다.
-      p.vx *= 0.98; // 옆으로 가는 속도는 조금씩 줄입니다.
-      p.life -= 1; // 수명도 한 프레임씩 줄어듭니다.
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += p.gravity;
+      p.vx *= 0.992;
+      p.life -= 1;
 
       if (p.life <= 0) {
         particles.splice(i, 1);
@@ -70,19 +97,69 @@ export function createParticleSystem(effectCtx, effectCanvas) {
       }
 
       const alpha = p.life / p.maxLife;
-      effectCtx.save();
-      effectCtx.globalAlpha = alpha;
-      effectCtx.fillStyle = p.color;
-      effectCtx.beginPath();
-      effectCtx.ellipse(p.x, p.y, p.size, p.size * 0.58, 0, 0, Math.PI * 2);
-      effectCtx.fill();
-      effectCtx.restore();
+      
+      if (p.type === "bubble") {
+        effectCtx.save();
+        effectCtx.globalAlpha = alpha;
+        // 비눗방울 그리기
+        effectCtx.beginPath();
+        effectCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        effectCtx.fillStyle = p.color;
+        effectCtx.fill();
+        effectCtx.strokeStyle = p.borderColor;
+        effectCtx.lineWidth = 1.5;
+        effectCtx.stroke();
+
+        // 하이라이트
+        effectCtx.beginPath();
+        effectCtx.arc(p.x - p.size * 0.3, p.y - p.size * 0.3, p.size * 0.15, 0, Math.PI * 2);
+        effectCtx.fillStyle = "rgba(255, 255, 255, 0.5)";
+        effectCtx.fill();
+        effectCtx.restore();
+      } else {
+        // 일반 파티클은 save/restore 없이 간단히 그립니다.
+        effectCtx.globalAlpha = alpha;
+        effectCtx.fillStyle = p.color;
+        effectCtx.beginPath();
+        effectCtx.ellipse(p.x, p.y, p.size, p.size * 0.58, 0, 0, Math.PI * 2);
+        effectCtx.fill();
+      }
     }
+    // 루프 끝난 후 Alpha 복구
+    effectCtx.globalAlpha = 1.0;
+  }
+
+  // 손가락 끝(point)들이 비눗방울과 닿았는지 확인하고 터뜨립니다.
+  function checkBubbleCollision(points) {
+    if (!Array.isArray(points)) points = [points];
+    let poppedTotal = false;
+
+    for (let i = particles.length - 1; i >= 0; i -= 1) {
+      const p = particles[i];
+      if (p.type !== "bubble") continue;
+
+      for (const pt of points) {
+        const dx = p.x - pt.x;
+        const dy = p.y - pt.y;
+        const distSq = dx * dx + dy * dy;
+        const threshold = (p.size + 18) ** 2; // 제곱근 계산 방지
+
+        if (distSq < threshold) {
+          spawnBurst("xylophone", { getBoundingClientRect: () => ({ left: p.x - 4, top: p.y - 4, width: 8, height: 8 }) });
+          particles.splice(i, 1);
+          poppedTotal = true;
+          break; // 이 비눗방울은 이미 터졌으므로 다음 포인트 검사 불필요
+        }
+      }
+    }
+    return poppedTotal;
   }
 
   return {
     spawnBurst,
-    updateParticles
+    spawnBubble,
+    updateParticles,
+    checkBubbleCollision
   };
 }
 

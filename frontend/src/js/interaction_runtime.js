@@ -45,9 +45,12 @@ export function createInteractionRuntime({
   startHoverMs,
   gestureCooldownMs,
   isAdminEditMode,
-  isSessionStarted
+  isSessionStarted,
+  feverController,
+  checkBubbleCollision
 }) {
   const handStateByKey = new Map();
+  const gestureHoldStartByKey = new Map();
 
   function getHandState(handKey = "default") {
     if (!handStateByKey.has(handKey)) {
@@ -57,6 +60,11 @@ export function createInteractionRuntime({
       });
     }
     return handStateByKey.get(handKey);
+  }
+
+  // 현재 (마지막으로 인식된) 제스처 라벨을 반환합니다.
+  function getCurrentGesture(handKey = "default") {
+    return getHandState(handKey).lastGestureLabel;
   }
 
   function getGestureStartConfidenceFloor(label) {
@@ -283,33 +291,58 @@ export function createInteractionRuntime({
       showSquirrelEffect();
 
       handState.lastGestureLabel = gesture.label;
+      gestureHoldStartByKey.set(handKey, now); // 새로운 제스처면 홀드 시작 시각을 기록합니다.
+
       const displayName = getGestureDisplayName(gesture.label);
       statusText.textContent = `${handKey}손 ${displayName} 인식! (신뢰도: ${(gesture.confidence * 100).toFixed(0)}%)`;
     } else {
       // 같은 제스처가 유지되는 경우 - 신뢰도도 함께 표시
+      const holdStart = gestureHoldStartByKey.get(handKey) || now;
+      const holdDuration = now - holdStart;
+
+      // 10초(10000ms) 이상 유지하면 피버 타임을 터뜨립니다.
+      if (holdDuration >= 10000 && !feverController.isFever()) {
+        feverController.triggerFever(now);
+        gestureHoldStartByKey.set(handKey, now); // 터뜨린 후엔 초기화
+      }
+
       const displayName = getGestureDisplayName(gesture.label);
-      statusText.textContent = `${handKey}손 ${displayName} 유지 중... 🎵 (${(gesture.confidence * 100).toFixed(0)}%)`;
+      const remainFever = Math.max(0, 10 - Math.floor(holdDuration / 1000));
+      if (remainFever > 0 && !feverController.isFever()) {
+        statusText.textContent = `${handKey}손 ${displayName} 유지 중... 🎵 피버까지 ${remainFever}초!`;
+      } else {
+        statusText.textContent = `${handKey}손 ${displayName} 유지 중... 🎵 (${(gesture.confidence * 100).toFixed(0)}%)`;
+      }
     }
   }
 
   // 손 커서의 위치와 보이기/숨기기를 담당합니다.
-  function setPointer(point) {
+  function setPointer(point, now) {
     handCursor.style.opacity = 1;
     handCursor.style.left = `${point.x}px`;
     handCursor.style.top = `${point.y}px`;
+  }
+
+  // 모든 터치 포인트(손가락 끝)에 대해 비눗방울 충돌을 검사합니다.
+  function processBubbleCollisions(points) {
+    if (checkBubbleCollision(points)) {
+      // 터질 때 효과음 (성능을 위해 짧고 가볍게)
+      Audio.playKids_Triangle(68 + Math.random() * 8);
+    }
   }
 
   // 손이 사라졌을 때 커서를 숨기고, 시작 전이라면 상태 문구도 초기화합니다.
   function resetTrackingState() {
     handCursor.style.opacity = 0;
 
-    // 손이 사라지면 멜로디도 중지
-    handStateByKey.forEach((handState) => {
+    // 손이 사라지면 멜로디와 홀드 시간도 중지
+    handStateByKey.forEach((handState, handKey) => {
       if (handState.currentMelodyType) {
         audioApi.stopMelodySequence(handState.currentMelodyType);
         handState.currentMelodyType = null;
       }
       handState.lastGestureLabel = "None";
+      gestureHoldStartByKey.delete(handKey);
     });
 
     if (!isSessionStarted()) {
@@ -323,7 +356,9 @@ export function createInteractionRuntime({
     processLandingHover,
     processInstrumentCollision,
     processGestureTriggers,
+    processBubbleCollisions,
     setPointer,
-    resetTrackingState
+    resetTrackingState,
+    getCurrentGesture
   };
 }

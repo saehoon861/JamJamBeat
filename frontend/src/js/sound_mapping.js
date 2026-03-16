@@ -3,14 +3,27 @@
 // localStorage 에 저장할 때 사용할 이름표(key)입니다.
 export const SOUND_MAPPING_KEY = "jamjam.soundMapping.v1";
 export const CUSTOM_SOUNDS_KEY = "jamjam.customSounds.v1";
+export const GESTURE_MAPPING_KEY = "jamjam.gestureMapping.v1";
 
 // 사용자가 별도 설정을 안 했을 때의 기본 사운드 연결표입니다.
 export const DEFAULT_SOUND_MAPPING = {
   drum: "drum",
   xylophone: "xylophone",
   tambourine: "tambourine",
-  fern: "pinky",
-  owl: "heart"
+  a: "pinky"
+};
+
+export const DEFAULT_GESTURE_MAPPING = {
+  Fist: "drum",
+  OpenPalm: "xylophone",
+  V: "tambourine",
+  Pinky: "a",
+  Animal: "a",
+  KHeart: "a"
+};
+
+const LEGACY_INSTRUMENT_IDS = {
+  a: "fern"
 };
 
 // 저장된 사운드 매핑을 읽어오되, 이상한 값은 버리고 안전한 기본값과 섞어줍니다.
@@ -34,7 +47,8 @@ export function loadSoundMapping(soundProfiles, customSounds = loadCustomSounds(
 
     const merged = { ...DEFAULT_SOUND_MAPPING };
     Object.keys(merged).forEach((instrumentId) => {
-      const candidate = String(parsed?.[instrumentId] || "");
+      const legacyId = LEGACY_INSTRUMENT_IDS[instrumentId];
+      const candidate = String(parsed?.[instrumentId] || parsed?.[legacyId] || parsed?.a2 || parsed?.owl || "");
       if (candidate in soundProfiles) {
         merged[instrumentId] = candidate;
         return;
@@ -47,6 +61,26 @@ export function loadSoundMapping(soundProfiles, customSounds = loadCustomSounds(
     return merged;
   } catch {
     return { ...DEFAULT_SOUND_MAPPING };
+  }
+}
+
+export function loadGestureMapping() {
+  try {
+    const raw = localStorage.getItem(GESTURE_MAPPING_KEY);
+    if (!raw) return { ...DEFAULT_GESTURE_MAPPING };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_GESTURE_MAPPING };
+
+    const merged = { ...DEFAULT_GESTURE_MAPPING };
+    Object.keys(merged).forEach((gestureLabel) => {
+      const candidate = String(parsed?.[gestureLabel] || "");
+      if (candidate === "drum" || candidate === "xylophone" || candidate === "tambourine" || candidate === "a") {
+        merged[gestureLabel] = candidate;
+      }
+    });
+    return merged;
+  } catch {
+    return { ...DEFAULT_GESTURE_MAPPING };
   }
 }
 

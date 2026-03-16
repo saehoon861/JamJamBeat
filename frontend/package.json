@@ -11,5 +11,8 @@
   },
   "devDependencies": {
     "vite": "^2.9.18"
+  },
+  "dependencies": {
+    "lottie-web": "^5.13.0"
   }
 }

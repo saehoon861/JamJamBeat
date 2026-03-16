@@ -4,11 +4,17 @@
 import { getConfiguredModelEndpoint } from "./env_config.js";
 
 const REQUEST_TIMEOUT_MS = 180;
-const REQUEST_INTERVAL_MS = 45;
+const DEFAULT_REQUEST_INTERVAL_MS = 120;
 const FAIL_OPEN_AFTER = 5;
 const DISABLE_FOR_MS = 1200;
 
 const requestStateByHand = new Map();
+
+function getRequestIntervalMs() {
+  const raw = Number(new URLSearchParams(window.location.search).get("modelIntervalMs"));
+  if (!Number.isFinite(raw)) return DEFAULT_REQUEST_INTERVAL_MS;
+  return Math.max(60, Math.min(400, Math.round(raw)));
+}
 
 function getHandRequestState(handKey = "default") {
   if (!requestStateByHand.has(handKey)) {
@@ -63,7 +69,7 @@ function scheduleModelRequest(landmarks, now, handKey = "default") {
   if (!endpoint) return; // 주소가 없으면 요청하지 않습니다.
   if (handState.inFlight) return; // 이미 요청 중이면 새 요청을 보내지 않습니다.
   if (now < handState.disabledUntil) return; // 실패가 많아서 쉬는 시간이라면 요청하지 않습니다.
-  if (now - handState.lastRequestAt < REQUEST_INTERVAL_MS) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
+  if (now - handState.lastRequestAt < getRequestIntervalMs()) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
 
   const payloadLandmarks = sanitizeLandmarks(landmarks); // 손 좌표를 안전한 형식으로 정리합니다.
   if (!payloadLandmarks) return; // 손 좌표가 이상하면 요청을 보내지 않습니다.

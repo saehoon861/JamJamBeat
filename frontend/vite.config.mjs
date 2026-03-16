@@ -12,6 +12,7 @@ export default defineConfig({
         index: resolve(rootDir, "index.html"),
         theme: resolve(rootDir, "theme.html"),
         admin: resolve(rootDir, "admin.html"),
+        mapping: resolve(rootDir, "mapping.html"),
         performance: resolve(rootDir, "performance.html")
       }
     }

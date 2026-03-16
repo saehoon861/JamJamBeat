@@ -27,6 +27,8 @@ export function createHandTrackingRuntime({
   let cachedHands = [];
   // cachedLandmarksAt 은 위 좌표를 언제 저장했는지 기록합니다.
   let cachedLandmarksAt = 0;
+  let lastHandRenderAt = 0;
+  const HAND_RENDER_INTERVAL_MS = 33;
 
   function normalizeHandedness(result) {
     const raw = Array.isArray(result?.handednesses) ? result.handednesses : [];
@@ -61,11 +63,14 @@ export function createHandTrackingRuntime({
   function renderCachedHand(now) {
     const cacheFresh = cachedHands.length > 0 && now - cachedLandmarksAt <= landmarkStaleMs;
     if (cacheFresh) {
-      // 저장된 손 좌표들을 다시 그립니다.
-      cachedHands.forEach((hand) => {
-        const currentGesture = interactionRuntime.getCurrentGesture(hand.handKey);
-        renderer.drawHand(handCtx, hand.landmarks, handCanvas, now * 0.001, hand.handKey, currentGesture);
-      });
+      if (now - lastHandRenderAt >= HAND_RENDER_INTERVAL_MS) {
+        renderer.setHandAnimationActive?.(true);
+        cachedHands.forEach((hand) => {
+          const currentGesture = interactionRuntime.getCurrentGesture(hand.handKey);
+          renderer.drawHand(handCtx, hand.landmarks, handCanvas, now * 0.001, hand.handKey, currentGesture);
+        });
+        lastHandRenderAt = now;
+      }
       // 검지 끝 좌표를 손 커서 위치로 변환합니다.
       const primaryHand = cachedHands.find((hand) => hand.handKey === "right") || cachedHands[0];
       // 모든 손가락 끝 위치를 전달하여 비눗방울 터뜨리기를 시도합니다.
@@ -83,6 +88,7 @@ export function createHandTrackingRuntime({
       cachedHands = [];
       handCursor.style.opacity = 0;
     }
+    renderer.setHandAnimationActive?.(false);
   }
 
   // 이번 프레임에서 실제 손 인식을 새로 돌려야 하는지 판단합니다.
@@ -100,12 +106,15 @@ export function createHandTrackingRuntime({
       // 손이 하나도 안 보이면 저장된 좌표를 지우고 UI도 초기 상태로 돌립니다.
       cachedHands = [];
       cachedLandmarksAt = 0;
+      lastHandRenderAt = 0;
+      renderer.setHandAnimationActive?.(false);
       interactionRuntime.resetTrackingState();
       return;
     }
 
     // 여러 손이 감지될 수 있으므로 hands 배열로 받습니다.
     const hands = buildHandsWithKeys(result);
+    renderer.setHandAnimationActive?.(hands.length > 0);
     const primaryHand = hands.find((hand) => hand.handKey === "right") || hands[0];
     const landmarks = primaryHand.landmarks;
     cachedHands = hands;

@@ -1,7 +1,7 @@
-// [renderer.js] 화면에 예쁜 손과 반짝이는 효과를 그리는 '화가' 역할의 파일입니다.
-// 손이 너무 떨리지 않게 부드럽게 보정해주고, 젤리처럼 말랑말랑한 디자인을 입혀줍니다.
-// 캔버스 렌더링 및 시각 효과를 담당하는 모듈입니다.
-// "어두운색의 살집 있는 말랑말랑한 손" 디자인이 포함되어 있습니다.
+import lottie from "lottie-web";
+
+// [renderer.js] 손 위치를 따라다니는 나비를 그리는 렌더러입니다.
+// 제스처에 따라 나비의 색상, 날개짓 속도, 특수 효과가 달라집니다.
 
 const smoothedHandLandmarksByKey = new Map();
 const smoothedRenderScaleByKey = new Map();
@@ -11,6 +11,12 @@ const MIN_TARGET_PALM_PX = 84;
 const MAX_TARGET_PALM_PX = 150;
 const MIN_RENDER_SCALE = 0.85;
 const MAX_RENDER_SCALE = 2.6;
+const DEFAULT_RENDER_MODE = "simple";
+const RENDER_MODE = (() => {
+    const raw = new URLSearchParams(window.location.search).get("handRenderer");
+    if (!raw) return DEFAULT_RENDER_MODE;
+    return String(raw).trim().toLowerCase() === "fancy" ? "fancy" : DEFAULT_RENDER_MODE;
+})();
 
 function clampNumber(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -41,8 +47,6 @@ function computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY, smoo
     return nextScale;
 }
 
-// 손의 떨림을 줄이기 위해 이전 좌표와 현재 좌표를 보간(Interpolation)하는 함수
-// 손이 떨리는 것을 방지하기 위해, 이전 위치와 현재 위치를 자연스럽게 이어주는 '부드러운 보정' 기능입니다.
 export function getSmoothedLandmarks(rawLandmarks, smoothingKey = "default") {
     const previous = smoothedHandLandmarksByKey.get(smoothingKey) || null;
     if (!previous || previous.length !== rawLandmarks.length) {
@@ -51,7 +55,7 @@ export function getSmoothedLandmarks(rawLandmarks, smoothingKey = "default") {
         return seeded;
     }
 
-    const smoothing = 0.68; // 값이 클수록 손 움직임을 더 빠르게 따라갑니다.
+    const smoothing = 0.68;
     const nextSmoothed = previous.map((prev, i) => {
         const next = rawLandmarks[i];
         return {
@@ -65,122 +69,52 @@ export function getSmoothedLandmarks(rawLandmarks, smoothingKey = "default") {
     return nextSmoothed;
 }
 
-const AVATAR_IMAGES = {
-    "Fist": new Image(),        // drum (hedgehog)
-    "OpenPalm": new Image(),    // xylophone (lily)
-    "V": new Image(),           // tambourine (clover)
-    "Pinky": new Image(),       // owl (squirrel)
-    "Animal": new Image(),      // fern (magic fern)
-    "KHeart": new Image()       // fern (magic fern)
+// ─── Lottie Setup ────────────────────────────────────────
+const lottieContainer = document.createElement('div');
+lottieContainer.style.width = '200px';
+lottieContainer.style.height = '200px';
+let lottieActive = false;
+let currentAnimationSpeed = null;
+
+const anim = lottie.loadAnimation({
+    container: lottieContainer,
+    renderer: 'canvas',
+    loop: true,
+    autoplay: false,
+    path: '/assets/butterfly.json',
+    rendererSettings: {
+        clearCanvas: true
+    }
+});
+
+let cachedLottieCanvas = null;
+anim.addEventListener('DOMLoaded', () => {
+    cachedLottieCanvas = lottieContainer.querySelector('canvas');
+    if (RENDER_MODE !== "fancy") {
+        anim.goToAndStop(0, true);
+    }
+});
+
+// 틴트 처리를 위한 임시 캔버스
+const tintCanvas = document.createElement('canvas');
+tintCanvas.width = 200;
+tintCanvas.height = 200;
+const tintCtx = tintCanvas.getContext('2d');
+
+// ─── 제스처별 나비 스타일 정의 ───────────────────────────
+const GESTURE_CONFIG = {
+    Fist: { speed: 0.5, tint: "rgba(255, 165, 0, 0.4)", glow: "rgba(255, 165, 0, 0.6)" }, // orange
+    OpenPalm: { speed: 1.0, tint: "rgba(0, 128, 0, 0.4)", glow: "rgba(0, 128, 0, 0.6)" }, // green
+    V: { speed: 2.0, tint: "rgba(255, 255, 0, 0.4)", glow: "rgba(255, 255, 0, 0.6)" }, // yellow
+    Pinky: { speed: 3.0, tint: "rgba(0, 255, 0, 0.4)", glow: "rgba(0, 255, 0, 0.6)" }, // lime
+    Animal: { speed: 2.5, tint: "rgba(128, 0, 128, 0.4)", glow: "rgba(128, 0, 128, 0.6)" }, // purple
+    KHeart: { speed: 1.5, tint: "rgba(255, 192, 203, 0.4)", glow: "rgba(255, 192, 203, 0.6)" }, // pink
+    None: { speed: 0.8, tint: null, glow: "rgba(200, 182, 255, 0.4)" }
 };
 
-// Initiate image loading
-AVATAR_IMAGES["Fist"].src = "/assets/objects/hedgehog-drum.png";
-AVATAR_IMAGES["OpenPalm"].src = "/assets/objects/lily-melody.png";
-AVATAR_IMAGES["V"].src = "/assets/objects/clover-chime.png";
-AVATAR_IMAGES["Pinky"].src = "/assets/objects/squirrel-effect.png";
-AVATAR_IMAGES["Animal"].src = "/assets/objects/magic-fern.png";
-AVATAR_IMAGES["KHeart"].src = "/assets/objects/magic-fern.png";
-
-
-// "살아있는 오브젝트 기반 아바타"를 그리는 핵심 함수
-// 화면에 실제로 손 모양 대신 캐릭터/식물 오브젝트를 그립니다. 제스처에 따라 다른 모양이 나옵니다.
+// ─── drawHand: 메인 렌더링 진입점 ───────────────────────
 export function drawHand(ctx, landmarks, canvas, t, smoothingKey = "default", currentGesture = "None") {
-    ctx.save();
-    ctx.globalAlpha = 0.96;
-    const stable = getSmoothedLandmarks(landmarks, smoothingKey);
-    const toCanvasX = (x) => (1 - x) * canvas.width; // 좌우 반전 처리
-    const toCanvasY = (y) => y * canvas.height;
-
-    const rawPoint = (idx) => ({ x: toCanvasX(stable[idx].x), y: toCanvasY(stable[idx].y) });
-    const rawPalmPoints = [17, 13, 9, 5, 1, 0].map(rawPoint);
-
-    let cx = 0, cy = 0;
-    rawPalmPoints.forEach((p) => { cx += p.x; cy += p.y; });
-    cx /= rawPalmPoints.length; cy /= rawPalmPoints.length;
-
-    const renderScale = computeNormalizedRenderScale(stable, canvas, toCanvasX, toCanvasY, smoothingKey);
-
-    // 특정 랜드마크의 픽셀 좌표를 반환하는 헬퍼
-    const point = (idx) => {
-        const p = rawPoint(idx);
-        return {
-            x: cx + (p.x - cx) * renderScale,
-            y: cy + (p.y - cy) * renderScale
-        };
-    };
-
-    // 손바닥 영역을 구성하는 포인트들
-    const palmIndices = [17, 13, 9, 5, 1, 0];
-    const palmPoints = palmIndices.map(point);
-
-    // 손바닥 중심 계산
-    cx = 0; cy = 0;
-    palmPoints.forEach((p) => { cx += p.x; cy += p.y; });
-    cx /= palmPoints.length; cy /= palmPoints.length;
-
-    // ---------------------------------------------------------
-    // 살아있는 오브젝트 아바타(Living Object Avatar) 그리기
-    // ---------------------------------------------------------
-
-    // 제스처 라벨에 해당하는 아바타 이미지 선택
-    const avatarImg = AVATAR_IMAGES[currentGesture];
-
-    if (avatarImg && avatarImg.complete && avatarImg.naturalWidth > 0 && currentGesture !== "None") {
-        // 제스처가 인식된 경우: 해당 오브젝트 이미지를 렌더링
-        const wrist = point(0);
-        const middle = point(9);
-        const handDirX = middle.x - wrist.x;
-        const handDirY = middle.y - wrist.y;
-        
-        // 손목에서 중지 첫 번째 마디를 향하는 방향으로 각도 계산
-        let angle = Math.atan2(handDirY, handDirX) + Math.PI / 2;
-
-        const pulse = 1 + Math.sin(t * 8.0) * 0.05; // 콩닥콩닥 숨쉬는 듯한 박동
-        const baseSize = 140 * renderScale; // 손바닥 크기에 비례하여 아바타 크기 결정
-        
-        // 속도에 따른 찌그러짐(Squash and Stretch) 효과
-        // 이전 손목 위치를 비교하여 속도를 유추할 수 있으나, 일단 시간에 따라 살짝 흔들거리게 적용
-        const swayX = Math.sin(t * 12) * 0.04;
-        const scaleX = pulse + swayX;
-        const scaleY = pulse - swayX;
-
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(angle * 0.2); // 손의 회전을 완전히 따라가면 부자연스러울 수 있으므로 약간만 반영
-        ctx.scale(scaleX, scaleY);
-        
-        ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
-        ctx.shadowBlur = 20;
-
-        // 중앙부를 기준으로 이미지를 그림
-        ctx.drawImage(avatarImg, -baseSize / 2, -baseSize / 2, baseSize, baseSize);
-
-        ctx.restore();
-    } else {
-        // 제스처가 "None"이거나 아직 이미지가 없는 경우: 작은 마법 씨앗(Magic Seed) 그리기 (손바닥 중심 위치)
-        const pulse = 1 + Math.sin(t * 5.0) * 0.1;
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.scale(pulse, pulse);
-
-        const seedGrad = ctx.createRadialGradient(0, -2, 0, 0, 0, 16);
-        seedGrad.addColorStop(0, "rgba(255, 255, 255, 1)");
-        seedGrad.addColorStop(0.3, "rgba(220, 255, 200, 0.8)");
-        seedGrad.addColorStop(1, "rgba(100, 200, 100, 0)");
-
-        ctx.fillStyle = seedGrad;
-        ctx.shadowColor = "rgba(100, 255, 100, 0.6)";
-        ctx.shadowBlur = 15;
-        
-        ctx.beginPath();
-        ctx.arc(0, 0, 16, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-    }
-
-    ctx.restore();
+    return;
 }
 
 export function clearHandSmoothing(smoothingKey) {
@@ -188,7 +122,20 @@ export function clearHandSmoothing(smoothingKey) {
     smoothedRenderScaleByKey.delete(smoothingKey);
 }
 
-// 떠다니는 음표 효과 생성 (audio.js와 함께 사용)
+export function setHandAnimationActive(active) {
+    if (RENDER_MODE !== "fancy") return;
+    if (active && !lottieActive) {
+        anim.play();
+        lottieActive = true;
+        return;
+    }
+
+    if (!active && lottieActive) {
+        anim.pause();
+        lottieActive = false;
+    }
+}
+
 export function createFloatingNote(container) {
     if (!container) return;
     const notes = ["♪", "♫", "♬", "🎵", "🎶"];

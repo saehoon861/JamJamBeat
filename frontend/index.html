@@ -35,6 +35,7 @@
         <button id="landingStartButton" type="button">시작하기</button>
         <!-- 직접 오브젝트 위치를 바꾸는 관리자 진입 링크입니다. -->
         <a class="landing-admin-link" href="./index.html?admin=1">관리자 모드 (직접 배치)</a>
+        <a class="landing-admin-link" href="./mapping.html">매칭 설정 페이지</a>
         <!-- 성능확인 전용 페이지로 가는 링크입니다. -->
         <a class="landing-admin-link" href="./performance.html">📊 성능확인 페이지</a>
       </div>
@@ -79,7 +80,7 @@
     <!-- 사용자가 실제로 터치하거나 제스처와 연결되는 악기 오브젝트 영역입니다. -->
     <section id="instrumentLayer" class="layer layer-middleground" aria-label="인터랙티브 악기 숲">
       <!-- 각각의 button 하나가 숲속 악기 하나를 뜻합니다. -->
-      <button id="instrumentDrum" class="instrument instrument-drum" type="button" aria-label="고슴도치 드럼">
+      <button id="instrumentDrum" class="instrument instrument-drum is-hidden-variant" type="button" aria-label="고슴도치 드럼" aria-hidden="true" tabindex="-1">
         <img
           class="instrument-art"
           src="/assets/objects/hedgehog-drum.png"
@@ -109,20 +110,13 @@
         />
       </button>
 
-      <button id="instrumentFern" class="instrument instrument-fern" type="button" aria-label="마법 고사리">
+      <button id="instrumentA" class="instrument instrument-fern" type="button" aria-label="a 오브젝트">
         <img
           class="instrument-art"
-          src="/assets/objects/magic-fern.png"
-          alt=""
-          loading="lazy"
-          decoding="async"
-        />
-      </button>
-
-      <button id="instrumentOwl" class="instrument instrument-owl" type="button" aria-label="다람쥐">
-        <img
-          class="instrument-art"
-          src="/assets/objects/squirrel-effect.png"
+          data-variant-base="/assets/objects/hedgehog-drum.png"
+          data-variant-gesture-a="/assets/objects/hedgehog-drum2.png"
+          data-variant-gesture-b="/assets/objects/hedgehog-drum3.png"
+          src="/assets/objects/hedgehog-drum.png"
           alt=""
           loading="lazy"
           decoding="async"
@@ -151,6 +145,7 @@
       <!-- 브라우저 오디오 권한을 켜거나 끄는 버튼입니다. -->
       <button id="soundUnlockButton" class="sound-unlock" type="button">소리 켜기</button>
       <a class="hud-main-link" href="./index.html">메인화면으로</a>
+      <a class="hud-main-link" href="./mapping.html">매칭 설정</a>
       <a class="hud-main-link" href="./performance.html">📊 성능확인 페이지</a>
       <p class="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
     </section>

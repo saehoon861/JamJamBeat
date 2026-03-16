@@ -38,6 +38,17 @@ body {
   background: transparent;
 }
 
+.scene-scroll {
+  height: auto;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.scene-scroll .layer-background {
+  position: fixed;
+}
+
 .scene[data-fever="on"] {
   filter: saturate(1.28) hue-rotate(18deg) brightness(1.05);
 }
@@ -149,6 +160,10 @@ body {
   transition: transform 160ms ease, filter 160ms ease;
 }
 
+.instrument.is-hidden-variant {
+  display: none;
+}
+
 .instrument::before,
 .instrument::after {
   content: "";
@@ -219,11 +234,26 @@ body {
 .instrument-fern {
   left: 52vw;
   bottom: 10vh;
+  width: min(24vw, 200px);
+  height: min(24vw, 200px);
 }
 
 .instrument-owl {
   left: 24vw;
   bottom: 7vh;
+  width: min(24vw, 200px);
+  height: min(24vw, 200px);
+}
+
+.instrument-fern .instrument-art,
+.instrument-owl .instrument-art {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.instrument-fern .instrument-art.is-gesture-variant {
+  transform: scale(1.14);
 }
 
 .instrument.active {
@@ -353,6 +383,7 @@ body {
   transform: translateY(16px) scale(0.85);
   pointer-events: none;
   filter: drop-shadow(0 12px 20px rgba(0, 0, 0, 0.25)) saturate(0.85) contrast(0.95) brightness(0.92);
+  display: none;
 }
 
 .gesture-squirrel.is-visible {
@@ -748,11 +779,15 @@ body {
   .instrument-fern {
     left: 48vw;
     bottom: 8vh;
+    width: min(30vw, 142px);
+    height: min(30vw, 142px);
   }
 
   .instrument-owl {
     left: 14vw;
     bottom: 7vh;
+    width: min(30vw, 142px);
+    height: min(30vw, 142px);
   }
 
   .camera-shell {
@@ -842,6 +877,107 @@ body {
 .admin-controls {
   display: grid;
   gap: 10px;
+}
+
+.mapping-shell {
+  position: relative;
+  z-index: 6;
+  width: min(94vw, 1080px);
+  margin: 34px auto;
+  padding: 24px;
+  border-radius: 24px;
+  border: 1px solid rgba(214, 237, 228, 0.22);
+  background: rgba(8, 16, 20, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+.mapping-header h1 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+}
+
+.mapping-header p {
+  margin: 8px 0 0;
+  color: var(--text-sub);
+}
+
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.mapping-panel {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mapping-panel h2 {
+  margin: 0 0 14px;
+  font-size: 1.08rem;
+}
+
+.gesture-mapping-group {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.gesture-mapping-group label {
+  font-size: 0.94rem;
+  color: var(--text-sub);
+}
+
+.gesture-mapping-group select {
+  width: 100%;
+  border: 1px solid rgba(214, 237, 228, 0.24);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(14, 26, 30, 0.9);
+  color: var(--text-main);
+}
+
+.mapping-select-hidden {
+  display: none;
+}
+
+.mapping-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mapping-option-button {
+  border: 1px solid rgba(214, 237, 228, 0.2);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(17, 30, 35, 0.84);
+  color: var(--text-sub);
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.mapping-option-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 222, 143, 0.36);
+  color: var(--text-main);
+}
+
+.mapping-option-button.is-active {
+  background: linear-gradient(135deg, rgba(255, 232, 163, 0.92) 0%, rgba(203, 243, 212, 0.9) 100%);
+  border-color: rgba(255, 245, 218, 0.72);
+  color: #163330;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.mapping-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .admin-controls label {

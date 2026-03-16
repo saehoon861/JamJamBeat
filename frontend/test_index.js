@@ -45,8 +45,7 @@ const puppeteer = require("puppeteer");
       "#instrumentDrum",
       "#instrumentXylophone",
       "#instrumentTambourine",
-      "#instrumentFern",
-      "#instrumentOwl"
+      "#instrumentA"
     ];
 
     for (const selector of instrumentIds) {

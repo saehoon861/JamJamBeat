@@ -8,8 +8,7 @@ const defaultSoundMapping = {
   drum: "drum",
   xylophone: "xylophone",
   tambourine: "tambourine",
-  fern: "pinky",
-  owl: "heart"
+  a: "pinky"
 };
 
 const soundOptions = [
@@ -26,24 +25,25 @@ const soundInputs = {
   drum: document.getElementById("sound-drum"),
   xylophone: document.getElementById("sound-xylophone"),
   tambourine: document.getElementById("sound-tambourine"),
-  fern: document.getElementById("sound-fern"),
-  owl: document.getElementById("sound-owl")
+  a: document.getElementById("sound-a")
 };
 
 const uploadInputs = {
   drum: document.getElementById("upload-drum"),
   xylophone: document.getElementById("upload-xylophone"),
   tambourine: document.getElementById("upload-tambourine"),
-  fern: document.getElementById("upload-fern"),
-  owl: document.getElementById("upload-owl")
+  a: document.getElementById("upload-a")
 };
 
 const testButtons = {
   drum: document.getElementById("test-drum"),
   xylophone: document.getElementById("test-xylophone"),
   tambourine: document.getElementById("test-tambourine"),
-  fern: document.getElementById("test-fern"),
-  owl: document.getElementById("test-owl")
+  a: document.getElementById("test-a")
+};
+
+const LEGACY_OBJECT_IDS = {
+  a: "fern"
 };
 
 const saveButton = document.getElementById("saveLayout"); // 저장 버튼입니다.
@@ -75,7 +75,8 @@ function loadSoundMapping() {
     const allowed = new Set(soundOptions.map((opt) => opt.value));
     const merged = { ...defaultSoundMapping };
     Object.keys(merged).forEach((id) => {
-      const candidate = String(parsed?.[id] || "");
+      const legacyId = LEGACY_OBJECT_IDS[id];
+      const candidate = String(parsed?.[id] || parsed?.[legacyId] || parsed?.a2 || parsed?.owl || "");
       if (allowed.has(candidate)) merged[id] = candidate;
     });
     return merged;

@@ -4,8 +4,31 @@
 // "추가하기(spawnBurst)" 와 "업데이트하기(updateParticles)" 만 밖으로 꺼내주는 공장 함수입니다.
 export function createParticleSystem(effectCtx, effectCanvas) {
   let particles = [];
-  const MAX_BUBBLES = 15; // 동시에 존재할 수 있는 최대 비눗방울 개수
-  const MAX_PARTICLES = 150; // 전체 파티클 개수 제한
+  const MAX_BUBBLES = 10; // 동시에 존재할 수 있는 최대 비눗방울 개수
+  const MAX_PARTICLES = 90; // 전체 파티클 개수 제한
+
+  function drawSparkParticle(particle, alpha) {
+    effectCtx.save();
+    effectCtx.globalAlpha = alpha;
+    effectCtx.translate(particle.x, particle.y);
+    effectCtx.rotate((particle.maxLife - particle.life) * 0.08);
+
+    effectCtx.fillStyle = particle.color;
+    effectCtx.beginPath();
+    effectCtx.arc(0, 0, particle.size, 0, Math.PI * 2);
+    effectCtx.fill();
+
+    effectCtx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    effectCtx.lineWidth = Math.max(1, particle.size * 0.2);
+    effectCtx.beginPath();
+    effectCtx.moveTo(-particle.size * 1.4, 0);
+    effectCtx.lineTo(particle.size * 1.4, 0);
+    effectCtx.moveTo(0, -particle.size * 1.4);
+    effectCtx.lineTo(0, particle.size * 1.4);
+    effectCtx.stroke();
+
+    effectCtx.restore();
+  }
 
   // 특정 악기나 제스처 타입에 맞는 색과 양으로 파티클을 생성합니다.
   function spawnBurst(type, element) {
@@ -31,10 +54,10 @@ export function createParticleSystem(effectCtx, effectCanvas) {
                     : ["#ffc5df", "#ffe9a3", "#d0ffa8"];
 
     const count =
-      type === "animal" ? 28
-        : type === "kheart" ? 32
-          : type === "fist" ? 24
-            : 18;
+      type === "animal" ? 20
+        : type === "kheart" ? 24
+          : type === "fist" ? 18
+            : 14;
 
     // count 개수만큼 파티클을 한꺼번에 만들어 배열에 넣습니다.
     for (let i = 0; i < count; i += 1) {
@@ -117,12 +140,7 @@ export function createParticleSystem(effectCtx, effectCanvas) {
         effectCtx.fill();
         effectCtx.restore();
       } else {
-        // 일반 파티클은 save/restore 없이 간단히 그립니다.
-        effectCtx.globalAlpha = alpha;
-        effectCtx.fillStyle = p.color;
-        effectCtx.beginPath();
-        effectCtx.ellipse(p.x, p.y, p.size, p.size * 0.58, 0, 0, Math.PI * 2);
-        effectCtx.fill();
+        drawSparkParticle(p, alpha);
       }
     }
     // 루프 끝난 후 Alpha 복구

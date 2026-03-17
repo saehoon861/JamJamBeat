@@ -55,100 +55,64 @@ flex_*, abd_*   손가락 굽힘/벌어짐 각도  (9개)
 
 ---
 
-## 2. 모델 학습 (전체 순차 실행, 권장)
+## 2. 역할형 학습데이터셋 생성
+
+새 파이프라인은 `학습데이터셋` 폴더의 역할형 CSV를 기준으로 동작한다.
 
 ```bash
-uv run python model_pipelines/run_all.py
+uv run python data_fusion/build_training_datasets.py
 ```
 
-14개 모델을 순서대로 학습 → 평가 → 저장한다.
-완료 후 비교 결과가 아래 경로에 저장된다:
-
+생성 결과 예시:
 ```
-model_evaluation/pipelines/{suite_name}/comparison_results.csv
+data_fusion/학습데이터셋/
+├── baseline_train.csv
+├── baseline_val.csv
+├── baseline_inference.csv
+├── baseline_test.csv
+├── ...
+└── dataset_manifest.csv
 ```
 
 ---
 
-## 3. 특정 모델만 실행
+## 3. 모델 학습 (전체 순차 실행, 권장)
 
 ```bash
-uv run python model_pipelines/run_pipeline.py --model-id mlp_baseline
+uv run python model_pipelines/run_no_pretrained.py
 ```
 
-**선택 가능한 model-id:**
-```
-mlp_original          mlp_baseline          mlp_baseline_full
-mlp_baseline_seq8     mlp_sequence_joint    mlp_temporal_pooling
-mlp_sequence_delta    mlp_embedding         two_stream_mlp
-cnn1d_tcn             transformer_embedding mobilenetv3_small
-shufflenetv2_x0_5     efficientnet_b0
+기본적으로 12개 dataset key를 자동 인식하고, 비-pretrained 11개 모델을 dataset별로 순차 실행한다.
+전체 14개 모델을 돌리려면:
+
+```bash
+uv run python model_pipelines/run_no_pretrained.py --include-pretrained
 ```
 
 ---
 
-## 4. 여러 모델만 골라서 실행
+## 4. 특정 dataset / 특정 모델만 실행
 
 ```bash
-uv run python model_pipelines/run_all.py \
-    --models mlp_baseline mlp_baseline_full two_stream_mlp
+uv run python model_pipelines/run_no_pretrained.py \
+    --dataset-key baseline_ds_1_none \
+    --models mlp_baseline mlp_embedding
 ```
 
 ---
 
-## 5. 단일 CSV 입력 + 비율 split
+## 5. 단일 모델만 직접 실행
 
-4개 파일 대신 하나로 합친 CSV를 넣고, 내부에서 비율로 train/val/test를 나눌 수 있다.
-
-> 단일 CSV를 넣으면 `source_file` 컬럼 기준으로 **source_file별 블록 단위 내부 split** 이 적용된다.
-> 각 source_file 안에서 `seq_len` 크기 블록 단위로 나눠 train/val/test에 고르게 배분하므로
-> 모든 클래스가 세 split 모두에 포함되는 것이 보장된다.
-> 기본 비율은 8:1:1이며 `--train-ratio`, `--val-ratio`, `--test-ratio`로 조정 가능하다.
-
-실제 단일 파일 예시: `data_fusion/baseline.csv` (56개 source_file, 45,483행)
-
-### 단일 모델 실행
+`run_pipeline.py`는 이제 역할형 CSV를 직접 받는다.
 
 ```bash
 uv run python model_pipelines/run_pipeline.py \
     --model-id mlp_baseline \
-    --csv-path data_fusion/baseline.csv
+    --train-csv data_fusion/학습데이터셋/baseline_ds_1_none_train.csv \
+    --val-csv data_fusion/학습데이터셋/baseline_ds_1_none_val.csv \
+    --test-csv data_fusion/학습데이터셋/baseline_ds_1_none_test.csv \
+    --inference-csv data_fusion/학습데이터셋/baseline_ds_1_none_inference.csv
 ```
-
-비율 직접 지정:
-```bash
-uv run python model_pipelines/run_pipeline.py \
-    --model-id mlp_baseline \
-    --csv-path data_fusion/baseline.csv \
-    --train-ratio 0.8 --val-ratio 0.1 --test-ratio 0.1
-```
-
-### 전체 모델 배치 실행
-
-```bash
-uv run python model_pipelines/run_all.py \
-    --csv-path data_fusion/baseline.csv
-```
-
-### 이미지 CNN 제외 배치 실행
-
-단일 CSV 입력:
-```bash
-uv run python model_pipelines/run_no_pretrained.py \
-    --csv-path data_fusion/baseline.csv
-```
-
-4개 데이터셋(CSV) 개별 지정 시:
-```bash
-uv run python model_pipelines/run_no_pretrained.py \
-    --csv-path data_fusion/man1_right_for_poc_output.csv \
-    --csv-path data_fusion/man2_right_for_poc_output.csv \
-    --csv-path data_fusion/man3_right_for_poc_output.csv \
-    --csv-path data_fusion/woman1_right_for_poc_output.csv
-```
-> `--csv-path` 옵션을 반복하여 여러 파일을 지정할 수 있으며, 생략 시 기본 설정된 4개 파일이 자동 사용됩니다.
-
-> 결과 저장 위치는 4개 파일 입력과 동일하게 `model_evaluation/pipelines/{suite_name}/` 아래에 생성된다.
 
 ---
 
@@ -165,37 +129,38 @@ uv run python model_pipelines/run_no_pretrained.py \
 
 ```bash
 # 예: 에폭 50, 배치 64로 실행
-uv run python model_pipelines/run_all.py --epochs 50 --batch-size 64
+uv run python model_pipelines/run_no_pretrained.py --epochs 50 --batch-size 64
 ```
 
 ---
 
 ## 7. 실행 결과 위치
 
-`run_all.py` 배치 실행 기준 구조:
+`run_no_pretrained.py` / `run_all.py` 배치 실행 기준 구조:
 
 ```
 model_evaluation/pipelines/
-├── latest_suite.json            ← 가장 최근 run_all suite 포인터
-└── {yyyymmdd_HHMMSS}__{dataset_tag}/
-    ├── comparison_suite.json    ← 이번 배치의 입력 CSV / 모델 목록 메타데이터
+├── latest_suite.json            ← 가장 최근 dataset suite 포인터
+└── {yyyymmdd_HHMMSS}__{dataset_key}/
+    ├── comparison_suite.json    ← dataset key / 입력 역할 CSV / 모델 목록 메타데이터
     ├── comparison_results.csv   ← 이번 배치의 전체 비교표
     └── {model_id}/
         ├── latest.json          ← 이 suite 안에서의 최신 실험 포인터
         └── {yyyymmdd_HHMMSS}/
             ├── model.pt             ← 학습된 가중치
             ├── preds_test.csv       ← 테스트 예측값
+            ├── preds_inference.csv  ← hold-out inference 예측값
             ├── train_history.csv    ← epoch별 loss/acc
             ├── run_summary.json     ← 전체 메트릭 요약
             └── evaluation/
-                ├── dataset_info.json    ← 입력 CSV / split source group 정보
+                ├── dataset_info.json    ← 입력 역할 CSV / split 정보
                 ├── metrics_summary.json
                 ├── confusion_matrix.png
                 ├── per_class_report.csv
                 └── latency_cdf.png
 ```
 
-`run_pipeline.py` 단독 실행은 기존처럼 `model_evaluation/pipelines/{model_id}/{timestamp}/` 아래에 바로 저장된다.
+`run_pipeline.py` 단독 실행은 `--output-root` 아래 `{model_id}/{timestamp}/`에 저장된다.
 
 ---
 

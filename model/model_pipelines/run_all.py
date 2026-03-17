@@ -1,19 +1,8 @@
-# run_all.py - 모델 비교 배치를 suite 폴더로 묶어 순차 실행 및 집계
-"""
-Usage:
-    python run_all.py
-    python run_all.py --csv-path path/to/data.csv --csv-path path/to/data2.csv
-    python run_all.py --epochs 30 --models mlp_baseline mlp_embedding two_stream_mlp
-    python run_all.py --output-root model/model_evaluation/pipelines
-
-결과:
-    model/model_evaluation/pipelines/{suite_name}/comparison_results.csv      (배치 비교표)
-    model/model_evaluation/pipelines/{suite_name}/{model_id}/{timestamp}/...  (모델별)
-"""
+#!/usr/bin/env python3
+# run_all.py - 역할형 학습데이터셋 세트를 자동 인식해 전체 모델 비교를 순차 실행한다.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -22,8 +11,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pandas as pd
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 KST = timezone(timedelta(hours=9))
+PIPELINE_SCRIPT = PROJECT_ROOT / "model" / "model_pipelines" / "run_pipeline.py"
+DATASET_ROOT = PROJECT_ROOT / "model" / "data_fusion" / "학습데이터셋"
 
 ALL_MODELS = [
     "mlp_original",
@@ -42,28 +36,15 @@ ALL_MODELS = [
     "efficientnet_b0",
 ]
 
-PIPELINE_SCRIPT = PROJECT_ROOT / "model" / "model_pipelines" / "run_pipeline.py"
-
-DEFAULT_INPUTS = [
-    "model/data_fusion/man1_right_for_poc_notnull.csv",
-    "model/data_fusion/man2_right_for_poc_notnull.csv",
-    "model/data_fusion/man3_right_for_poc_notnull.csv",
-    "model/data_fusion/woman1_right_for_poc_notnull.csv",
-]
+REQUIRED_SPLITS = ("train", "val", "inference", "test")
 
 
-def resolve_input_paths(csv_paths: list[str]) -> list[Path]:
-    """suite 메타데이터 기록 및 subprocess 전달용으로 입력 CSV 경로를 절대 경로로 맞춘다.
-    우선순위: CWD 기준 → PROJECT_ROOT 기준
-    """
-    resolved: list[Path] = []
-    for path in csv_paths:
-        p = Path(path)
-        if not p.is_absolute():
-            cwd_candidate = Path.cwd() / p
-            p = cwd_candidate if cwd_candidate.exists() else PROJECT_ROOT / p
-        resolved.append(p.resolve())
-    return resolved
+def resolve_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if not path.is_absolute():
+        cwd_candidate = Path.cwd() / path
+        path = cwd_candidate if cwd_candidate.exists() else PROJECT_ROOT / path
+    return path.resolve()
 
 
 def _slugify(text: str) -> str:
@@ -71,52 +52,53 @@ def _slugify(text: str) -> str:
     return slug or "dataset"
 
 
-def build_dataset_tag(csv_paths: list[str]) -> str:
-    """suite 폴더명에 넣을 dataset 식별자를 만든다."""
-    stems = [_slugify(Path(path).stem) for path in csv_paths]
-    joined = "__".join(stems)
-    if len(joined) <= 96:
-        return joined
-
-    digest = hashlib.sha1("|".join(stems).encode("utf-8")).hexdigest()[:8]
-    head = "__".join(stems[:2]) if len(stems) >= 2 else stems[0]
-    tail_count = max(len(stems) - 2, 0)
-    return f"{head}__plus{tail_count}__{digest}"
+def normalization_family_from_key(dataset_key: str) -> str:
+    for family in ("baseline", "pos_only", "scale_only", "pos_scale"):
+        if dataset_key == family or dataset_key.startswith(f"{family}_"):
+            return family
+    return "unknown"
 
 
-def build_suite_dir(base_output_root: str, csv_paths: list[str]) -> Path:
-    """run_all 1회 실행을 대표하는 suite 폴더 경로를 만든다."""
-    out_root = Path(base_output_root)
-    if not out_root.is_absolute():
-        out_root = PROJECT_ROOT / out_root
+def scan_dataset_registry(dataset_root: Path) -> dict[str, dict[str, Path]]:
+    registry: dict[str, dict[str, Path]] = {}
+    for train_path in sorted(dataset_root.glob("*_train.csv")):
+        dataset_key = train_path.stem[: -len("_train")]
+        role_paths = {
+            split: dataset_root / f"{dataset_key}_{split}.csv"
+            for split in REQUIRED_SPLITS
+        }
+        if all(path.exists() for path in role_paths.values()):
+            registry[dataset_key] = role_paths
+    return registry
 
+
+def build_suite_dir(base_output_root: Path, dataset_key: str) -> Path:
     timestamp = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
-    dataset_tag = build_dataset_tag(csv_paths)
-    return out_root / f"{timestamp}__{dataset_tag}"
+    return base_output_root / f"{timestamp}__{_slugify(dataset_key)}"
 
 
 def write_suite_manifest(
     suite_dir: Path,
-    base_output_root: Path,
-    input_csvs: list[Path],
+    dataset_key: str,
+    dataset_files: dict[str, Path],
     models_requested: list[str],
     status: str,
     failed_models: list[str] | None = None,
     comparison_path: Path | None = None,
 ) -> None:
-    """배치 실행 단위의 메타데이터를 suite 루트에 기록한다."""
     manifest = {
         "suite_name": suite_dir.name,
         "created_at_kst": datetime.now(KST).isoformat(timespec="seconds"),
         "status": status,
         "suite_dir": str(suite_dir),
-        "base_output_root": str(base_output_root),
-        "dataset_tag": build_dataset_tag([str(p) for p in input_csvs]),
-        "input_csv_paths": [str(p) for p in input_csvs],
-        "input_csv_names": [p.name for p in input_csvs],
+        "dataset_key": dataset_key,
+        "normalization_family": normalization_family_from_key(dataset_key),
+        "dataset_files": {role: str(path) for role, path in dataset_files.items()},
         "models_requested": models_requested,
         "failed_models": failed_models or [],
         "comparison_results_csv": str(comparison_path) if comparison_path else None,
+        "fixed_video_level_split": True,
+        "source_counts": {"train": 40, "val": 6, "inference": 10},
     }
     with (suite_dir / "comparison_suite.json").open("w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
@@ -128,44 +110,67 @@ def write_latest_suite(base_output_root: Path, suite_dir: Path) -> None:
         json.dump({"latest_suite": str(suite_dir)}, f, ensure_ascii=False, indent=2)
 
 
-def build_cmd(model_id: str, args: argparse.Namespace, output_root: Path) -> list[str]:
-    """run_pipeline.py에 넘길 공통 CLI 인자를 한 곳에서 조립한다."""
-    cmd = [sys.executable, str(PIPELINE_SCRIPT), "--model-id", model_id]
-
-    for p in resolve_input_paths(args.csv_path or DEFAULT_INPUTS):
-        cmd += ["--csv-path", str(p)]
-
-    cmd += [
-        "--output-root", str(output_root),
-        "--epochs",      str(args.epochs),
-        "--batch-size",  str(args.batch_size),
-        "--lr",          str(args.lr),
-        "--patience",    str(args.patience),
-        "--focal-gamma", str(args.focal_gamma),
-        "--seq-len",     str(args.seq_len),
-        "--seq-stride",  str(args.seq_stride),
-        "--image-size",  str(args.image_size),
-        "--seed",        str(args.seed),
-        "--device",      args.device,
-        "--num-workers", str(args.num_workers),
-        "--tau",         str(args.tau),
-        "--vote-n",      str(args.vote_n),
-        "--debounce-k",  str(args.debounce_k),
-        "--fallback-fps",str(args.fallback_fps),
-        "--train-ratio", str(args.train_ratio),
-        "--val-ratio",   str(args.val_ratio),
-        "--test-ratio",  str(args.test_ratio),
+def build_cmd(
+    model_id: str,
+    args: argparse.Namespace,
+    output_root: Path,
+    dataset_files: dict[str, Path],
+) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(PIPELINE_SCRIPT),
+        "--model-id",
+        model_id,
+        "--train-csv",
+        str(dataset_files["train"]),
+        "--val-csv",
+        str(dataset_files["val"]),
+        "--test-csv",
+        str(dataset_files["test"]),
+        "--inference-csv",
+        str(dataset_files["inference"]),
+        "--output-root",
+        str(output_root),
+        "--epochs",
+        str(args.epochs),
+        "--batch-size",
+        str(args.batch_size),
+        "--lr",
+        str(args.lr),
+        "--weight-decay",
+        str(args.weight_decay),
+        "--patience",
+        str(args.patience),
+        "--focal-gamma",
+        str(args.focal_gamma),
+        "--seq-len",
+        str(args.seq_len),
+        "--seq-stride",
+        str(args.seq_stride),
+        "--image-size",
+        str(args.image_size),
+        "--seed",
+        str(args.seed),
+        "--device",
+        args.device,
+        "--num-workers",
+        str(args.num_workers),
+        "--tau",
+        str(args.tau),
+        "--vote-n",
+        str(args.vote_n),
+        "--debounce-k",
+        str(args.debounce_k),
+        "--fallback-fps",
+        str(args.fallback_fps),
     ]
+    if args.class_names:
+        cmd += ["--class-names", *args.class_names]
     return cmd
 
 
-def _load_summary(output_root: str, model_id: str) -> dict | None:
-    """latest pointer를 따라가 해당 모델의 가장 최근 run summary를 읽는다."""
-    out_root = Path(output_root)
-    if not out_root.is_absolute():
-        out_root = PROJECT_ROOT / out_root
-
-    latest_path = out_root / model_id / "latest.json"
+def _load_summary(output_root: Path, model_id: str) -> dict | None:
+    latest_path = output_root / model_id / "latest.json"
     if not latest_path.exists():
         return None
     try:
@@ -176,188 +181,190 @@ def _load_summary(output_root: str, model_id: str) -> dict | None:
         return None
 
 
-def _flatten_summary(model_id: str, s: dict) -> dict:
-    """run summary에서 비교 CSV에 필요한 핵심 메트릭만 평탄화한다."""
-    m = s.get("metrics", {})
-    macro = m.get("macro_avg", {})
-    class0 = m.get("class0_metrics", {})
-    latency = m.get("latency", {})
-    fp_min = m.get("fp_per_min_metrics", {})
-
+def _flatten_summary(model_id: str, summary: dict) -> dict:
+    metrics = summary.get("metrics", {})
+    macro = metrics.get("macro_avg", {})
+    class0 = metrics.get("class0_metrics", {})
+    latency = metrics.get("latency", {})
+    fp_min = metrics.get("fp_per_min_metrics", {})
     return {
-        "model_id":        model_id,
-        "mode":            s.get("mode", ""),
-        "accuracy":        round(m.get("accuracy", 0.0), 4),
-        "macro_f1":        round(macro.get("f1", 0.0), 4),
+        "model_id": model_id,
+        "mode": summary.get("mode", ""),
+        "accuracy": round(metrics.get("accuracy", 0.0), 4),
+        "macro_f1": round(macro.get("f1", 0.0), 4),
         "macro_precision": round(macro.get("precision", 0.0), 4),
-        "macro_recall":    round(macro.get("recall", 0.0), 4),
-        "class0_fpr":      round(class0.get("false_positive_rate", 0.0), 4),
-        "class0_fnr":      round(class0.get("false_negative_rate", 0.0), 4),
-        "fp_per_min":      round(fp_min.get("fp_per_min", 0.0) or 0.0, 3),
-        "latency_p50_ms":  round(latency.get("p50_ms", 0.0) or 0.0, 2),
-        "latency_p95_ms":  round(latency.get("p95_ms", 0.0) or 0.0, 2),
-        "best_val_loss":   round(s.get("best_val_loss", 0.0), 4),
-        "epochs_ran":      s.get("epochs_ran", 0),
-        "train_samples":   s.get("dataset_sizes", {}).get("train", 0),
-        "test_samples":    s.get("dataset_sizes", {}).get("test", 0),
-        "output_dir":      s.get("output_dir", ""),
+        "macro_recall": round(macro.get("recall", 0.0), 4),
+        "class0_fpr": round(class0.get("false_positive_rate", 0.0), 4),
+        "class0_fnr": round(class0.get("false_negative_rate", 0.0), 4),
+        "fp_per_min": round(fp_min.get("fp_per_min", 0.0) or 0.0, 3),
+        "latency_p50_ms": round(latency.get("p50_ms", 0.0) or 0.0, 2),
+        "latency_p95_ms": round(latency.get("p95_ms", 0.0) or 0.0, 2),
+        "best_val_loss": round(summary.get("best_val_loss", 0.0), 4),
+        "epochs_ran": summary.get("epochs_ran", 0),
+        "train_samples": summary.get("dataset_sizes", {}).get("train", 0),
+        "test_samples": summary.get("dataset_sizes", {}).get("test", 0),
+        "output_dir": summary.get("output_dir", ""),
     }
 
 
 def print_table(rows: list[dict]) -> None:
-    """터미널에서 빠르게 비교할 수 있도록 요약 테이블을 그린다."""
     if not rows:
         return
 
-    cols = ["model_id", "mode", "accuracy", "macro_f1", "class0_fpr",
-            "class0_fnr", "fp_per_min", "latency_p50_ms", "epochs_ran"]
-    widths = {c: max(len(c), max(len(str(r.get(c, ""))) for r in rows)) for c in cols}
+    cols = [
+        "model_id",
+        "mode",
+        "accuracy",
+        "macro_f1",
+        "class0_fpr",
+        "class0_fnr",
+        "fp_per_min",
+        "latency_p50_ms",
+        "epochs_ran",
+    ]
+    widths = {col: max(len(col), max(len(str(row.get(col, ""))) for row in rows)) for col in cols}
 
-    header = "  ".join(c.ljust(widths[c]) for c in cols)
-    sep = "  ".join("-" * widths[c] for c in cols)
+    header = "  ".join(col.ljust(widths[col]) for col in cols)
+    sep = "  ".join("-" * widths[col] for col in cols)
     print("\n" + header)
     print(sep)
     for row in rows:
-        print("  ".join(str(row.get(c, "")).ljust(widths[c]) for c in cols))
+        print("  ".join(str(row.get(col, "")).ljust(widths[col]) for col in cols))
 
 
-def run_all(args: argparse.Namespace) -> None:
-    """선택된 모델들을 독립 subprocess로 순차 실행하고 결과를 하나로 모은다."""
-    models_to_run = args.models or ALL_MODELS
-    results: list[dict] = []
-    failed: list[str] = []
-    input_args = args.csv_path or DEFAULT_INPUTS
-
+def run_dataset_suite(
+    args: argparse.Namespace,
+    dataset_key: str,
+    dataset_files: dict[str, Path],
+    models_to_run: list[str],
+) -> Path:
     base_output_root = Path(args.output_root)
     if not base_output_root.is_absolute():
         base_output_root = PROJECT_ROOT / base_output_root
     base_output_root.mkdir(parents=True, exist_ok=True)
 
-    suite_dir = build_suite_dir(str(base_output_root), input_args)
+    suite_dir = build_suite_dir(base_output_root, dataset_key)
     suite_dir.mkdir(parents=True, exist_ok=True)
-    resolved_inputs = resolve_input_paths(input_args)
     write_latest_suite(base_output_root, suite_dir)
     write_suite_manifest(
         suite_dir=suite_dir,
-        base_output_root=base_output_root,
-        input_csvs=resolved_inputs,
+        dataset_key=dataset_key,
+        dataset_files=dataset_files,
         models_requested=models_to_run,
         status="running",
     )
 
-    total = len(models_to_run)
-    print(f"\n{'='*60}")
-    print(f"JamJamBeat 모델 비교 실험  ({total}개 모델 순차 실행)")
-    print(f"suite: {suite_dir.name}")
+    print(f"\n{'=' * 72}")
+    print(f"JamJamBeat explicit dataset suite ({dataset_key})")
+    print(f"models: {len(models_to_run)}")
     print(f"output: {suite_dir}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 72}\n")
 
-    for i, model_id in enumerate(models_to_run, 1):
-        print(f"\n[{i}/{total}] {model_id} ...")
-        # 모델별 subprocess로 분리해 한 실험의 실패가 다음 모델 실행을 막지 않게 한다.
-        cmd = build_cmd(model_id, args, output_root=suite_dir)
+    results: list[dict] = []
+    failed: list[str] = []
+    total = len(models_to_run)
+
+    for index, model_id in enumerate(models_to_run, 1):
+        print(f"\n[{index}/{total}] {dataset_key} :: {model_id} ...")
+        cmd = build_cmd(model_id, args, output_root=suite_dir, dataset_files=dataset_files)
         t0 = time.time()
-
-        proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
-
+        proc = subprocess.run(cmd, cwd=PROJECT_ROOT)
         elapsed = time.time() - t0
+        print(f"[{model_id}] elapsed: {elapsed:.1f}s")
 
         if proc.returncode != 0:
-            print(f"  [FAIL] {model_id} (exit={proc.returncode}, {elapsed:.1f}s)")
             failed.append(model_id)
+            print(f"[WARN] {model_id} failed with code {proc.returncode}")
             continue
 
-        print(f"  [OK] {model_id} ({elapsed:.1f}s)")
-
-        summary = _load_summary(str(suite_dir), model_id)
+        summary = _load_summary(suite_dir, model_id)
         if summary:
             results.append(_flatten_summary(model_id, summary))
 
-    # 개별 run_summary를 모아 최종 comparison_results.csv를 갱신한다.
-    comparison_path: Path | None = None
+    comparison_path = suite_dir / "comparison_results.csv"
     if results:
-        print(f"\n{'='*60}")
-        print("전체 비교 결과")
-        print(f"{'='*60}")
+        pd.DataFrame(results).sort_values("accuracy", ascending=False).to_csv(
+            comparison_path,
+            index=False,
+        )
         print_table(results)
 
-        import csv
-        comparison_path = suite_dir / "comparison_results.csv"
-        fieldnames = list(results[0].keys())
-        with comparison_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(results)
-        print(f"\n비교 CSV 저장: {comparison_path}")
-
-        if getattr(args, "upload_wandb", False):
-            print("\n[WandB] 업로드 스크립트 실행 중...")
-            wandb_script = PROJECT_ROOT / "model" / "upload_to_wandb.py"
-            subprocess.run([sys.executable, str(wandb_script)], cwd=str(PROJECT_ROOT))
-
+    status = "completed" if not failed else "partial_failed"
     write_suite_manifest(
         suite_dir=suite_dir,
-        base_output_root=base_output_root,
-        input_csvs=resolved_inputs,
+        dataset_key=dataset_key,
+        dataset_files=dataset_files,
         models_requested=models_to_run,
-        status="completed" if not failed else "completed_with_failures",
+        status=status,
         failed_models=failed,
-        comparison_path=comparison_path,
+        comparison_path=comparison_path if results else None,
     )
 
     if failed:
-        print(f"\n[실패 모델] {', '.join(failed)}")
+        print(f"\n[WARN] failed models: {', '.join(failed)}")
+    print(f"\n[done] suite output: {suite_dir}")
+    return suite_dir
 
-    print(f"\n배치 결과 폴더: {suite_dir}")
-    print(f"\n완료: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+def run_all(args: argparse.Namespace) -> None:
+    dataset_root = resolve_path(args.dataset_root)
+    registry = scan_dataset_registry(dataset_root)
+    if not registry:
+        raise SystemExit(f"No explicit dataset sets found under: {dataset_root}")
+
+    if args.dataset_key:
+        missing = [key for key in args.dataset_key if key not in registry]
+        if missing:
+            raise SystemExit(f"Unknown dataset key(s): {', '.join(missing)}")
+        registry = {key: registry[key] for key in args.dataset_key}
+
+    models_to_run = args.models or ALL_MODELS
+
+    print(f"\n{'=' * 72}")
+    print("JamJamBeat explicit dataset batch runner")
+    print(f"dataset root: {dataset_root}")
+    print(f"datasets: {len(registry)}")
+    print(f"models per dataset: {len(models_to_run)}")
+    print(f"{'=' * 72}")
+
+    for dataset_key, dataset_files in registry.items():
+        run_dataset_suite(args, dataset_key, dataset_files, models_to_run)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run all models sequentially for explicit split datasets.",
+    )
+    parser.add_argument("--models", nargs="*", default=None, help=f"실행할 모델 지정. 기본값: {ALL_MODELS}")
+    parser.add_argument("--dataset-root", default=str(DATASET_ROOT))
+    parser.add_argument("--dataset-key", nargs="*", default=None, help="특정 dataset key만 실행")
+    parser.add_argument("--output-root", default="model/model_evaluation/pipelines")
+
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--patience", type=int, default=6)
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
+
+    parser.add_argument("--seq-len", type=int, default=8)
+    parser.add_argument("--seq-stride", type=int, default=2)
+    parser.add_argument("--image-size", type=int, default=96)
+
+    parser.add_argument("--tau", type=float, default=0.90)
+    parser.add_argument("--vote-n", type=int, default=7)
+    parser.add_argument("--debounce-k", type=int, default=5)
+    parser.add_argument("--fallback-fps", type=float, default=30.0)
+
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default="cpu", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--class-names", nargs="*", default=[])
+    return parser
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="JamJamBeat 전체 모델 파이프라인 순차 실행 및 비교"
-    )
-    parser.add_argument(
-        "--models", nargs="*", default=None,
-        help=f"실행할 모델 지정 (미지정 시 전체). 선택: {ALL_MODELS}",
-    )
-    parser.add_argument(
-        "--csv-path", action="append", dest="csv_path", default=[],
-        help="입력 CSV 경로 (반복 사용 가능). 미지정 시 DEFAULT_INPUTS 사용.",
-    )
-    parser.add_argument("--output-root", default="model/model_evaluation/pipelines")
-    parser.add_argument(
-        "--upload-wandb", action="store_true",
-        help="실험 완료 후 wandb에 결과 및 학습 그래프(train_history) 업로드",
-    )
-
-    # 학습 하이퍼파라미터
-    parser.add_argument("--epochs",      type=int,   default=20)
-    parser.add_argument("--batch-size",  type=int,   default=32)
-    parser.add_argument("--lr",          type=float, default=1e-3)
-    parser.add_argument("--patience",    type=int,   default=6)
-    parser.add_argument("--focal-gamma", type=float, default=2.0)
-
-    # 시퀀스 / 이미지
-    parser.add_argument("--seq-len",     type=int, default=8)
-    parser.add_argument("--seq-stride",  type=int, default=2)
-    parser.add_argument("--image-size",  type=int, default=96)
-
-    # 후처리 파라미터
-    parser.add_argument("--tau",         type=float, default=0.90)
-    parser.add_argument("--vote-n",      type=int,   default=7)
-    parser.add_argument("--debounce-k",  type=int,   default=5)
-    parser.add_argument("--fallback-fps",type=float, default=30.0)
-
-    # train/val/test 비율 (단일 CSV 입력 시 row-level split에 적용)
-    parser.add_argument("--train-ratio", type=float, default=0.8)
-    parser.add_argument("--val-ratio",   type=float, default=0.1)
-    parser.add_argument("--test-ratio",  type=float, default=0.1)
-
-    # 공통
-    parser.add_argument("--seed",        type=int,   default=42)
-    parser.add_argument("--device",      default="cpu", choices=["auto", "cpu", "cuda"])
-    parser.add_argument("--num-workers", type=int,   default=0)
-
+    parser = build_parser()
     args = parser.parse_args()
     run_all(args)
 

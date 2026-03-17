@@ -1,13 +1,13 @@
 # JamJamBeat 모델 평가 가이드
 
 > 관련 코드: `model/model_evaluation/evaluation_runtime.py`
-> 평가 실행: `run_model_pipeline.py` → `evaluate_predictions()` 자동 호출
+> 평가 실행: `run_pipeline.py` → `evaluate_predictions()` 자동 호출
 
 ---
 
 ## 1. 평가가 언제 실행되나
 
-`run_model_pipeline.py` 또는 `run_all.py`를 실행하면 학습 완료 후 **자동으로** 평가가 돌아간다.
+`run_pipeline.py` 또는 `run_no_pretrained.py` / `run_all.py`를 실행하면 학습 완료 후 **자동으로** 평가가 돌아간다.
 별도 스크립트를 따로 실행할 필요 없다.
 
 ```
@@ -21,22 +21,23 @@
 
 ## 2. 출력 파일 구조
 
-`run_all.py` 배치 실행 시 아래 경로에 파일이 생성된다.
+`run_no_pretrained.py` / `run_all.py` 배치 실행 시 아래 경로에 파일이 생성된다.
 
 ```
 model/model_evaluation/pipelines/
 ├── latest_suite.json
-└── {yyyymmdd_HHMMSS}__{dataset_tag}/
-    ├── comparison_suite.json      ← 이번 배치 입력 CSV / 모델 목록 메타데이터
+└── {yyyymmdd_HHMMSS}__{dataset_key}/
+    ├── comparison_suite.json      ← dataset key / 입력 역할 CSV / 모델 목록 메타데이터
     ├── comparison_results.csv     ← 이번 배치 전체 비교표
     └── {model_id}/
         └── {yyyymmdd_HHMMSS}/
             ├── preds_test.csv          ← 프레임별 예측 원본
+            ├── preds_inference.csv     ← hold-out inference 예측 원본
             ├── model.pt                ← 학습된 모델 가중치
             ├── train_history.csv       ← epoch별 loss/acc
             ├── run_summary.json        ← 전체 메트릭 요약
             └── evaluation/
-                ├── dataset_info.json      ← 입력 CSV / split 정보
+                ├── dataset_info.json      ← 입력 역할 CSV / split 정보
                 ├── confusion_matrix.csv   ← 혼동 행렬 (수치)
                 ├── confusion_matrix.png   ← 혼동 행렬 (시각화)
                 ├── per_class_report.csv   ← 클래스별 P/R/F1
@@ -49,7 +50,7 @@ model/model_evaluation/pipelines/
 model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
 ```
 
-`run_pipeline.py` 단독 실행은 기존처럼 `model/model_evaluation/pipelines/{model_id}/{timestamp}/` 구조를 유지한다.
+`run_pipeline.py` 단독 실행은 `--output-root/{model_id}/{timestamp}/` 구조에 저장된다.
 
 ---
 
@@ -169,7 +170,7 @@ PoC 목표: **< 2 FP/min**
 
 ## 4. 전체 모델 비교 (`comparison_results.csv`)
 
-`run_all.py` 실행 후 생성되는 비교 테이블. 컬럼 설명:
+`run_no_pretrained.py` / `run_all.py` 실행 후 생성되는 비교 테이블. 컬럼 설명:
 
 | 컬럼 | 설명 |
 |------|------|
@@ -207,16 +208,28 @@ latency_p95  < 200ms  → 온디바이스 배포 가능
 ## 6. 실행 방법 요약
 
 ```bash
-# 전체 9개 모델 순차 실행
-cd /home/user/projects/JamJamBeat
-python model/model_pipelines/run_all.py
+# 역할형 dataset 생성
+cd /home/user/projects/JamJamBeat/model
+uv run python data_fusion/build_training_datasets.py
+
+# 기본 11개 비-pretrained 모델 순차 실행
+uv run python model_pipelines/run_no_pretrained.py
+
+# 전체 14개 모델 실행
+uv run python model_pipelines/run_no_pretrained.py --include-pretrained
 
 # 일부 모델만 실행
-python model/model_pipelines/run_all.py \
+uv run python model_pipelines/run_no_pretrained.py \
+    --dataset-key baseline_ds_1_none \
     --models mlp_baseline mlp_embedding two_stream_mlp
 
-# 에폭 수 조정
-python model/model_pipelines/run_all.py --epochs 50
+# run_pipeline.py 단독 실행
+uv run python model_pipelines/run_pipeline.py \
+    --model-id mlp_baseline \
+    --train-csv data_fusion/학습데이터셋/baseline_train.csv \
+    --val-csv data_fusion/학습데이터셋/baseline_val.csv \
+    --test-csv data_fusion/학습데이터셋/baseline_test.csv \
+    --inference-csv data_fusion/학습데이터셋/baseline_inference.csv
 
 # 결과 확인
 cat model/model_evaluation/pipelines/latest_suite.json

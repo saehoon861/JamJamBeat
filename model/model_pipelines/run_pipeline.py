@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Run one JamJamBeat model-comparison pipeline (v2) end-to-end.
+Run one JamJamBeat model-comparison pipeline end-to-end.
 
-- Input: preprocessed CSV(s) with columns:
-    source_file, frame_idx, timestamp, gesture,
-    nx*, ny*, nz*, bx*, by*, bz*, bl*, flex_*, abd_*
+- Input: explicit role CSVs
+    train / val / test / inference
 - Output: model artifact, prediction CSV, and evaluation metrics/plots.
-
-This script is intended to be called by cron (one model per cron job).
 """
 
 from __future__ import annotations
@@ -36,7 +33,7 @@ try:
     from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 except Exception as e:  # pragma: no cover - runtime guard
     raise SystemExit(
-        "[ERROR] PyTorch is required for run_model_pipeline.py\n"
+        "[ERROR] PyTorch is required for run_pipeline.py\n"
         "Please install torch in your virtual environment first.\n"
         f"Original error: {e}"
     )
@@ -61,13 +58,6 @@ from _shared import JOINT_COLS, BONE_COLS, RAW_JOINT_COLS, SplitData, detect_ang
 # -----------------------------------------------------------------------------
 # Constants
 # -----------------------------------------------------------------------------
-DEFAULT_INPUTS = [
-    "model/data_fusion/man1_right_for_poc_notnull.csv",
-    "model/data_fusion/man2_right_for_poc_notnull.csv",
-    "model/data_fusion/man3_right_for_poc_notnull.csv",
-    "model/data_fusion/woman1_right_for_poc_notnull.csv",
-]
-
 MODEL_CHOICES = [
     "mlp_original",
     "mlp_baseline",
@@ -112,6 +102,32 @@ def resolve_paths(csv_paths: list[str]) -> list[Path]:
     return resolved
 
 
+def resolve_role_path(path_str: str) -> Path:
+    return resolve_paths([path_str])[0]
+
+
+def normalize_source_groups(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    if "source_file" in normalized.columns and normalized["source_file"].nunique() >= 1:
+        normalized["__source_group"] = normalized["source_file"].astype(str)
+    return normalized
+
+
+def infer_dataset_key(train_csv_path: Path) -> str:
+    stem = train_csv_path.stem
+    suffix = "_train"
+    if not stem.endswith(suffix):
+        raise ValueError(f"Expected *_train.csv naming, got: {train_csv_path.name}")
+    return stem[: -len(suffix)]
+
+
+def infer_normalization_family(dataset_key: str) -> str:
+    for family in ("baseline", "pos_only", "scale_only", "pos_scale"):
+        if dataset_key == family or dataset_key.startswith(f"{family}_"):
+            return family
+    return "unknown"
+
+
 def _source_groups(df: pd.DataFrame, group_col: str = "__source_group") -> list[str]:
     """summary/evaluation 기록용 source group 목록을 정렬해서 반환한다."""
     if group_col not in df.columns:
@@ -128,14 +144,22 @@ def _rows_by_source_group(df: pd.DataFrame, group_col: str = "__source_group") -
 
 
 def build_dataset_info(
-    csv_paths: list[Path],
+    input_roles: dict[str, Path],
     merged_df: pd.DataFrame,
     split: SplitData,
+    dataset_key: str,
+    normalization_family: str,
+    inference_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """run/evaluation 폴더에 같이 저장할 데이터셋 메타를 구성한다."""
-    return {
-        "input_csv_paths": [str(p) for p in csv_paths],
-        "input_csv_names": [p.name for p in csv_paths],
+    info = {
+        "dataset_key": dataset_key,
+        "normalization_family": normalization_family,
+        "fixed_video_level_split": True,
+        "source_counts": {"train": 40, "val": 6, "inference": 10},
+        "input_roles": {role: str(path) for role, path in input_roles.items()},
+        "input_csv_paths": [str(p) for p in input_roles.values()],
+        "input_csv_names": [p.name for p in input_roles.values()],
         "source_groups": _source_groups(merged_df),
         "total_rows": int(len(merged_df)),
         "rows_by_source_group": _rows_by_source_group(merged_df),
@@ -157,6 +181,13 @@ def build_dataset_info(
             },
         },
     }
+    if inference_df is not None:
+        info["split"]["inference"] = {
+            "rows": int(len(inference_df)),
+            "source_groups": _source_groups(inference_df),
+            "rows_by_source_group": _rows_by_source_group(inference_df),
+        }
+    return info
 
 
 def load_preprocessed_data(csv_paths: list[Path]) -> pd.DataFrame:
@@ -551,20 +582,56 @@ def run(args: argparse.Namespace) -> dict:
     else:
         device = torch.device(args.device)
 
-    csv_paths = resolve_paths(args.csv_path)
-    df = load_preprocessed_data(csv_paths)
-    angle_cols = detect_angle_cols(df)
+    input_roles: dict[str, Path] = {
+        "train": resolve_role_path(args.train_csv),
+        "val": resolve_role_path(args.val_csv),
+        "test": resolve_role_path(args.test_csv),
+    }
+    if args.inference_csv:
+        input_roles["inference"] = resolve_role_path(args.inference_csv)
 
-    # 동일 source group이 train / test에 동시에 들어가지 않도록 먼저 split한다.
-    split = split_by_group(
-        df,
-        seed=args.seed,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
-        test_ratio=args.test_ratio,
-        seq_len=args.seq_len,
+    train_df = normalize_source_groups(load_preprocessed_data([input_roles["train"]]))
+    val_df = normalize_source_groups(load_preprocessed_data([input_roles["val"]]))
+    test_df = normalize_source_groups(load_preprocessed_data([input_roles["test"]]))
+    inference_df = None
+    if "inference" in input_roles:
+        inference_df = normalize_source_groups(load_preprocessed_data([input_roles["inference"]]))
+
+    reference_columns = list(train_df.columns)
+    for role_name, frame in (
+        ("val", val_df),
+        ("test", test_df),
+        ("inference", inference_df),
+    ):
+        if frame is None:
+            continue
+        if list(frame.columns) != reference_columns:
+            raise ValueError(
+                f"Column mismatch between train and {role_name}: "
+                f"{input_roles['train'].name} vs {input_roles[role_name].name}"
+            )
+
+    split = SplitData(
+        train_df=train_df.reset_index(drop=True),
+        val_df=val_df.reset_index(drop=True),
+        test_df=test_df.reset_index(drop=True),
     )
-    dataset_info = build_dataset_info(csv_paths, df, split)
+    merged_frames = [train_df, val_df, test_df]
+    if inference_df is not None:
+        merged_frames.append(inference_df)
+    merged_df = pd.concat(merged_frames, ignore_index=True)
+    angle_cols = detect_angle_cols(merged_df)
+
+    dataset_key = infer_dataset_key(input_roles["train"])
+    normalization_family = infer_normalization_family(dataset_key)
+    dataset_info = build_dataset_info(
+        input_roles=input_roles,
+        merged_df=merged_df,
+        split=split,
+        dataset_key=dataset_key,
+        normalization_family=normalization_family,
+        inference_df=inference_df,
+    )
 
     # 평가 리포트와 checkpoint 저장에 같은 class ordering을 사용한다.
     class_names = args.class_names if args.class_names else DEFAULT_CLASS_NAMES
@@ -595,6 +662,27 @@ def run(args: argparse.Namespace) -> dict:
         "val": int(len(val_ds)),
         "test": int(len(test_ds)),
     }
+    if inference_df is not None:
+        inference_split = SplitData(
+            train_df=split.train_df,
+            val_df=split.val_df,
+            test_df=inference_df.reset_index(drop=True),
+        )
+        _, inference_mode, _, _, inference_ds = build_experiment(
+            model_id=args.model_id,
+            split=inference_split,
+            angle_cols=angle_cols,
+            seq_len=args.seq_len,
+            seq_stride=args.seq_stride,
+            image_size=args.image_size,
+            num_classes=num_classes,
+        )
+        if inference_mode != mode:
+            raise ValueError(
+                f"Inference mode mismatch for {args.model_id}: {inference_mode} != {mode}"
+            )
+    else:
+        inference_ds = None
     dataset_info["mode"] = mode
 
     # train loader만 weighted sampler를 사용하고, val / test는 원본 분포를 유지한다.
@@ -623,6 +711,17 @@ def run(args: argparse.Namespace) -> dict:
         num_workers=args.num_workers,
         pin_memory=pin_memory,
     )
+    if inference_ds is not None:
+        inference_loader = DataLoader(
+            inference_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
+        dataset_info["dataset_sample_counts"]["inference"] = int(len(inference_ds))
+    else:
+        inference_loader = None
 
     # sampler와 focal loss를 함께 써서 클래스 불균형 영향을 줄인다.
     alpha = compute_alpha(train_labels, num_classes=num_classes, device=device)
@@ -683,6 +782,20 @@ def run(args: argparse.Namespace) -> dict:
     preds_path = run_dir / "preds_test.csv"
     preds_df.to_csv(preds_path, index=False)
 
+    if inference_loader is not None and inference_ds is not None:
+        preds_inference_df = predict_dataset(
+            model,
+            inference_loader,
+            inference_ds,
+            mode=mode,
+            num_classes=num_classes,
+            device=device,
+        )
+        preds_inference_path = run_dir / "preds_inference.csv"
+        preds_inference_df.to_csv(preds_inference_path, index=False)
+    else:
+        preds_inference_path = None
+
     # 후처리 threshold / voting / debounce까지 포함한 지표를 여기서 계산한다.
     eval_dir = run_dir / "evaluation"
     eval_cfg = EvaluationConfig(
@@ -716,9 +829,11 @@ def run(args: argparse.Namespace) -> dict:
 
     run_summary = {
         "model_id": args.model_id,
+        "dataset_key": dataset_key,
+        "normalization_family": normalization_family,
         "mode": mode,
         "device": str(device),
-        "inputs": [str(p) for p in csv_paths],
+        "inputs": [str(p) for p in input_roles.values()],
         "hyperparameters": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -739,11 +854,18 @@ def run(args: argparse.Namespace) -> dict:
             "val": int(len(val_ds)),
             "test": int(len(test_ds)),
         },
+        "fixed_video_level_split": True,
+        "source_counts": {"train": 40, "val": 6, "inference": 10},
+        "inference_used": inference_df is not None,
+        "preds_inference_csv": str(preds_inference_path) if preds_inference_path else None,
         "best_val_loss": float(best_val_loss),
         "epochs_ran": int(len(history)),
         "output_dir": str(run_dir),
         "metrics": metrics_summary,
     }
+    if inference_df is not None and inference_ds is not None:
+        run_summary["split_sizes"]["inference"] = int(len(inference_df))
+        run_summary["dataset_sizes"]["inference"] = int(len(inference_ds))
 
     with (run_dir / "run_summary.json").open("w", encoding="utf-8") as f:
         json.dump(run_summary, f, ensure_ascii=False, indent=2)
@@ -766,11 +888,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run one JamJamBeat model-comparison pipeline and evaluation.",
     )
     parser.add_argument("--model-id", type=str, required=True, choices=MODEL_CHOICES)
+    parser.add_argument("--train-csv", type=str, default=None, help="Train role CSV path.")
+    parser.add_argument("--val-csv", type=str, default=None, help="Validation role CSV path.")
+    parser.add_argument("--test-csv", type=str, default=None, help="Test role CSV path.")
+    parser.add_argument("--inference-csv", type=str, default=None, help="Optional inference hold-out CSV path.")
     parser.add_argument(
         "--csv-path",
         action="append",
         default=[],
-        help="Input preprocessed CSV path. Repeat this option to pass multiple files.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--output-root", type=str, default="model/model_evaluation/pipelines")
 
@@ -791,10 +917,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debounce-k", type=int, default=5)
     parser.add_argument("--fallback-fps", type=float, default=30.0)
 
-    parser.add_argument("--train-ratio", type=float, default=0.8)
-    parser.add_argument("--val-ratio",   type=float, default=0.1)
-    parser.add_argument("--test-ratio",  type=float, default=0.1)
-
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cpu", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--num-workers", type=int, default=0)
@@ -807,8 +929,21 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.csv_path:
-        args.csv_path = DEFAULT_INPUTS
+    if args.csv_path:
+        raise SystemExit(
+            "--csv-path flow is deprecated. "
+            "Use --train-csv --val-csv --test-csv [--inference-csv]."
+        )
+    missing = [
+        name
+        for name in ("train_csv", "val_csv", "test_csv")
+        if getattr(args, name) in (None, "")
+    ]
+    if missing:
+        raise SystemExit(
+            "Missing required role CSVs: "
+            + ", ".join(f"--{name.replace('_', '-')}" for name in missing)
+        )
 
     run(args)
 

@@ -140,6 +140,7 @@ class RuntimeModel:
     image_size: int
     input_dim: int | None
     aux_input_dim: int | None
+    dataset_variant: str = "baseline"
 
 
 def format_timestamp(frame_idx: int, fps: float) -> str:

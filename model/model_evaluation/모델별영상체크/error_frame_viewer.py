@@ -79,6 +79,13 @@ class ErrorFrame(NamedTuple):
     is_context:  bool
 
 
+class SourcePlaybackBatch(NamedTuple):
+    source_file: str
+    video_path: Path
+    fps: float
+    error_frames: list[ErrorFrame]
+
+
 # ── 경로 유틸 ─────────────────────────────────────────────────────────────────
 def _resolve(path_str: str) -> Path:
     p = Path(path_str)
@@ -303,31 +310,91 @@ def fetch_bgr_frames(
 
 # ── OpenCV 오류 프레임 재생 ────────────────────────────────────────────────────
 def playback_errors(
-    data: list[tuple[ErrorFrame, np.ndarray]],
-    fps: float,
+    batches: list[SourcePlaybackBatch],
     class_names: list[str],
     title: str = "JamJamBeat Error Viewer",
 ) -> None:
-    """오류 프레임 목록을 키보드로 탐색 가능한 OpenCV 창으로 재생한다."""
-    if not data:
+    """오류 프레임을 source_file 단위로 필요할 때만 로드해 재생한다."""
+    playable_batches = [b for b in batches if b.error_frames]
+    if not playable_batches:
         return
 
-    total   = len(data)
-    current = 0
+    expected_counts = [len(batch.error_frames) for batch in playable_batches]
+    global_offsets: list[int] = []
+    running_total = 0
+    for count in expected_counts:
+        global_offsets.append(running_total)
+        running_total += count
+
+    total   = running_total
     paused  = True
-    delay   = max(int(1000 / max(fps, 1e-6)), 1)
     window_created = False
+    batch_idx = 0
+    local_idx = 0
+    current_batch_data: list[tuple[ErrorFrame, np.ndarray]] = []
+    current_batch_idx = -1
+
+    def invalidate_current_batch() -> None:
+        nonlocal current_batch_data, current_batch_idx
+        current_batch_data = []
+        current_batch_idx = -1
+
+    def load_current_batch() -> bool:
+        nonlocal current_batch_data, current_batch_idx, local_idx
+        if current_batch_idx != batch_idx:
+            current_batch_data = fetch_bgr_frames(
+                playable_batches[batch_idx].error_frames,
+                playable_batches[batch_idx].video_path,
+            )
+            current_batch_idx = batch_idx
+        if not current_batch_data:
+            return False
+        local_idx = min(local_idx, len(current_batch_data) - 1)
+        return True
+
+    def move_next(wrap: bool) -> None:
+        nonlocal batch_idx, local_idx
+        batch_len = len(current_batch_data) if current_batch_idx == batch_idx and current_batch_data else expected_counts[batch_idx]
+        if local_idx + 1 < batch_len:
+            local_idx += 1
+            return
+        if batch_idx + 1 < len(playable_batches):
+            batch_idx += 1
+            local_idx = 0
+            invalidate_current_batch()
+            return
+        if wrap:
+            batch_idx = 0
+            local_idx = 0
+            invalidate_current_batch()
+
+    def move_prev() -> None:
+        nonlocal batch_idx, local_idx
+        if local_idx > 0:
+            local_idx -= 1
+            return
+        if batch_idx > 0:
+            batch_idx -= 1
+            local_idx = max(expected_counts[batch_idx] - 1, 0)
+            invalidate_current_batch()
 
     while True:
         if window_created and cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
             break
 
-        ef, bgr = data[current]
-        frame = draw_overlay(bgr, ef, fps, class_names)
+        if not load_current_batch():
+            move_next(wrap=False)
+            if not load_current_batch():
+                break
+
+        current_batch = playable_batches[batch_idx]
+        ef, bgr = current_batch_data[local_idx]
+        frame = draw_overlay(bgr, ef, current_batch.fps, class_names)
         h, w = frame.shape[:2]
+        global_idx = global_offsets[batch_idx] + local_idx + 1
 
         tag   = "ERROR" if not ef.is_context else "context"
-        guide = (f"[{current + 1}/{total}] {tag}  |  "
+        guide = (f"[{global_idx}/{total}] file {batch_idx + 1}/{len(playable_batches)}  {tag}  |  "
                  "Space: 재생/정지  A/←: 이전  D/→: 다음  R: 처음  Q: 종료")
         cv2.putText(frame, guide, (8, h - 8),
                     cv2.FONT_HERSHEY_PLAIN, 1.1, (200, 200, 200), 1, cv2.LINE_AA)
@@ -335,10 +402,11 @@ def playback_errors(
         cv2.imshow(title, frame)
         window_created = True
 
+        delay = max(int(1000 / max(current_batch.fps, 1e-6)), 1)
         key = cv2.waitKeyEx(0 if paused else delay)
         if key in (-1, 255):
             if not paused:
-                current = (current + 1) % total
+                move_next(wrap=True)
             continue
 
         key_low = key & 0xFF
@@ -347,34 +415,56 @@ def playback_errors(
         elif key_low == ord(" "):
             paused = not paused
         elif key_low == ord("r"):
-            current = 0
+            batch_idx = 0
+            local_idx = 0
+            invalidate_current_batch()
             paused = True
         elif key_low == ord("a") or key == KEY_LEFT:
-            current = max(0, current - 1)
+            move_prev()
             paused = True
         elif key_low == ord("d") or key == KEY_RIGHT:
-            current = min(total - 1, current + 1)
+            move_next(wrap=False)
             paused = True
 
-    cv2.destroyWindow(title)
-    cv2.waitKey(1)
+    if window_created:
+        cv2.destroyWindow(title)
+        cv2.waitKey(1)
 
 
 # ── MP4 내보내기 ───────────────────────────────────────────────────────────────
 def export_mp4(
-    data: list[tuple[ErrorFrame, np.ndarray]],
+    batches: list[SourcePlaybackBatch],
     output_path: Path,
-    fps: float,
     class_names: list[str],
-) -> None:
-    if not data:
-        return
-    h, w = data[0][1].shape[:2]
+) -> bool:
+    playable_batches = [b for b in batches if b.error_frames]
+    if not playable_batches:
+        return False
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-    for ef, bgr in data:
-        writer.write(draw_overlay(bgr, ef, fps, class_names))
+    writer = None
+    out_size: tuple[int, int] | None = None
+    out_fps = 30.0
+    for batch in playable_batches:
+        data = fetch_bgr_frames(batch.error_frames, batch.video_path)
+        if not data:
+            continue
+        if writer is None:
+            h, w = data[0][1].shape[:2]
+            out_size = (w, h)
+            out_fps = batch.fps if batch.fps > 0 else 30.0
+            writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), out_fps, out_size)
+        for ef, bgr in data:
+            frame = draw_overlay(bgr, ef, batch.fps, class_names)
+            if out_size is not None and (frame.shape[1] != out_size[0] or frame.shape[0] != out_size[1]):
+                frame = cv2.resize(frame, out_size)
+            writer.write(frame)
+
+    if writer is None:
+        return False
+
     writer.release()
+    return True
 
 
 def export_summary_csv(error_frames: list[ErrorFrame], output_path: Path, class_names: list[str]) -> None:
@@ -416,16 +506,18 @@ class ErrorFrameApp:
         self.src_var        = tk.StringVar()
         self.context_var    = tk.StringVar(value="0")
         self.status_var     = tk.StringVar(value="Ready")
-        self.info_var       = tk.StringVar(value="Run과 CSV를 선택 후 [Analyze & View]를 누르세요.")
+        self.info_var       = tk.StringVar(
+            value="Run과 CSV를 선택 후 [Analyze & View]를 누르세요. Source File에서 [ All ]을 고르면 전체를 순차 재생합니다."
+        )
 
         # 캐시
         self._run_lookup:    dict[str, vca.RunInfo] = {}
         self._csv_lookup:    dict[str, Path]        = {}
         self._runtime_cache: dict[str, vca.RuntimeModel] = {}
-        # (run_dir, csv_path, source_file, context) → (data, fps, error_frames)
+        # (run_dir, csv_path, source_file, context) → (batches, error_frames, class_names, rendered_count)
         self._analysis_cache: dict[tuple, tuple] = {}
-        self._last_data:     list[tuple[ErrorFrame, np.ndarray]] = []
-        self._last_fps:      float = 10.0
+        self._last_batches:  list[SourcePlaybackBatch] = []
+        self._last_rendered_count: int = 0
         self._last_error_frames: list[ErrorFrame] = []
         self._last_class_names:  list[str] = []
         self._last_run_dir:      Path | None = None
@@ -529,12 +621,12 @@ class ErrorFrameApp:
         try:
             sfs = load_source_files(csv_path)
             # 영상 존재 여부 표시: 없으면 "[no video]" 접미어
-            labeled = []
+            labeled = [SOURCE_FILE_ALL]
             for sf in sfs:
                 v = find_video(sf)
                 labeled.append(sf if v else f"{sf}  [no video]")
             self.src_combo["values"] = labeled
-            self.src_var.set(labeled[0] if labeled else "")
+            self.src_var.set(SOURCE_FILE_ALL if labeled else "")
         except Exception as e:
             self.src_combo["values"] = []
             self.src_var.set("")
@@ -574,10 +666,14 @@ class ErrorFrameApp:
             self._mb.showerror("Error", "Select a Ground Truth CSV first.")
             return False
 
-        sf_sel_raw = self.src_var.get()
-        # "[no video]" 접미어 제거 후 실제 source_file 이름 추출
-        sf_sel = sf_sel_raw.replace("  [no video]", "").strip()
-        source_filter = {sf_sel} if sf_sel else None
+        sf_sel_raw = self.src_var.get().strip()
+        if sf_sel_raw == SOURCE_FILE_ALL or not sf_sel_raw:
+            sf_sel = SOURCE_FILE_ALL
+            source_filter = None
+        else:
+            # "[no video]" 접미어 제거 후 실제 source_file 이름 추출
+            sf_sel = sf_sel_raw.replace("  [no video]", "").strip()
+            source_filter = {sf_sel} if sf_sel else None
         try:
             ctx = int(self.context_var.get())
         except ValueError:
@@ -585,10 +681,13 @@ class ErrorFrameApp:
 
         cache_key = (str(run_info.run_dir), str(csv_path), sf_sel_raw, ctx)
         if cache_key in self._analysis_cache:
-            self._last_data, self._last_fps, self._last_error_frames, self._last_class_names = \
+            self._last_batches, self._last_error_frames, self._last_class_names, self._last_rendered_count = \
                 self._analysis_cache[cache_key]
             self._last_run_dir = run_info.run_dir
-            self.status_var.set(f"캐시 사용 — 오류 {sum(1 for e in self._last_error_frames if not e.is_context)}프레임")
+            self.status_var.set(
+                f"캐시 사용 — 오류 {sum(1 for e in self._last_error_frames if not e.is_context)}프레임"
+                f" | 재생 대상 {self._last_rendered_count}프레임"
+            )
             return True
 
         try:
@@ -599,18 +698,20 @@ class ErrorFrameApp:
 
         gt_all = load_gt(csv_path, source_filter)
         if not gt_all:
-            self._mb.showwarning("No Data", "No GT data found for the selected source_file.")
+            self._mb.showwarning("No Data", "No GT data found for the selected source selection.")
             return False
 
         all_error_frames: list[ErrorFrame] = []
-        all_rendered:     list[tuple[ErrorFrame, np.ndarray]] = []
-        fps_found = 10.0
+        playback_batches: list[SourcePlaybackBatch] = []
         total_errors = 0
         total_gt = 0
+        total_rendered = 0
 
         missing_videos: list[str] = []
-        for i, (sf, gt_map) in enumerate(gt_all.items()):
-            self.status_var.set(f"[{i+1}/{len(gt_all)}] Analyzing: {sf} ...")
+        ordered_items = sorted(gt_all.items())
+        scope_label = sf_sel if sf_sel != SOURCE_FILE_ALL else f"{SOURCE_FILE_ALL} ({len(ordered_items)} files)"
+        for i, (sf, gt_map) in enumerate(ordered_items):
+            self.status_var.set(f"[{i+1}/{len(ordered_items)}] Analyzing {scope_label}: {sf} ...")
             self.root.update_idletasks()
 
             video_path = find_video(sf)
@@ -625,7 +726,7 @@ class ErrorFrameApp:
                 continue
 
             cap = cv2.VideoCapture(str(video_path))
-            fps_found = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+            source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
             cap.release()
 
             all_error_frames.extend(error_frames)
@@ -633,15 +734,20 @@ class ErrorFrameApp:
             total_gt     += n_comp
 
             if error_frames:
-                rendered = fetch_bgr_frames(error_frames, video_path)
-                all_rendered.extend(rendered)
+                playback_batches.append(SourcePlaybackBatch(
+                    source_file=sf,
+                    video_path=video_path,
+                    fps=source_fps,
+                    error_frames=error_frames,
+                ))
+                total_rendered += len(error_frames)
 
-        self._last_data         = all_rendered
-        self._last_fps          = fps_found
+        self._last_batches       = playback_batches
+        self._last_rendered_count = total_rendered
         self._last_error_frames = all_error_frames
         self._last_class_names  = runtime.class_names
         self._last_run_dir      = run_info.run_dir
-        self._analysis_cache[cache_key] = (all_rendered, fps_found, all_error_frames, runtime.class_names)
+        self._analysis_cache[cache_key] = (playback_batches, all_error_frames, runtime.class_names, total_rendered)
 
         # 영상 없는 source_file 경고
         if missing_videos:
@@ -651,15 +757,15 @@ class ErrorFrameApp:
                 f"No video file found for:\n{names}\n\n"
                 f"Expected location: {RAW_VIDEO_ROOT}",
             )
-            if not all_rendered:
+            if not playback_batches:
                 self.status_var.set(f"Skipped all — no video found: {names}")
-                return True  # _last_data=[] → on_analyze에서 처리
+                return True  # _last_batches=[] → on_analyze에서 처리
 
         actual = sum(1 for e in all_error_frames if not e.is_context)
         self.status_var.set(
-            f"Done — {actual} / {total_gt} error frames  "
+            f"Done — {scope_label} | {actual} / {total_gt} error frames  "
             f"({actual/max(total_gt,1):.1%})  |  "
-            f"Total frames (incl. context): {len(all_rendered)}"
+            f"Total frames (incl. context): {total_rendered}"
         )
         return True
 
@@ -667,15 +773,14 @@ class ErrorFrameApp:
     def on_analyze(self) -> None:
         if not self._run_analysis():
             return
-        if not self._last_data:
+        if not self._last_batches:
             self._mb.showinfo("No Error Frames", "No error frames found.\nThe model predicted all frames correctly (or videos were not found).")
             return
 
         self.root.withdraw()
         try:
             playback_errors(
-                self._last_data,
-                self._last_fps,
+                self._last_batches,
                 self._last_class_names,
                 title="JamJamBeat Error Viewer",
             )
@@ -687,10 +792,10 @@ class ErrorFrameApp:
             self.status_var.set("재생 종료")
 
     def on_export(self) -> None:
-        if not self._last_data:
+        if not self._last_batches:
             if not self._run_analysis():
                 return
-        if not self._last_data:
+        if not self._last_batches:
             self._mb.showinfo("No Data", "No error frames to export. Run analysis first.")
             return
 
@@ -705,8 +810,12 @@ class ErrorFrameApp:
 
         self.status_var.set("MP4 저장 중...")
         self.root.update_idletasks()
-        export_mp4(self._last_data, mp4_path, self._last_fps, self._last_class_names)
+        saved = export_mp4(self._last_batches, mp4_path, self._last_class_names)
         export_summary_csv(self._last_error_frames, csv_path2, self._last_class_names)
+        if not saved:
+            self.status_var.set("저장할 오류 프레임이 없습니다.")
+            self._mb.showinfo("No Data", "No rendered frames were available for export.")
+            return
         self.status_var.set(f"Saved: {mp4_path.name}")
         self._mb.showinfo("Saved", f"Video: {mp4_path}\nSummary: {csv_path2}")
 
@@ -728,10 +837,9 @@ def run_cli(args: argparse.Namespace) -> None:
         gt_all = {k: v for k, v in gt_all.items() if k in set(args.source_filter)}
 
     all_error_frames: list[ErrorFrame] = []
-    all_rendered:     list[tuple[ErrorFrame, np.ndarray]] = []
-    fps_found = 10.0
+    playback_batches: list[SourcePlaybackBatch] = []
 
-    for sf, gt_map in gt_all.items():
+    for sf, gt_map in sorted(gt_all.items()):
         video_path = find_video(sf)
         if video_path is None:
             print(f"[skip] 영상 없음: {sf}")
@@ -745,21 +853,26 @@ def run_cli(args: argparse.Namespace) -> None:
         print(f"  오류 {n_err}/{n_comp}  ({n_err/max(n_comp,1):.1%})")
 
         cap = cv2.VideoCapture(str(video_path))
-        fps_found = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
         cap.release()
 
         all_error_frames.extend(error_frames)
         if error_frames:
-            all_rendered.extend(fetch_bgr_frames(error_frames, video_path))
+            playback_batches.append(SourcePlaybackBatch(
+                source_file=sf,
+                video_path=video_path,
+                fps=source_fps,
+                error_frames=error_frames,
+            ))
 
-    if not all_rendered:
+    if not playback_batches:
         print("[결과] 오류 프레임 없음")
         return
 
     out_dir  = run_dir / "error_analysis"
     mp4_path = out_dir / f"error_frames_{run_info.model_id}.mp4"
     csv_path2 = out_dir / "error_summary.csv"
-    export_mp4(all_rendered, mp4_path, fps_found, runtime.class_names)
+    export_mp4(playback_batches, mp4_path, runtime.class_names)
     export_summary_csv(all_error_frames, csv_path2, runtime.class_names)
 
     actual = sum(1 for e in all_error_frames if not e.is_context)

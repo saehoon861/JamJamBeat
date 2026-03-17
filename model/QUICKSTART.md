@@ -132,10 +132,21 @@ uv run python model_pipelines/run_all.py \
 
 ### 이미지 CNN 제외 배치 실행
 
+단일 CSV 입력:
 ```bash
 uv run python model_pipelines/run_no_pretrained.py \
     --csv-path data_fusion/baseline.csv
 ```
+
+4개 데이터셋(CSV) 개별 지정 시:
+```bash
+uv run python model_pipelines/run_no_pretrained.py \
+    --csv-path data_fusion/man1_right_for_poc_output.csv \
+    --csv-path data_fusion/man2_right_for_poc_output.csv \
+    --csv-path data_fusion/man3_right_for_poc_output.csv \
+    --csv-path data_fusion/woman1_right_for_poc_output.csv
+```
+> `--csv-path` 옵션을 반복하여 여러 파일을 지정할 수 있으며, 생략 시 기본 설정된 4개 파일이 자동 사용됩니다.
 
 > 결과 저장 위치는 4개 파일 입력과 동일하게 `model_evaluation/pipelines/{suite_name}/` 아래에 생성된다.
 

@@ -12,10 +12,16 @@ venv/
 env/
 .env
 
+# Keep project runtime/version settings tracked
+!.python-version
+!model/.python-version
+
 # raw video data
 data/labeled_data/*.csv
 data/raw_data/*.mp4
 data/total_data/*.csv
+data/landmark_data/*.csv
+model/data_fusion/*.csv
 
 # AI Assistants & Tools
 .claude/
@@ -34,9 +40,16 @@ BOOTSTRAP.md
 
 # OS/IDE generated
 .DS_Store
-.vscode/
 .idea/
 *.swp
+
+# Track only shared VS Code project settings
+.vscode/*
+model/.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!model/.vscode/settings.json
+!model/.vscode/extensions.json
 
 # Model Training & Evaluation Artifacts
 *.pt
@@ -48,3 +61,10 @@ model/model_evaluation/cron_logs/
 model/cron_logs/
 wandb/
 model/*.png
+
+# Browser dashboard generated data
+model/frontend/eval_dashboard/data/
+
+# Test outputs
+test-results/
+playwright-report/

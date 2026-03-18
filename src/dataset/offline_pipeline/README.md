@@ -99,3 +99,20 @@ uv run python src/dataset/offline_pipeline/tests/test_downsampled.py
 ```bash
 uv run python src/dataset/offline_pipeline/tests/test_normalization.py data/processed_scenarios/ds_1_pos_scale.csv
 ```
+
+
+
+## 추가기능 - 정규화만 하는 파이프라인
+
+### 사용 방법
+
+```bash
+uv run python src/dataset/offline_pipeline/runners/run_normalization.py
+```
+
+
+1. src/dataset/offline_pipeline/config.py:7 에 있는 `TOTAL_DIR`(default: data/total_data/)를 원하는 **데이터 경로**로 변경하고 
+
+2. 작업을 하기 위한 **원본 파일 명**을 src/dataset/offline_pipeline/runners/run_normalize_only.py:91 의 `total_csv_path = config.TOTAL_DIR / "total_data_test.csv"`와 일치하도록 변경하거나, run_normalize_only.py:91 라인을 수정해서 실행하면 됩니다.
+
+> 시나리오를 변경하고 싶다면, src/dataset/offline_pipeline/runners/run_normalize_only.py:16 에 있는 **`NORMALIZE_SCENARIOS` 딕셔너리를 수정**해서 원하는 시나리오로 작업하면 됩니다.

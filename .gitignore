@@ -22,6 +22,10 @@ data/raw_data/*.mp4
 data/total_data/*.csv
 data/landmark_data/*.csv
 model/data_fusion/*.csv
+model/data_fusion/기존데이터셋/
+model/data_fusion/추론용데이터셋/
+model/data_fusion/테스트데이터셋/
+model/data_fusion/학습데이터셋/
 
 # AI Assistants & Tools
 .claude/
@@ -58,6 +62,10 @@ model/.vscode/*
 model/model_evaluation/pipelines/
 model/model_evaluation/runs/
 model/model_evaluation/cron_logs/
+model/model_evaluation/comparison_results_all_labeled.csv
+model/model_evaluation/comparison_results_all_labeled.md
+model/model_evaluation/comparison_results_all_labeled.xlsx
+model/model_evaluation/예전학습비교데이터/
 model/cron_logs/
 wandb/
 model/*.png

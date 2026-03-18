@@ -1,5 +1,8 @@
 # JamJamBeat — Learning Rate & Training Curves 비교 분석
 
+> 아카이브 메모: 이 문서는 `mlp_baseline_full` / `two_stream_mlp`가 포함된 예전 실험 결과를 기준으로 작성됐다.
+> 현재 기본 배치 러너와 글로벌 집계는 raw 63d 중심 core 9개 모델만 기본 대상으로 사용한다.
+
 [TOC]
 
 ## 실험 개요

@@ -65,19 +65,6 @@ MODEL_EXPLAINERS = {
             "sequence 계열보다 문맥 활용 폭이 좁다.",
         ],
     },
-    "mlp_baseline_full": {
-        "family": "MLP",
-        "headline": "baseline feature를 더 넓게 확장한 프레임 모델",
-        "summary": "프레임 feature 폭을 넓혀 baseline을 보강한 변형이다.",
-        "strengths": [
-            "baseline과 거의 같은 사용 감각으로 비교하기 쉽다.",
-            "추가 feature가 실제로 도움이 되는지 확인하기 좋다.",
-        ],
-        "tradeoffs": [
-            "구조 이득이 크지 않으면 baseline 대비 비용만 늘 수 있다.",
-            "고차원 입력에서 과적합 여부를 같이 봐야 한다.",
-        ],
-    },
     "mlp_baseline_seq8": {
         "family": "Sequence MLP",
         "headline": "8-step 시퀀스를 입력으로 쓰는 짧은 문맥 모델",
@@ -143,19 +130,6 @@ MODEL_EXPLAINERS = {
             "false positive와 confidence 분포를 같이 봐야 한다.",
         ],
     },
-    "two_stream_mlp": {
-        "family": "Two-Stream",
-        "headline": "서로 다른 feature stream을 병렬로 결합하는 모델",
-        "summary": "상보적인 입력 표현을 두 stream으로 나누어 결합한 구조다.",
-        "strengths": [
-            "단일 feature보다 다양한 단서를 한 번에 볼 수 있다.",
-            "feature engineering 실험을 설명하기 좋다.",
-        ],
-        "tradeoffs": [
-            "stream 간 밸런스가 안 맞으면 성능이 불안정할 수 있다.",
-            "디버깅 포인트가 단일 MLP보다 많다.",
-        ],
-    },
     "cnn1d_tcn": {
         "family": "Temporal CNN/TCN",
         "headline": "1D convolution과 temporal receptive field를 쓰는 sequence 모델",
@@ -182,6 +156,18 @@ MODEL_EXPLAINERS = {
             "프레임 모델보다 해석 오버헤드가 크다.",
         ],
     },
+}
+
+DEFAULT_VISIBLE_MODELS = {
+    "mlp_original",
+    "mlp_baseline",
+    "mlp_embedding",
+    "mlp_baseline_seq8",
+    "mlp_sequence_joint",
+    "mlp_temporal_pooling",
+    "mlp_sequence_delta",
+    "cnn1d_tcn",
+    "transformer_embedding",
 }
 
 
@@ -665,11 +651,11 @@ def build_model_payload(
         "mode": comparison_row["mode"],
         "accuracy": comparison_row["accuracy"],
         "macro_f1": comparison_row["macro_f1"],
-        "macro_recall": comparison_row["macro_recall"],
-        "fp_per_min": comparison_row["fp_per_min"],
-        "latency_p95_ms": comparison_row["latency_p95_ms"],
+        "macro_recall": comparison_row.get("macro_recall"),
+        "fp_per_min": comparison_row.get("fp_per_min"),
+        "latency_p95_ms": comparison_row.get("latency_p95_ms"),
         "epochs_ran": comparison_row["epochs_ran"],
-        "test_samples": comparison_row["test_samples"],
+        "test_samples": comparison_row.get("test_samples"),
         "users": users,
         "dataset_users": sorted(dataset_user_splits),
         "motions": motions,
@@ -720,7 +706,11 @@ def build_suite_catalog_entry(index_payload: dict[str, Any], index_path: str, is
 
 def write_suite_outputs(suite_dir: Path, is_latest: bool) -> dict[str, Any]:
     suite_meta = read_json(suite_dir / "comparison_suite.json")
-    comparison_rows = normalize_rows(read_csv_rows(suite_dir / "comparison_results.csv"))
+    comparison_rows = [
+        row
+        for row in normalize_rows(read_csv_rows(suite_dir / "comparison_results.csv"))
+        if str(row.get("model_id")) in DEFAULT_VISIBLE_MODELS
+    ]
     suite_output_dir = SUITES_ROOT / suite_dir.name
     suite_models_dir = suite_output_dir / "models"
     suite_output_dir.mkdir(parents=True, exist_ok=True)

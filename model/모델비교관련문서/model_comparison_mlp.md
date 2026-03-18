@@ -1,5 +1,8 @@
 # JamJamBeat MLP 계열 파이프라인 비교
 
+> 아카이브 메모: 이 문서는 `mlp_baseline_full` / `two_stream_mlp`가 기본 실험군에 포함되던 시점의 기록이다.
+> 현재 기본 파이프라인은 raw 63d 중심 core 9개 모델 기준으로 정리되었고, 위 두 모델은 코드와 기본 집계에서 제거됐다.
+
 기준 suite:
 
 - [comparison_suite.json](/home/user/projects/JamJamBeat/model/model_evaluation/pipelines/20260312_125119__man1_right_for_poc_notnull__man2_right_for_poc_notnull__plus2__ab316159/comparison_suite.json)

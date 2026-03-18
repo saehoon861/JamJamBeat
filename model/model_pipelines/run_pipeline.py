@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import importlib
+import inspect
 import json
 import random
 import sys
@@ -53,6 +54,12 @@ if str(MODEL_PIPELINES_DIR) not in sys.path:
 
 from evaluation_runtime import DEFAULT_CLASS_NAMES, EvaluationConfig, evaluate_predictions
 from _shared import JOINT_COLS, BONE_COLS, RAW_JOINT_COLS, SplitData, detect_angle_cols
+from checkpoint_verification import (
+    fingerprint_state_dict,
+    instantiate_model_from_state_dict,
+    safe_torch_load,
+    strict_load_state_dict,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -61,13 +68,11 @@ from _shared import JOINT_COLS, BONE_COLS, RAW_JOINT_COLS, SplitData, detect_ang
 MODEL_CHOICES = [
     "mlp_original",
     "mlp_baseline",
-    "mlp_baseline_full",
     "mlp_baseline_seq8",
     "mlp_sequence_joint",
     "mlp_temporal_pooling",
     "mlp_sequence_delta",
     "mlp_embedding",
-    "two_stream_mlp",
     "cnn1d_tcn",
     "transformer_embedding",
     "mobilenetv3_small",
@@ -156,7 +161,12 @@ def build_dataset_info(
         "dataset_key": dataset_key,
         "normalization_family": normalization_family,
         "fixed_video_level_split": True,
-        "source_counts": {"train": 40, "val": 6, "inference": 10},
+        "source_counts": {"train": 40, "val": 9, "inference": 7},
+        "test_kind": "static_images_63d",
+        "test_sequence_policy": "independent_repeat",
+        "inference_sequence_policy": "sliding",
+        "official_ranking_basis": "test_csv_static_images",
+        "temporal_metrics_policy": "disabled_for_static_images",
         "input_roles": {role: str(path) for role, path in input_roles.items()},
         "input_csv_paths": [str(p) for p in input_roles.values()],
         "input_csv_names": [p.name for p in input_roles.values()],
@@ -418,11 +428,6 @@ def forward_batch(model: nn.Module, batch: tuple, mode: str, device: torch.devic
         logits = model(_to_device(x, device))
         return logits, _to_device(y, device), idx
 
-    if mode == "two_stream":
-        xj, xb, y, idx = batch
-        logits = model(_to_device(xj, device), _to_device(xb, device))
-        return logits, _to_device(y, device), idx
-
     if mode == "sequence":
         xs, y, idx = batch
         logits = model(_to_device(xs, device))
@@ -552,20 +557,26 @@ def build_experiment(
     seq_stride: int,
     image_size: int,
     num_classes: int,
+    test_sequence_policy: str = "sliding",
 ) -> tuple[nn.Module, str, Dataset, Dataset, Dataset]:
     """
     model_id로 대응되는 builder를 동적 import 해서 dataset / model 조립 책임을 위임한다.
     Returns: model, mode, train_ds, val_ds, test_ds
-    mode in {frame, two_stream, sequence, image}
+    mode in {frame, sequence, image}
     """
     mod = importlib.import_module(f"{model_id}.dataset")
-    return mod.build(
+    kwargs = dict(
         split=split,
         angle_cols=angle_cols,
         seq_len=seq_len,
         seq_stride=seq_stride,
         image_size=image_size,
         num_classes=num_classes,
+    )
+    if "test_sequence_policy" in inspect.signature(mod.build).parameters:
+        kwargs["test_sequence_policy"] = test_sequence_policy
+    return mod.build(
+        **kwargs,
     )
 
 
@@ -655,6 +666,7 @@ def run(args: argparse.Namespace) -> dict:
         seq_stride=args.seq_stride,
         image_size=args.image_size,
         num_classes=num_classes,
+        test_sequence_policy="independent_repeat",
     )
     model = model.to(device)
     dataset_info["dataset_sample_counts"] = {
@@ -676,6 +688,7 @@ def run(args: argparse.Namespace) -> dict:
             seq_stride=args.seq_stride,
             image_size=args.image_size,
             num_classes=num_classes,
+            test_sequence_policy="sliding",
         )
         if inference_mode != mode:
             raise ValueError(
@@ -809,21 +822,58 @@ def run(args: argparse.Namespace) -> dict:
     )
     metrics_summary = evaluate_predictions(preds_df, eval_dir, eval_cfg)
 
-    # checkpoint에는 재로딩에 필요한 최소 실행 문맥도 함께 저장한다.
+    # checkpoint에는 재로딩에 필요한 최소 실행 문맥과 fingerprint를 함께 저장한다.
     ckpt_path = run_dir / "model.pt"
-    torch.save(
-        {
+    best_state_verification = fingerprint_state_dict(best_state)
+    checkpoint_payload = {
+        "model_id": args.model_id,
+        "model_state_dict": best_state,
+        "class_names": class_names,
+        "mode": mode,
+        "seed": args.seed,
+        "seq_len": args.seq_len,
+        "seq_stride": args.seq_stride,
+        "image_size": args.image_size,
+        "checkpoint_verification": {
+            **best_state_verification,
             "model_id": args.model_id,
-            "model_state_dict": best_state,
-            "class_names": class_names,
             "mode": mode,
-            "seed": args.seed,
-            "seq_len": args.seq_len,
-            "seq_stride": args.seq_stride,
-            "image_size": args.image_size,
+            "seq_len": int(args.seq_len),
+            "image_size": int(args.image_size),
         },
-        ckpt_path,
+    }
+    torch.save(checkpoint_payload, ckpt_path)
+
+    saved_checkpoint = safe_torch_load(ckpt_path, torch.device("cpu"))
+    saved_state_dict = saved_checkpoint["model_state_dict"]
+    saved_state_verification = fingerprint_state_dict(saved_state_dict)
+    reloaded_model, _, _, _ = instantiate_model_from_state_dict(
+        str(saved_checkpoint.get("model_id") or args.model_id),
+        saved_state_dict,
+        num_classes,
+        seq_len_hint=int(saved_checkpoint.get("seq_len") or args.seq_len),
+        default_seq_len=int(args.seq_len),
     )
+    strict_reload_info = strict_load_state_dict(reloaded_model, saved_state_dict)
+    stored_checkpoint_verification = dict(saved_checkpoint.get("checkpoint_verification") or {})
+    checkpoint_verification = {
+        "checkpoint_path": str(ckpt_path),
+        "model_id": str(saved_checkpoint.get("model_id") or args.model_id),
+        "mode": str(saved_checkpoint.get("mode") or mode),
+        "seq_len": int(saved_checkpoint.get("seq_len") or args.seq_len),
+        "image_size": int(saved_checkpoint.get("image_size") or args.image_size),
+        **saved_state_verification,
+        "saved_matches_best_state": (
+            saved_state_verification["checkpoint_fingerprint"]
+            == best_state_verification["checkpoint_fingerprint"]
+        ),
+        "stored_matches_saved_state": (
+            stored_checkpoint_verification.get("checkpoint_fingerprint")
+            == saved_state_verification["checkpoint_fingerprint"]
+        ),
+        "stored_checkpoint_fingerprint": stored_checkpoint_verification.get("checkpoint_fingerprint"),
+        **strict_reload_info,
+    }
 
     pd.DataFrame(history).to_csv(run_dir / "train_history.csv", index=False)
 
@@ -855,12 +905,17 @@ def run(args: argparse.Namespace) -> dict:
             "test": int(len(test_ds)),
         },
         "fixed_video_level_split": True,
-        "source_counts": {"train": 40, "val": 6, "inference": 10},
+        "source_counts": {"train": 40, "val": 9, "inference": 7},
+        "test_kind": "static_images_63d",
+        "test_sequence_policy": "independent_repeat",
+        "inference_sequence_policy": "sliding",
+        "official_ranking_basis": "test_csv_static_images",
         "inference_used": inference_df is not None,
         "preds_inference_csv": str(preds_inference_path) if preds_inference_path else None,
         "best_val_loss": float(best_val_loss),
         "epochs_ran": int(len(history)),
         "output_dir": str(run_dir),
+        "checkpoint_verification": checkpoint_verification,
         "metrics": metrics_summary,
     }
     if inference_df is not None and inference_ds is not None:

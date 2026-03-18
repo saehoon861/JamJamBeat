@@ -281,6 +281,13 @@ def predict_sequence_independent(
                 f"got {seq.shape[1]}, expected {runtime.input_dim}"
             )
 
+    aligned.maybe_log_input_verification(
+        runtime,
+        raw_landmarks=features.raw_landmarks,
+        train_landmarks=features.train_landmarks,
+        final_input=seq,
+        input_kind=f"image_sequence_{runtime.model_id}",
+    )
     tensor = aligned.torch.from_numpy(seq).unsqueeze(0).to(runtime.device)
     logits = runtime.model(tensor)
     probs = aligned.torch.softmax(logits, dim=1)[0].detach().cpu().numpy().astype(float).tolist()
@@ -450,7 +457,9 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help=(
             "Run directory containing model.pt, or a model directory containing latest.json "
-            "(e.g. model/model_evaluation/pipelines/{suite_name}/{model_id})"
+            "(e.g. model/model_evaluation/pipelines/mlp_baseline/20260318_152800, "
+            "model/model_evaluation/pipelines/mlp_baseline, or "
+            "model/model_evaluation/pipelines/{suite_name}/{model_id})"
         ),
     )
     parser.add_argument(

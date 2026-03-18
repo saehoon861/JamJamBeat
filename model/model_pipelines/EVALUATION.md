@@ -7,7 +7,7 @@
 
 ## 1. 평가가 언제 실행되나
 
-`run_pipeline.py` 또는 `run_no_pretrained.py` / `run_all.py`를 실행하면 학습 완료 후 **자동으로** 평가가 돌아간다.
+`run_pipeline.py` 또는 `run_all.py`를 실행하면 학습 완료 후 **자동으로** 평가가 돌아간다.
 별도 스크립트를 따로 실행할 필요 없다.
 
 ```
@@ -21,7 +21,7 @@
 
 ## 2. 출력 파일 구조
 
-`run_no_pretrained.py` / `run_all.py` 배치 실행 시 아래 경로에 파일이 생성된다.
+`run_all.py` 배치 실행 시 아래 경로에 파일이 생성된다.
 
 ```
 model/model_evaluation/pipelines/
@@ -117,6 +117,13 @@ Class 0 = `neutral` (아무 제스처도 아님)
 
 ### 3.4 FP/min (False Positive per Minute)
 
+이 지표는 **연속 프레임 기반 추론**에서만 의미가 있다.
+
+현재 `학습데이터셋/*_test.csv`는 공식 랭킹용 **독립 정지사진 기반 63d landmark test 세트**이므로,
+공식 `test.csv` 평가에서는 `fp_per_min`을 계산하지 않고 `N/A(null)`로 둔다.
+
+즉 아래 설명은 `inference.csv`나 video runtime처럼 시간축이 있는 평가를 볼 때만 참고하면 된다.
+
 ```
 후처리 파이프라인: threshold(τ) → voting(N프레임) → debounce(K회)
 ```
@@ -170,23 +177,26 @@ PoC 목표: **< 2 FP/min**
 
 ## 4. 전체 모델 비교 (`comparison_results.csv`)
 
-`run_no_pretrained.py` / `run_all.py` 실행 후 생성되는 비교 테이블. 컬럼 설명:
+`run_all.py` 실행 후 생성되는 비교 테이블. 컬럼 설명:
 
 | 컬럼 | 설명 |
 |------|------|
 | `model_id` | 모델 이름 |
-| `mode` | 입력 모드 (frame / two_stream / sequence / image) |
+| `mode` | 입력 모드 (frame / sequence / image) |
 | `accuracy` | 전체 정확도 |
 | `macro_f1` | **주 비교 지표** |
-| `macro_precision` | 클래스별 precision 평균 |
-| `macro_recall` | 클래스별 recall 평균 |
 | `class0_fpr` | 제스처 누락률 |
 | `class0_fnr` | neutral 오발동률 |
-| `fp_per_min` | 분당 오발동 횟수 (후처리 포함) |
 | `latency_p50_ms` | 추론 시간 중간값 |
-| `latency_p95_ms` | 추론 시간 p95 |
-| `best_val_loss` | validation loss 최솟값 |
 | `epochs_ran` | 실제 학습 에폭 수 (early stop 반영) |
+
+추가 메타:
+
+- 공식 랭킹 기준 `test.csv`는 `static_images_63d`
+- sequence 모델의 공식 test 해석은 `independent_repeat`
+  - 한 이미지의 63d 좌표를 `seq_len`만큼 반복해 proxy sequence로 평가
+- `inference.csv`는 기존처럼 연속 시퀀스(sliding) 해석을 유지
+- 따라서 sequence 모델도 공식 랭킹에서는 `preds_test.csv` row 수가 원본 `*_test.csv` row 수와 같아진다
 
 ---
 
@@ -198,10 +208,11 @@ macro_f1     ≥ 0.70   → 개선 필요
 macro_f1     < 0.70   → 재설계 필요
 
 class0_fnr   < 0.10   → neutral 오발동 수용 범위
-fp_per_min   < 2.0    → 실서비스 수용 범위
-
-latency_p95  < 200ms  → 온디바이스 배포 가능
+latency_p50  < 200ms  → 온디바이스 배포 가능
 ```
+
+`fp_per_min`은 공식 static-image test에서는 사용하지 않는다.
+필요하면 video / inference runtime 분석용 보조 지표로만 본다.
 
 ---
 
@@ -212,16 +223,16 @@ latency_p95  < 200ms  → 온디바이스 배포 가능
 cd /home/user/projects/JamJamBeat/model
 uv run python data_fusion/build_training_datasets.py
 
-# 기본 11개 비-pretrained 모델 순차 실행
-uv run python model_pipelines/run_no_pretrained.py
+# 기본 core 9개 모델 순차 실행
+uv run python model_pipelines/run_all.py
 
-# 전체 14개 모델 실행
-uv run python model_pipelines/run_no_pretrained.py --include-pretrained
+# image 모델 3종까지 포함한 12개 실행
+uv run python model_pipelines/run_all.py --include-image-models
 
 # 일부 모델만 실행
-uv run python model_pipelines/run_no_pretrained.py \
+uv run python model_pipelines/run_all.py \
     --dataset-key baseline_ds_1_none \
-    --models mlp_baseline mlp_embedding two_stream_mlp
+    --models mlp_baseline mlp_embedding transformer_embedding
 
 # run_pipeline.py 단독 실행
 uv run python model_pipelines/run_pipeline.py \

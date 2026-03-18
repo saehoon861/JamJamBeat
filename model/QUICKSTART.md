@@ -79,14 +79,14 @@ data_fusion/학습데이터셋/
 ## 3. 모델 학습 (전체 순차 실행, 권장)
 
 ```bash
-uv run python model_pipelines/run_no_pretrained.py
+uv run python model_pipelines/run_all.py
 ```
 
-기본적으로 12개 dataset key를 자동 인식하고, 비-pretrained 11개 모델을 dataset별로 순차 실행한다.
-전체 14개 모델을 돌리려면:
+기본적으로 12개 dataset key를 자동 인식하고, core 9개 모델을 dataset별로 순차 실행한다.
+image 모델 3종까지 포함해 12개를 돌리려면:
 
 ```bash
-uv run python model_pipelines/run_no_pretrained.py --include-pretrained
+uv run python model_pipelines/run_all.py --include-image-models
 ```
 
 ---
@@ -94,7 +94,7 @@ uv run python model_pipelines/run_no_pretrained.py --include-pretrained
 ## 4. 특정 dataset / 특정 모델만 실행
 
 ```bash
-uv run python model_pipelines/run_no_pretrained.py \
+uv run python model_pipelines/run_all.py \
     --dataset-key baseline_ds_1_none \
     --models mlp_baseline mlp_embedding
 ```
@@ -129,14 +129,14 @@ uv run python model_pipelines/run_pipeline.py \
 
 ```bash
 # 예: 에폭 50, 배치 64로 실행
-uv run python model_pipelines/run_no_pretrained.py --epochs 50 --batch-size 64
+uv run python model_pipelines/run_all.py --epochs 50 --batch-size 64
 ```
 
 ---
 
 ## 7. 실행 결과 위치
 
-`run_no_pretrained.py` / `run_all.py` 배치 실행 기준 구조:
+`run_all.py` 배치 실행 기준 구조:
 
 ```
 model_evaluation/pipelines/
@@ -179,31 +179,43 @@ cat model_evaluation/pipelines/{suite_name}/mlp_baseline/latest.json
 
 ---
 
-## 9. 모델별 영상 체크 (추론 시각화)
+## 9. 모델별 영상/이미지 체크
 
-학습된 모델을 실제 영상에 돌려보고 예측 결과를 오버레이로 확인한다.
+현재 기본 viewer는 `video_check_app_train_aligned.py`다.  
+run의 `dataset_variant`를 읽어서 학습 때와 같은 landmark 좌표계로 맞춘 뒤 추론한다.
+UI 모드에서는 raw 영상 전체를 계속 보여주되, 화면의 `Inference Videos` 패널에서
+선택한 run의 hold-out inference 영상 목록과 현재 선택 영상의 포함 여부를 바로 확인할 수 있다.
 
 **사전 조건:** 프로젝트 루트에 `hand_landmarker.task` 파일이 있어야 한다.
 
-### UI 모드 (드롭다운으로 run/영상 선택)
+### 9-1. 기본 영상 viewer
 
 ```bash
-uv run python "model_evaluation/모델별영상체크/video_check_app.py"
+# UI 모드
+uv run python "model_evaluation/모델별영상체크/video_check_app_train_aligned.py"
 ```
 
-실행하면 학습된 run과 `../data/raw_data/` 영상을 자동으로 탐색해 드롭다운으로 선택할 수 있다.
-
-### 직접 지정 모드
+```bash
+# direct run
+uv run python "model_evaluation/모델별영상체크/video_check_app_train_aligned.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+  --video ../data/raw_data/4_slow_right_man3.mp4
+```
 
 ```bash
-uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
+# suite latest.json
+uv run python "model_evaluation/모델별영상체크/video_check_app_train_aligned.py" \
   --run-dir model_evaluation/pipelines/{suite_name}/mlp_baseline \
   --video ../data/raw_data/4_slow_right_man3.mp4
 ```
 
-`--run-dir`에는 모델 폴더(`latest.json` 기준)나 실제 timestamp run 폴더 둘 다 사용할 수 있다.
+`--run-dir`는 아래를 모두 지원한다.
+- `model_evaluation/pipelines/{model_id}/{run_id}/`
+- `model_evaluation/pipelines/{model_id}/latest.json`
+- `model_evaluation/pipelines/{suite_name}/{model_id}/{run_id}/`
+- `model_evaluation/pipelines/{suite_name}/{model_id}/latest.json`
 
-### 재생 컨트롤
+재생 컨트롤:
 
 | 키 | 동작 |
 |----|------|
@@ -213,96 +225,105 @@ uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
 | `R` | 처음부터 재시작 |
 | `Q` / `Esc` | 종료 |
 
-> 영상 전체를 먼저 분석한 뒤 재생 창이 열린다.
-> `cnn1d_tcn`, `transformer_embedding` 등 sequence 모델은 초반 몇 프레임은 워밍업 구간이라 예측이 불안정할 수 있다.
+### 9-2. 영상 export
+
+```bash
+uv run python "model_evaluation/모델별영상체크/video_check_app_train_aligned_export.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+  --video ../data/raw_data/4_slow_right_man3.mp4
+```
+
+### 9-3. 이미지셋 추론 체크
+
+```bash
+uv run python "model_evaluation/모델별영상체크/image_check_app_train_aligned.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+  --images-root data_fusion/추론용데이터셋
+```
+
+sequence 모델을 이미지셋에 넣을 때는 기본적으로 `independent` 모드를 사용한다.
+
+```bash
+uv run python "model_evaluation/모델별영상체크/image_check_app_train_aligned.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+  --images-root data_fusion/추론용데이터셋 \
+  --image-sequence-mode independent
+```
+
+기본 출력:
+
+```text
+run_dir/image_inference/{dataset_name}/
+├── preds_images.csv
+├── dataset_info.json
+├── inference_summary.json
+└── evaluation/
+```
 
 ---
 
 ## 10. 오류 프레임 분석 (예측 vs Ground Truth 비교)
 
-학습된 모델의 추론 결과를 ground truth 라벨과 프레임 단위로 비교해, **틀린 프레임만** 오버레이로 확인하고 영상으로 저장한다.
+`error_frame_viewer.py`는 현재 `train_aligned` 런타임을 사용한다.  
+즉 `pos_only`, `scale_only`, `pos_scale` run도 학습 때 쓴 variant에 맞춰 GT와 비교한다.
 
-**사전 조건:** 프로젝트 루트에 `hand_landmarker.task` 파일이 있어야 한다.
-
-### UI 모드 (드롭다운으로 Run / CSV / source_file 선택)
+### UI 모드
 
 ```bash
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py"
 ```
 
-드롭다운에서 Trained Run, Ground Truth CSV, Source File(전체 또는 개별)을 선택 후:
-- **Analyze & View** — 백그라운드에서 추론 실행 (UI 응답 유지) → 완료 시 OpenCV 창 + 컨트롤 패널 표시
-- **Export MP4** — 오류 프레임 영상 + 요약 CSV 저장
+기본 GT CSV 탐색 순서:
+- `data_fusion/학습데이터셋/*_test.csv`
+- `data_fusion/학습데이터셋/*_inference.csv`
+- 예전 POC CSV는 보조 호환 입력
 
-**컨트롤 패널 버튼 (OpenCV 창 옆에 별도 창으로 표시):**
-
-| 버튼 | 동작 |
-|------|------|
-| `◀◀ -10` | 10프레임 뒤로 |
-| `◀ Prev` | 이전 프레임 |
-| `⏸ Pause` | 재생 / 일시정지 |
-| `Next ▶` | 다음 프레임 |
-| `+10 ▶▶` | 10프레임 앞으로 |
-| `↺ Reset` | 처음으로 |
-| `✕ Quit` | 종료 |
-
-### CLI 모드 (직접 지정 + 저장)
+### CLI 모드
 
 ```bash
-# 단일 CSV
+# 공식 test split 사용
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
-  --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
-  --csv data_fusion/man1_right_for_poc.csv
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+  --csv data_fusion/학습데이터셋/baseline_test.csv
+```
 
-# 4개 CSV 전체 + 앞뒤 5프레임 context
+```bash
+# hold-out inference split 사용
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
   --run-dir model_evaluation/pipelines/mlp_baseline \
-  --csv data_fusion/man1_right_for_poc.csv \
-  --csv data_fusion/man2_right_for_poc.csv \
-  --csv data_fusion/man3_right_for_poc.csv \
-  --csv data_fusion/woman1_right_for_poc.csv \
+  --csv data_fusion/학습데이터셋/baseline_inference.csv \
   --context-frames 5
+```
 
-# 특정 source_file만
+```bash
+# 공식 split CSV 내부 source_file만 선택
 uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
-  --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
-  --csv data_fusion/man1_right_for_poc.csv \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+  --csv data_fusion/학습데이터셋/baseline_test.csv \
   --source-filter 3_fast_right_man1 3_slow_right_man1
 ```
 
-### 재생 컨트롤 (OpenCV 창 키보드)
-
-| 키 | 동작 |
-|----|------|
-| `Space` | 재생 / 일시정지 |
-| `A` / `←` | 이전 프레임 |
-| `D` / `→` | 다음 프레임 |
-| `Z` | -10 프레임 |
-| `X` | +10 프레임 |
-| `R` | 처음으로 |
-| `Q` / `Esc` | 종료 |
-
-### CLI 주요 옵션
+### 주요 옵션
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
-| `--run-dir` | (필수) | model.pt 위치 또는 latest.json 있는 폴더 |
+| `--run-dir` | (필수) | run 폴더 또는 latest.json 있는 모델 폴더 |
 | `--csv` | (필수) | ground truth CSV. 반복 사용 가능 |
 | `--context-frames` | `0` | 오류 프레임 앞뒤로 포함할 프레임 수 |
-| `--source-filter` | 전체 | 분석할 source_file 이름 목록 |
+| `--source-filter` | 전체 | 분석할 `source_file` 이름 목록 |
 
 ### 출력 결과
 
-```
+```text
 run_dir/error_analysis/
-├── error_frames_{model_id}.mp4   ← 오류 프레임 모음 영상
-└── error_summary.csv             ← 프레임별 오류 요약표
+├── error_frames_{model_id}.mp4
+└── error_summary.csv
 ```
 
 영상 오버레이 기호:
 - **빨간 테두리** = 실제 오류 프레임
-- **노란 테두리** = context 프레임 (주변)
-- 하단 좌: `GT: {클래스}` / 하단 우: `PRED: {클래스} (확률)`
+- **노란 테두리** = context 프레임
+- 하단 좌 = `GT`, 하단 우 = `PRED`
 
 ---
 
@@ -312,5 +333,7 @@ run_dir/error_analysis/
 |------|------|
 | `macro_f1` | ≥ 0.80 |
 | `class0_fnr` | < 0.10 |
-| `fp_per_min` | < 2.0 |
-| `latency_p95_ms` | < 200 |
+| `latency_p50_ms` | < 200 |
+
+> 현재 공식 랭킹용 `*_test.csv`는 독립 정지사진 기반 landmark 세트이므로
+> `fp_per_min`은 공식 비교에 사용하지 않는다. 필요하면 video / inference runtime 분석에서만 본다.

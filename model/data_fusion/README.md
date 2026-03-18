@@ -68,6 +68,13 @@
 
 이 4개는 same-normalization 기준 공식 test 세트다.
 
+중요:
+
+- 이 `total_data_test_*` 계열은 **독립 정지사진에서 추출한 63d landmark 공식 test 세트**로 취급한다
+- 따라서 sequence 모델도 공식 `*_test.csv` 평가에서는 시간축 sliding window가 아니라
+  **한 row를 `seq_len`만큼 반복한 `independent_repeat` 방식**으로 해석한다
+- 반대로 `train / val / inference`는 계속 원본 `source_file` 흐름을 살린 video-level split이다
+
 보조 파일:
 
 - `0_test_right_man1.csv` 같은 개별 제스처 test 파일
@@ -148,8 +155,8 @@
 - 고정 seed: `42`
 - source 개수:
   - `train = 40`
-  - `val = 6`
-  - `inference = 10`
+  - `val = 9`
+  - `inference = 7`
 - `test`는 대응하는 `total_data_test_*`를 복사
 
 실행:
@@ -203,17 +210,17 @@ uv run python model_pipelines/run_pipeline.py \
 
 ## 6. 배치 실행
 
-전체 dataset key를 자동 인식해서 비-pretrained 모델 11개를 순차 실행하려면:
+전체 dataset key를 자동 인식해서 core 9개 모델을 순차 실행하려면:
 
 ```bash
 cd /home/user/projects/JamJamBeat/model
-uv run python model_pipelines/run_no_pretrained.py
+uv run python model_pipelines/run_all.py
 ```
 
-전체 14개 모델까지 포함하려면:
+image 모델 3종까지 포함하려면:
 
 ```bash
-uv run python model_pipelines/run_no_pretrained.py --include-pretrained
+uv run python model_pipelines/run_all.py --include-image-models
 ```
 
 ## 7. 데이터셋 해석시 기억할 점
@@ -221,6 +228,9 @@ uv run python model_pipelines/run_no_pretrained.py --include-pretrained
 - `inference`는 hold-out 세트다
   - 학습/검증/공식 test ranking에는 섞지 않는다
 - `test`는 기존 `total_data_test_*` 기반 외부 test다
+- `test`는 정지사진 기반 공식 랭킹 세트다
+  - 공식 비교에서는 `accuracy`, `macro_f1`, `class0_fpr`, `class0_fnr`, `latency_p50_ms`, `epochs_ran`만 본다
+  - `fp_per_min`은 static-image test에서는 `N/A`다
 - same-normalization test만 유지한다
 - 12개 dataset key는 교차 48조합이 아니라, 12개 학습원천 세트다
 
@@ -229,5 +239,5 @@ uv run python model_pipelines/run_no_pretrained.py --include-pretrained
 새 세트를 다시 만든 뒤에는 [dataset_manifest.csv](/home/user/projects/JamJamBeat/model/data_fusion/학습데이터셋/dataset_manifest.csv)에서 아래를 확인하면 된다.
 
 - dataset key별 파일 4종이 모두 있는지
-- `train / val / inference` source 수가 `40 / 6 / 10`인지
+- `train / val / inference` source 수가 `40 / 9 / 7`인지
 - 같은 family 내부 3세트가 동일한 test family를 쓰는지

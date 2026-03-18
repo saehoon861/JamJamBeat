@@ -8,8 +8,8 @@ UI 사용법 (model/ 디렉토리 기준):
 
 CLI 사용법:
     uv run python "model_evaluation/모델별영상체크/error_frame_viewer.py" \
-        --run-dir model_evaluation/pipelines/mlp_baseline/20260313_120557 \
-        --csv data_fusion/man1_right_for_poc.csv \
+        --run-dir model_evaluation/pipelines/mlp_baseline/20260318_152800 \
+        --csv data_fusion/학습데이터셋/baseline_test.csv \
         --context-frames 5
 
 재생 컨트롤 (OpenCV 창):
@@ -43,7 +43,14 @@ for _p in (str(MODEL_PIPELINES_ROOT), str(VIDEO_CHECK_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import video_check_app as vca  # 모델 로딩 / 추론 / 랜드마크 함수 재사용
+try:
+    from . import video_check_app_train_aligned as aligned
+except ImportError:
+    if str(VIDEO_CHECK_DIR) not in sys.path:
+        sys.path.insert(0, str(VIDEO_CHECK_DIR))
+    import video_check_app_train_aligned as aligned
+
+vca = aligned.base  # train_aligned import가 base 런타임을 현재 파이프라인 기준으로 패치한다.
 
 # ── 상수 ──────────────────────────────────────────────────────────────────────
 CLASS_NAMES = ["neutral", "fist", "open_palm", "V", "pinky", "animal", "k-heart"]
@@ -110,7 +117,8 @@ def resolve_run_dir(path_str: str) -> Path:
 
 
 # ── 탐색 ──────────────────────────────────────────────────────────────────────
-_GT_CSV_NAMES = [
+OFFICIAL_SPLIT_ROOT = DATA_FUSION_ROOT / "학습데이터셋"
+_LEGACY_GT_CSV_NAMES = [
     "man1_right_for_poc.csv",
     "man2_right_for_poc.csv",
     "man3_right_for_poc.csv",
@@ -119,12 +127,26 @@ _GT_CSV_NAMES = [
 
 
 def discover_gt_csvs() -> list[Path]:
-    """ground truth CSV 4개만 반환한다. 존재하는 파일만 포함."""
+    """Prefer official split CSVs, then fall back to legacy PoC CSVs if present."""
     result: list[Path] = []
-    for name in _GT_CSV_NAMES:
-        p = DATA_FUSION_ROOT / name
-        if p.exists():
-            result.append(p)
+    seen: set[Path] = set()
+
+    if OFFICIAL_SPLIT_ROOT.exists():
+        for pattern in ("*_test.csv", "*_inference.csv"):
+            for path in sorted(OFFICIAL_SPLIT_ROOT.glob(pattern)):
+                resolved = path.resolve()
+                if resolved not in seen:
+                    result.append(path)
+                    seen.add(resolved)
+
+    for name in _LEGACY_GT_CSV_NAMES:
+        path = DATA_FUSION_ROOT / name
+        if path.exists():
+            resolved = path.resolve()
+            if resolved not in seen:
+                result.append(path)
+                seen.add(resolved)
+
     return result
 
 
@@ -887,12 +909,20 @@ def main() -> None:
         description="예측 오류 프레임 분석 뷰어 (UI 모드 / CLI 모드)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--run-dir", default=None,
-                        help="model.pt 위치 또는 latest.json 있는 폴더 (CLI 모드)")
+    parser.add_argument(
+        "--run-dir",
+        default=None,
+        help=(
+            "run 폴더(model.pt 포함) 또는 latest.json이 있는 모델 폴더. "
+            "직접 실행 경로(.../pipelines/{model_id}/{run_id})와 "
+            "suite 경로(.../pipelines/{suite_name}/{model_id}/{run_id})를 모두 지원"
+        ),
+    )
     parser.add_argument("--csv", action="append", dest="csv_paths", default=[],
-                        help="ground truth CSV (CLI 모드). 반복 사용 가능")
+                        help="ground truth CSV (CLI 모드). 공식 split CSV(*_test.csv, *_inference.csv) 권장")
     parser.add_argument("--context-frames", type=int, default=0)
-    parser.add_argument("--source-filter", nargs="*", default=None)
+    parser.add_argument("--source-filter", nargs="*", default=None,
+                        help="공식 split CSV 내부의 source_file 이름만 골라 분석")
     args = parser.parse_args()
 
     # CLI 모드: --run-dir + --csv 모두 지정된 경우
@@ -910,7 +940,12 @@ def main() -> None:
     if not app._run_lookup:
         messagebox.showwarning("No Runs", f"No trained runs found under:\n{vca.RUNS_ROOT}")
     if not app._csv_lookup:
-        messagebox.showwarning("No CSVs", f"No GT CSVs found under:\n{DATA_FUSION_ROOT}")
+        messagebox.showwarning(
+            "No CSVs",
+            "No GT CSVs found under:\n"
+            f"{OFFICIAL_SPLIT_ROOT}\n\n"
+            f"(legacy fallback checked under {DATA_FUSION_ROOT})",
+        )
 
     root.mainloop()
 

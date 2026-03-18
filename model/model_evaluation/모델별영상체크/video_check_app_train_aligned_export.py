@@ -197,7 +197,9 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Run directory containing model.pt, or a model directory containing latest.json "
-            "(e.g. model/model_evaluation/pipelines/{suite_name}/{model_id})"
+            "(e.g. model/model_evaluation/pipelines/mlp_baseline/20260318_152800, "
+            "model/model_evaluation/pipelines/mlp_baseline, or "
+            "model/model_evaluation/pipelines/{suite_name}/{model_id})"
         ),
     )
     parser.add_argument("--video", type=Path, default=None, help="Video path to analyze")

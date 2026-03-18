@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import sys
@@ -31,6 +30,14 @@ MODEL_PIPELINES_ROOT = PROJECT_ROOT / "model" / "model_pipelines"
 if str(MODEL_PIPELINES_ROOT) not in sys.path:
     # 저장된 model_id 문자열로 각 분류기 구현을 동적 import 하기 위한 경로다.
     sys.path.insert(0, str(MODEL_PIPELINES_ROOT))
+
+from checkpoint_verification import (
+    fingerprint_state_dict,
+    infer_num_classes_from_state_dict,
+    instantiate_model_from_state_dict,
+    safe_torch_load,
+    strict_load_state_dict,
+)
 
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
@@ -87,14 +94,12 @@ class RunInfo:
 class FeaturePack:
     """런타임 추론에서 재사용할 feature 묶음.
 
-    하나의 raw landmark 세트에서 frame / two-stream / sequence / image 입력을 모두 만든다.
+    하나의 raw landmark 세트에서 frame / sequence / image 입력을 모두 만든다.
     """
 
     raw_landmarks: np.ndarray
     normalized_landmarks: np.ndarray
     joint: np.ndarray
-    joint_xy: np.ndarray
-    joint_z: np.ndarray
     bone: np.ndarray
     angle: np.ndarray
     full: np.ndarray
@@ -140,6 +145,9 @@ class RuntimeModel:
     image_size: int
     input_dim: int | None
     aux_input_dim: int | None
+    checkpoint_verification: dict[str, Any] | None = None
+    input_verification_logged: bool = False
+    input_verification: dict[str, Any] | None = None
     dataset_variant: str = "baseline"
 
 
@@ -208,115 +216,12 @@ def discover_videos() -> list[Path]:
     return sorted({p.resolve() for p in videos})
 
 
-def safe_torch_load(path: Path, device: torch.device) -> dict[str, Any]:
-    """PyTorch 버전 차이를 흡수하며 checkpoint dict를 로드한다."""
-    try:
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(path, map_location=device)
-
-    if not isinstance(checkpoint, dict):
-        raise ValueError(f"Unexpected checkpoint format: {path}")
-    return checkpoint
-
-
 def detect_neutral_idx(class_names: list[str]) -> int:
     """neutral/background 클래스 index를 휴리스틱으로 찾는다."""
     for idx, name in enumerate(class_names):
         if str(name).strip().lower() in {"neutral", "none", "background"}:
             return idx
     return 0
-
-
-def _infer_num_classes(state_dict: dict[str, Any]) -> int:
-    """head weight shape로부터 class 수를 역추론한다."""
-    for key in ("head.2.weight", "head.6.weight", "head.weight", "net.6.weight", "net.4.weight"):
-        tensor = state_dict.get(key)
-        if tensor is not None and hasattr(tensor, "shape") and len(tensor.shape) == 2:
-            return int(tensor.shape[0])
-    raise ValueError("Could not infer num_classes from checkpoint state_dict.")
-
-
-def instantiate_model(
-    model_id: str,
-    state_dict: dict[str, Any],
-    num_classes: int,
-    seq_len_hint: int,
-) -> tuple[torch.nn.Module, int, int | None, int | None]:
-    """checkpoint state_dict shape를 읽어 정확한 model 클래스를 복원한다."""
-    mod = importlib.import_module(f"{model_id}.model")
-
-    if model_id == "mlp_original":
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.GestureMLP(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id in {"mlp_baseline", "mlp_baseline_full"}:
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.MLPBaseline(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "mlp_baseline_seq8":
-        flat_dim = int(state_dict["net.0.weight"].shape[1])
-        seq_len = 8
-        input_dim = flat_dim // seq_len
-        model = mod.MLPBaselineSeq(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len, input_dim, None
-
-    if model_id == "mlp_sequence_joint":
-        input_dim = int(state_dict["net.1.weight"].shape[1])
-        seq_len = seq_len_hint or max(input_dim // 63, 1)
-        feature_dim = input_dim // max(seq_len, 1)
-        model = mod.SequenceJointMLP(seq_len=seq_len, input_dim=feature_dim, num_classes=num_classes)
-        return model, seq_len, feature_dim, None
-
-    if model_id == "mlp_temporal_pooling":
-        input_dim = int(state_dict["frame_embed.1.weight"].shape[1])
-        model = mod.TemporalPoolingMLP(input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len_hint or DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "mlp_sequence_delta":
-        flat_dim = int(state_dict["net.1.weight"].shape[1])
-        seq_len = seq_len_hint or max(flat_dim // 126, 1)
-        input_dim = flat_dim // seq_len
-        model = mod.SequenceDeltaMLP(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len, input_dim, None
-
-    if model_id == "mlp_embedding":
-        input_dim = int(state_dict["embed.0.weight"].shape[1])
-        model = mod.MLPEmbedding(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "two_stream_mlp":
-        joint_dim = int(state_dict["joint_stream.net.0.weight"].shape[1])
-        bone_dim = int(state_dict["bone_stream.net.0.weight"].shape[1])
-        model = mod.TwoStreamMLP(joint_dim=joint_dim, bone_dim=bone_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, joint_dim, bone_dim
-
-    if model_id == "cnn1d_tcn":
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.TCN1DClassifier(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "transformer_embedding":
-        input_dim = int(state_dict["frame_embed.weight"].shape[1])
-        seq_len = int(state_dict["pos_embed"].shape[1])
-        model = mod.TemporalTransformer(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len, input_dim, None
-
-    if model_id == "mobilenetv3_small":
-        model = mod.MobileNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, None, None
-
-    if model_id == "shufflenetv2_x0_5":
-        model = mod.ShuffleNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, None, None
-
-    if model_id == "efficientnet_b0":
-        model = mod.EfficientNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, None, None
-
-    raise ValueError(f"Unsupported model_id: {model_id}")
 
 
 def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
@@ -326,22 +231,44 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
     state_dict = checkpoint["model_state_dict"]
     class_names = list(checkpoint.get("class_names") or [])
     if not class_names:
-        class_names = [str(i) for i in range(_infer_num_classes(state_dict))]
+        class_names = [str(i) for i in range(infer_num_classes_from_state_dict(state_dict))]
 
     num_classes = len(class_names)
     model_id = str(checkpoint.get("model_id") or run_info.model_id)
     mode = str(checkpoint.get("mode") or run_info.mode)
     seq_len_hint = int(checkpoint.get("seq_len") or DEFAULT_SEQ_LEN)
     image_size = int(checkpoint.get("image_size") or DEFAULT_IMAGE_SIZE)
-    model, seq_len, input_dim, aux_input_dim = instantiate_model(
+    model, seq_len, input_dim, aux_input_dim = instantiate_model_from_state_dict(
         model_id,
         state_dict,
         num_classes,
         seq_len_hint=seq_len_hint,
+        default_seq_len=DEFAULT_SEQ_LEN,
     )
-    model.load_state_dict(state_dict)
+    strict_load_info = strict_load_state_dict(model, state_dict)
+    state_verification = fingerprint_state_dict(state_dict)
+    stored_checkpoint_verification = dict(checkpoint.get("checkpoint_verification") or {})
+    checkpoint_verification = {
+        "checkpoint_path": str(run_info.checkpoint_path),
+        "model_id": model_id,
+        "mode": mode,
+        "seq_len": int(seq_len),
+        "image_size": int(image_size),
+        **state_verification,
+        "stored_checkpoint_fingerprint": stored_checkpoint_verification.get("checkpoint_fingerprint"),
+        "stored_matches_loaded_state": (
+            stored_checkpoint_verification.get("checkpoint_fingerprint")
+            == state_verification["checkpoint_fingerprint"]
+        ),
+        **strict_load_info,
+    }
     model.to(device)
     model.eval()
+
+    print(
+        "[viewer] checkpoint_verification="
+        + json.dumps(checkpoint_verification, ensure_ascii=False, sort_keys=True)
+    )
 
     return RuntimeModel(
         run_info=run_info,
@@ -355,6 +282,7 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
         image_size=image_size,
         input_dim=input_dim,
         aux_input_dim=aux_input_dim,
+        checkpoint_verification=checkpoint_verification,
     )
 
 
@@ -458,8 +386,6 @@ def extract_feature_pack(raw_landmarks: np.ndarray) -> FeaturePack:
     """raw landmark 1프레임에서 모든 런타임 입력 표현을 동시에 생성한다."""
     normalized = normalize_landmarks(raw_landmarks)
     joint = normalized.reshape(-1).astype(np.float32)
-    joint_xy = normalized[:, :2].reshape(-1).astype(np.float32)
-    joint_z = normalized[:, 2].reshape(-1).astype(np.float32)
     bone = compute_bone_features(normalized).reshape(-1).astype(np.float32)
     angle = compute_angle_features(normalized).astype(np.float32)
     bone_angle = np.concatenate([bone, angle]).astype(np.float32)
@@ -469,8 +395,6 @@ def extract_feature_pack(raw_landmarks: np.ndarray) -> FeaturePack:
         raw_landmarks=raw_landmarks.astype(np.float32),
         normalized_landmarks=normalized,
         joint=joint,
-        joint_xy=joint_xy,
-        joint_z=joint_z,
         bone=bone,
         angle=angle,
         full=full,
@@ -535,8 +459,6 @@ def select_feature_vector(features: FeaturePack, expected_dim: int) -> np.ndarra
     """checkpoint의 실제 입력 차원에 맞는 feature 표현을 선택한다."""
     candidates = {
         int(features.joint.shape[0]): features.joint,
-        int(features.joint_xy.shape[0]): features.joint_xy,
-        int(features.joint_z.shape[0]): features.joint_z,
         int(features.bone.shape[0]): features.bone,
         int(features.angle.shape[0]): features.angle,
         int(features.bone_angle.shape[0]): features.bone_angle,
@@ -584,15 +506,6 @@ def predict_from_features(
         vector = select_feature_vector(features, runtime.input_dim)
         tensor = torch.from_numpy(vector).unsqueeze(0).to(runtime.device)
         logits = runtime.model(tensor)
-
-    elif runtime.mode == "two_stream":
-        if runtime.input_dim is None or runtime.aux_input_dim is None:
-            raise ValueError(f"Missing runtime stream dims for two_stream model: {runtime.model_id}")
-        joint_vec = select_feature_vector(features, runtime.input_dim)
-        aux_vec = select_feature_vector(features, runtime.aux_input_dim)
-        joint = torch.from_numpy(joint_vec).unsqueeze(0).to(runtime.device)
-        aux = torch.from_numpy(aux_vec).unsqueeze(0).to(runtime.device)
-        logits = runtime.model(joint, aux)
 
     elif runtime.mode == "sequence":
         if runtime.input_dim is None:
@@ -986,7 +899,9 @@ def resolve_run_dir_arg(path: Path) -> Path:
 
     raise FileNotFoundError(
         "Run directory not found. Expected either "
-        "`.../{suite_name}/{model_id}/{timestamp}/model.pt` or "
+        "`.../{model_id}/{run_id}/model.pt`, "
+        "`.../{suite_name}/{model_id}/{run_id}/model.pt`, "
+        "`.../{model_id}/latest.json`, or "
         "`.../{suite_name}/{model_id}/latest.json`."
     )
 
@@ -1000,7 +915,9 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Run directory containing model.pt, or a model directory containing latest.json "
-            "(e.g. model/model_evaluation/pipelines/{suite_name}/{model_id})"
+            "(e.g. model/model_evaluation/pipelines/mlp_baseline/20260318_152800, "
+            "model/model_evaluation/pipelines/mlp_baseline, or "
+            "model/model_evaluation/pipelines/{suite_name}/{model_id})"
         ),
     )
     parser.add_argument("--video", type=Path, default=None, help="Video path to analyze")

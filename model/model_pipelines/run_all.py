@@ -19,22 +19,25 @@ KST = timezone(timedelta(hours=9))
 PIPELINE_SCRIPT = PROJECT_ROOT / "model" / "model_pipelines" / "run_pipeline.py"
 DATASET_ROOT = PROJECT_ROOT / "model" / "data_fusion" / "학습데이터셋"
 
-ALL_MODELS = [
+CORE_MODELS = [
     "mlp_original",
     "mlp_baseline",
-    "mlp_baseline_full",
     "mlp_baseline_seq8",
     "mlp_sequence_joint",
     "mlp_temporal_pooling",
     "mlp_sequence_delta",
     "mlp_embedding",
-    "two_stream_mlp",
     "cnn1d_tcn",
     "transformer_embedding",
+]
+
+IMAGE_MODELS = [
     "mobilenetv3_small",
     "shufflenetv2_x0_5",
     "efficientnet_b0",
 ]
+
+ALL_MODELS = CORE_MODELS + IMAGE_MODELS
 
 REQUIRED_SPLITS = ("train", "val", "inference", "test")
 
@@ -98,7 +101,10 @@ def write_suite_manifest(
         "failed_models": failed_models or [],
         "comparison_results_csv": str(comparison_path) if comparison_path else None,
         "fixed_video_level_split": True,
-        "source_counts": {"train": 40, "val": 6, "inference": 10},
+        "source_counts": {"train": 40, "val": 9, "inference": 7},
+        "test_kind": "static_images_63d",
+        "test_sequence_policy": "independent_repeat",
+        "official_ranking_basis": "test_csv_static_images",
     }
     with (suite_dir / "comparison_suite.json").open("w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
@@ -187,23 +193,17 @@ def _flatten_summary(model_id: str, summary: dict) -> dict:
     class0 = metrics.get("class0_metrics", {})
     latency = metrics.get("latency", {})
     fp_min = metrics.get("fp_per_min_metrics", {})
+    fp_value = fp_min.get("fp_per_min")
     return {
         "model_id": model_id,
         "mode": summary.get("mode", ""),
         "accuracy": round(metrics.get("accuracy", 0.0), 4),
         "macro_f1": round(macro.get("f1", 0.0), 4),
-        "macro_precision": round(macro.get("precision", 0.0), 4),
-        "macro_recall": round(macro.get("recall", 0.0), 4),
         "class0_fpr": round(class0.get("false_positive_rate", 0.0), 4),
         "class0_fnr": round(class0.get("false_negative_rate", 0.0), 4),
-        "fp_per_min": round(fp_min.get("fp_per_min", 0.0) or 0.0, 3),
+        "fp_per_min": None if fp_value is None else round(float(fp_value), 3),
         "latency_p50_ms": round(latency.get("p50_ms", 0.0) or 0.0, 2),
-        "latency_p95_ms": round(latency.get("p95_ms", 0.0) or 0.0, 2),
-        "best_val_loss": round(summary.get("best_val_loss", 0.0), 4),
         "epochs_ran": summary.get("epochs_ran", 0),
-        "train_samples": summary.get("dataset_sizes", {}).get("train", 0),
-        "test_samples": summary.get("dataset_sizes", {}).get("test", 0),
-        "output_dir": summary.get("output_dir", ""),
     }
 
 
@@ -218,7 +218,6 @@ def print_table(rows: list[dict]) -> None:
         "macro_f1",
         "class0_fpr",
         "class0_fnr",
-        "fp_per_min",
         "latency_p50_ms",
         "epochs_ran",
     ]
@@ -318,7 +317,7 @@ def run_all(args: argparse.Namespace) -> None:
             raise SystemExit(f"Unknown dataset key(s): {', '.join(missing)}")
         registry = {key: registry[key] for key in args.dataset_key}
 
-    models_to_run = args.models or ALL_MODELS
+    models_to_run = args.models or (ALL_MODELS if args.include_image_models else CORE_MODELS)
 
     print(f"\n{'=' * 72}")
     print("JamJamBeat explicit dataset batch runner")
@@ -333,9 +332,19 @@ def run_all(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run all models sequentially for explicit split datasets.",
+        description="Run JamJamBeat models sequentially for explicit split datasets.",
     )
-    parser.add_argument("--models", nargs="*", default=None, help=f"실행할 모델 지정. 기본값: {ALL_MODELS}")
+    parser.add_argument(
+        "--models",
+        nargs="*",
+        default=None,
+        help=f"실행할 모델 지정. 기본값: core 9개 ({CORE_MODELS})",
+    )
+    parser.add_argument(
+        "--include-image-models",
+        action="store_true",
+        help="기본 core 9개에 image 모델 3종을 추가한다.",
+    )
     parser.add_argument("--dataset-root", default=str(DATASET_ROOT))
     parser.add_argument("--dataset-key", nargs="*", default=None, help="특정 dataset key만 실행")
     parser.add_argument("--output-root", default="model/model_evaluation/pipelines")

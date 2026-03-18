@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import importlib
 import json
 import sys
 from collections import deque
@@ -26,6 +25,7 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = Path(__file__).resolve().parent
 MODEL_PIPELINES_ROOT = PROJECT_ROOT / "model" / "model_pipelines"
+MODEL_CHECK_ROOT = PROJECT_ROOT / "model" / "model_evaluation" / "모델별영상체크"
 DEFAULT_SEQ_LEN = 16
 DEFAULT_IMAGE_SIZE = 96
 FORCED_DEVICE = torch.device("cpu")
@@ -38,11 +38,21 @@ HAND_CONNECTIONS = [
     (17, 18), (18, 19), (19, 20),
 ]
 RAW_JOINT_DIM = 63
-RAW_JOINT_XY_DIM = 42
-RAW_JOINT_Z_DIM = 21
 
 if str(MODEL_PIPELINES_ROOT) not in sys.path:
     sys.path.insert(0, str(MODEL_PIPELINES_ROOT))
+if str(MODEL_CHECK_ROOT) not in sys.path:
+    sys.path.insert(0, str(MODEL_CHECK_ROOT))
+
+from checkpoint_verification import (
+    fingerprint_state_dict,
+    infer_num_classes_from_state_dict,
+    instantiate_model_from_state_dict,
+    safe_torch_load,
+    strict_load_state_dict,
+    summarize_array,
+)
+from dataset_variant_runtime import apply_dataset_variant, infer_dataset_variant
 
 RUNTIME_CACHE: dict[str, "RuntimeModel"] = {}
 INFERENCE_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -69,6 +79,10 @@ class RuntimeModel:
     image_size: int
     input_dim: int | None
     aux_input_dim: int | None
+    dataset_variant: str = "baseline"
+    checkpoint_verification: dict[str, Any] | None = None
+    input_verification_logged: bool = False
+    input_verification: dict[str, Any] | None = None
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -105,16 +119,6 @@ def format_timestamp(frame_idx: int, fps: float) -> str:
     return f"{minutes:02d}:{seconds:02d}:{ms:03d}"
 
 
-def safe_torch_load(path: Path, device: torch.device) -> dict[str, Any]:
-    try:
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(path, map_location=device)
-    if not isinstance(checkpoint, dict):
-        raise ValueError(f"Unexpected checkpoint format: {path}")
-    return checkpoint
-
-
 def detect_neutral_idx(class_names: list[str]) -> int:
     for idx, name in enumerate(class_names):
         if str(name).strip().lower() in {"neutral", "none", "background"}:
@@ -122,111 +126,53 @@ def detect_neutral_idx(class_names: list[str]) -> int:
     return 0
 
 
-def infer_num_classes(state_dict: dict[str, Any]) -> int:
-    for key in ("head.2.weight", "head.6.weight", "head.weight", "net.6.weight", "net.4.weight"):
-        tensor = state_dict.get(key)
-        if tensor is not None and hasattr(tensor, "shape") and len(tensor.shape) == 2:
-            return int(tensor.shape[0])
-    raise ValueError("Could not infer num_classes from checkpoint state_dict.")
-
-
-def instantiate_model(
-    model_id: str,
-    state_dict: dict[str, Any],
-    num_classes: int,
-    seq_len_hint: int,
-) -> tuple[torch.nn.Module, int, int | None, int | None]:
-    mod = importlib.import_module(f"{model_id}.model")
-
-    if model_id == "mlp_original":
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.GestureMLP(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id in {"mlp_baseline", "mlp_baseline_full"}:
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.MLPBaseline(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "mlp_baseline_seq8":
-        flat_dim = int(state_dict["net.0.weight"].shape[1])
-        seq_len = 8
-        input_dim = flat_dim // seq_len
-        model = mod.MLPBaselineSeq(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len, input_dim, None
-
-    if model_id == "mlp_sequence_joint":
-        input_dim = int(state_dict["net.1.weight"].shape[1])
-        seq_len = seq_len_hint or max(input_dim // 63, 1)
-        feature_dim = input_dim // max(seq_len, 1)
-        model = mod.SequenceJointMLP(seq_len=seq_len, input_dim=feature_dim, num_classes=num_classes)
-        return model, seq_len, feature_dim, None
-
-    if model_id == "mlp_temporal_pooling":
-        input_dim = int(state_dict["frame_embed.1.weight"].shape[1])
-        model = mod.TemporalPoolingMLP(input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len_hint or DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "mlp_sequence_delta":
-        flat_dim = int(state_dict["net.1.weight"].shape[1])
-        seq_len = seq_len_hint or max(flat_dim // 126, 1)
-        input_dim = flat_dim // seq_len
-        model = mod.SequenceDeltaMLP(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len, input_dim, None
-
-    if model_id == "mlp_embedding":
-        input_dim = int(state_dict["embed.0.weight"].shape[1])
-        model = mod.MLPEmbedding(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "two_stream_mlp":
-        joint_dim = int(state_dict["joint_stream.net.0.weight"].shape[1])
-        bone_dim = int(state_dict["bone_stream.net.0.weight"].shape[1])
-        model = mod.TwoStreamMLP(joint_dim=joint_dim, bone_dim=bone_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, joint_dim, bone_dim
-
-    if model_id == "cnn1d_tcn":
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.TCN1DClassifier(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, input_dim, None
-
-    if model_id == "transformer_embedding":
-        input_dim = int(state_dict["frame_embed.weight"].shape[1])
-        seq_len = int(state_dict["pos_embed"].shape[1])
-        model = mod.TemporalTransformer(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len, input_dim, None
-
-    if model_id == "mobilenetv3_small":
-        model = mod.MobileNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, None, None
-
-    if model_id == "shufflenetv2_x0_5":
-        model = mod.ShuffleNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, None, None
-
-    if model_id == "efficientnet_b0":
-        model = mod.EfficientNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN, None, None
-
-    raise ValueError(f"Unsupported model_id: {model_id}")
-
-
 def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
     checkpoint = safe_torch_load(run_info.checkpoint_path, FORCED_DEVICE)
     state_dict = checkpoint["model_state_dict"]
     class_names = list(checkpoint.get("class_names") or [])
     if not class_names:
-        class_names = [str(i) for i in range(infer_num_classes(state_dict))]
+        class_names = [str(i) for i in range(infer_num_classes_from_state_dict(state_dict))]
 
     num_classes = len(class_names)
     model_id = str(checkpoint.get("model_id") or run_info.model_id)
     mode = str(checkpoint.get("mode") or run_info.mode)
     seq_len_hint = int(checkpoint.get("seq_len") or DEFAULT_SEQ_LEN)
     image_size = int(checkpoint.get("image_size") or DEFAULT_IMAGE_SIZE)
-    model, seq_len, input_dim, aux_input_dim = instantiate_model(model_id, state_dict, num_classes, seq_len_hint)
-    model.load_state_dict(state_dict)
+    model, seq_len, input_dim, aux_input_dim = instantiate_model_from_state_dict(
+        model_id,
+        state_dict,
+        num_classes,
+        seq_len_hint,
+        default_seq_len=DEFAULT_SEQ_LEN,
+    )
+    strict_load_info = strict_load_state_dict(model, state_dict)
+    state_verification = fingerprint_state_dict(state_dict)
+    summary_path = run_info.run_dir / "run_summary.json"
+    resolution = infer_dataset_variant(run_info.run_dir, summary_path if summary_path.exists() else None)
+    stored_checkpoint_verification = dict(checkpoint.get("checkpoint_verification") or {})
+    checkpoint_verification = {
+        "checkpoint_path": str(run_info.checkpoint_path),
+        "model_id": model_id,
+        "mode": mode,
+        "seq_len": int(seq_len),
+        "image_size": int(image_size),
+        **state_verification,
+        "stored_checkpoint_fingerprint": stored_checkpoint_verification.get("checkpoint_fingerprint"),
+        "stored_matches_loaded_state": (
+            stored_checkpoint_verification.get("checkpoint_fingerprint")
+            == state_verification["checkpoint_fingerprint"]
+        ),
+        **strict_load_info,
+    }
     model.to(FORCED_DEVICE)
     model.eval()
+
+    print(
+        "[full-inference] checkpoint_verification="
+        + json.dumps(checkpoint_verification, ensure_ascii=False, sort_keys=True)
+    )
+    if resolution.warning:
+        print(f"[full-inference] dataset_variant_warning={resolution.warning}")
 
     return RuntimeModel(
         run_info=run_info,
@@ -240,6 +186,8 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
         image_size=image_size,
         input_dim=input_dim,
         aux_input_dim=aux_input_dim,
+        dataset_variant=resolution.variant,
+        checkpoint_verification=checkpoint_verification,
     )
 
 
@@ -260,8 +208,6 @@ def row_to_raw_landmarks(row: dict[str, str]) -> np.ndarray:
 def raw_feature_candidates(raw_landmarks: np.ndarray) -> dict[int, np.ndarray]:
     return {
         RAW_JOINT_DIM: raw_landmarks.reshape(-1).astype(np.float32),
-        RAW_JOINT_XY_DIM: raw_landmarks[:, :2].reshape(-1).astype(np.float32),
-        RAW_JOINT_Z_DIM: raw_landmarks[:, 2].reshape(-1).astype(np.float32),
     }
 
 
@@ -322,6 +268,35 @@ def neutral_probs(class_count: int, neutral_idx: int) -> list[float]:
     return probs
 
 
+def maybe_log_input_verification(
+    runtime: RuntimeModel,
+    *,
+    raw_landmarks: np.ndarray,
+    final_input: np.ndarray,
+    input_kind: str,
+) -> None:
+    if runtime.input_verification_logged:
+        return
+
+    variant_landmarks = apply_dataset_variant(raw_landmarks, runtime.dataset_variant)
+    payload = {
+        "model_id": runtime.model_id,
+        "mode": runtime.mode,
+        "dataset_variant": runtime.dataset_variant,
+        "variant_applied_to_model_input": False,
+        "checkpoint_fingerprint": (
+            runtime.checkpoint_verification or {}
+        ).get("checkpoint_fingerprint"),
+        "input_kind": input_kind,
+        "raw_landmarks": summarize_array("raw_landmarks", raw_landmarks),
+        "variant_landmarks": summarize_array("variant_landmarks", variant_landmarks),
+        "final_model_input": summarize_array("final_model_input", final_input),
+    }
+    runtime.input_verification = payload
+    runtime.input_verification_logged = True
+    print("[full-inference] input_verification=" + json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
 def add_runtime_delta_features(seq: np.ndarray) -> np.ndarray:
     delta = np.zeros_like(seq, dtype=np.float32)
     delta[1:, :] = seq[1:, :] - seq[:-1, :]
@@ -336,14 +311,13 @@ def predict_from_features(runtime: RuntimeModel, raw_landmarks: np.ndarray, seq_
         if runtime.input_dim is None:
             raise ValueError(f"Missing input_dim for frame model: {runtime.model_id}")
         vector = select_raw_feature_vector(raw_landmarks, runtime.input_dim)
+        maybe_log_input_verification(
+            runtime,
+            raw_landmarks=raw_landmarks,
+            final_input=vector,
+            input_kind="frame_vector_raw_compat",
+        )
         logits = runtime.model(torch.from_numpy(vector).unsqueeze(0).to(runtime.device))
-
-    elif runtime.mode == "two_stream":
-        if runtime.input_dim is None or runtime.aux_input_dim is None:
-            raise ValueError(f"Missing stream dims for two_stream model: {runtime.model_id}")
-        joint = torch.from_numpy(select_raw_feature_vector(raw_landmarks, runtime.input_dim)).unsqueeze(0).to(runtime.device)
-        aux = torch.from_numpy(select_raw_feature_vector(raw_landmarks, runtime.aux_input_dim)).unsqueeze(0).to(runtime.device)
-        logits = runtime.model(joint, aux)
 
     elif runtime.mode == "sequence":
         if runtime.input_dim is None:
@@ -362,10 +336,22 @@ def predict_from_features(runtime: RuntimeModel, raw_landmarks: np.ndarray, seq_
         seq = np.stack(list(seq_buffer), axis=0).astype(np.float32)
         if runtime.model_id == "mlp_sequence_delta":
             seq = add_runtime_delta_features(seq)
+        maybe_log_input_verification(
+            runtime,
+            raw_landmarks=raw_landmarks,
+            final_input=seq,
+            input_kind="sequence_tensor_raw_compat",
+        )
         logits = runtime.model(torch.from_numpy(seq).unsqueeze(0).to(runtime.device))
 
     elif runtime.mode == "image":
         image = render_skeleton_image(raw_landmarks, runtime.image_size)
+        maybe_log_input_verification(
+            runtime,
+            raw_landmarks=raw_landmarks,
+            final_input=image,
+            input_kind="image_tensor_raw_compat",
+        )
         logits = runtime.model(torch.from_numpy(image).unsqueeze(0).to(runtime.device))
 
     else:

@@ -29,10 +29,8 @@ HAND_CONNECTIONS = [
 JOINT_COLS = [f"n{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
 BONE_COLS  = [f"b{axis}{i}" for i in range(21) for axis in ("x", "y", "z", "l")]
 
-# Raw landmark 컬럼 (전처리 없는 원시 CSV 용)
-RAW_JOINT_COLS    = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]   # 63d
-RAW_JOINT_XY_COLS = [f"{axis}{i}" for i in range(21) for axis in ("x", "y")]        # 42d (two_stream stream1)
-RAW_JOINT_Z_COLS  = [f"z{i}" for i in range(21)]                                    # 21d (two_stream stream2)
+# Raw landmark 컬럼 (직접 63d joint 기준)
+RAW_JOINT_COLS = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
 
 
 # ──────────────────────────────────────────────────────
@@ -112,6 +110,23 @@ def sequence_arrays(
     return np.stack(samples, axis=0), np.array(labels, dtype=np.int64), meta
 
 
+def repeated_sequence_arrays(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    seq_len: int,
+) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
+    """독립 정지사진을 sequence 모델에 넣기 위해 한 프레임을 seq_len만큼 반복한다."""
+    X = df[feature_cols].to_numpy(dtype=np.float32)
+    y = df["gesture"].to_numpy(dtype=np.int64)
+    meta = [sample_metadata(df, i) for i in range(len(df))]
+
+    if len(X) == 0:
+        raise ValueError("No repeated sequence samples built. Check test split size.")
+
+    seq = np.repeat(X[:, None, :], max(int(seq_len), 1), axis=1).astype(np.float32)
+    return seq, y, meta
+
+
 # ──────────────────────────────────────────────────────
 # Dataset classes
 # ──────────────────────────────────────────────────────
@@ -135,33 +150,6 @@ class FrameDataset(Dataset):
     def __getitem__(self, idx: int):
         return (
             torch.from_numpy(self.X[idx]),
-            torch.tensor(self.y[idx], dtype=torch.long),
-            torch.tensor(idx, dtype=torch.long),
-        )
-
-
-class TwoStreamDataset(Dataset):
-    """Joint / Bone+Angle 두 스트림을 병렬로 내보내는 Dataset."""
-
-    def __init__(
-        self,
-        X_joint: np.ndarray,
-        X_bone: np.ndarray,
-        y: np.ndarray,
-        meta: list[dict[str, Any]],
-    ):
-        self.X_joint = X_joint.astype(np.float32)
-        self.X_bone  = X_bone.astype(np.float32)
-        self.y       = y.astype(np.int64)
-        self.meta    = meta
-
-    def __len__(self) -> int:
-        return len(self.y)
-
-    def __getitem__(self, idx: int):
-        return (
-            torch.from_numpy(self.X_joint[idx]),
-            torch.from_numpy(self.X_bone[idx]),
             torch.tensor(self.y[idx], dtype=torch.long),
             torch.tensor(idx, dtype=torch.long),
         )

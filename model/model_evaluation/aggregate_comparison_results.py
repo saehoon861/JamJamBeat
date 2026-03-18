@@ -24,10 +24,21 @@ DISPLAY_COLUMNS = [
     "macro_f1",
     "class0_fpr",
     "class0_fnr",
-    "fp_per_min",
     "latency_p50_ms",
     "epochs_ran",
 ]
+
+DEFAULT_VISIBLE_MODELS = {
+    "mlp_original",
+    "mlp_baseline",
+    "mlp_embedding",
+    "mlp_baseline_seq8",
+    "mlp_sequence_joint",
+    "mlp_temporal_pooling",
+    "mlp_sequence_delta",
+    "cnn1d_tcn",
+    "transformer_embedding",
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -111,6 +122,9 @@ def collect_rows() -> pd.DataFrame:
             dataset_label = infer_dataset_label(input_names, suite_name)
 
         df = pd.read_csv(csv_path).copy()
+        df = df[df["model_id"].astype(str).isin(DEFAULT_VISIBLE_MODELS)].copy()
+        if df.empty:
+            continue
         df.insert(0, "dataset_label", dataset_label)
         frames.append(df)
 

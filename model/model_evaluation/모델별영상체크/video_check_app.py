@@ -148,7 +148,11 @@ class RuntimeModel:
     checkpoint_verification: dict[str, Any] | None = None
     input_verification_logged: bool = False
     input_verification: dict[str, Any] | None = None
+    run_summary: dict[str, Any] | None = None
     dataset_variant: str = "baseline"
+    dataset_variant_source: str = "default"
+    dataset_variant_warning: str | None = None
+    tau_threshold: float | None = None
 
 
 def format_timestamp(frame_idx: int, fps: float) -> str:
@@ -724,6 +728,7 @@ class VideoCheckApp:
 
         self.status_var = tk.StringVar(value="Ready")
         self.run_var = tk.StringVar()
+        self.run_search_var = tk.StringVar()
         self.video_var = tk.StringVar()
         self.info_var = tk.StringVar(value="Select a trained run and a video.")
 
@@ -735,24 +740,30 @@ class VideoCheckApp:
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Trained Run").grid(row=0, column=0, sticky="w")
-        self.run_combo = ttk.Combobox(frame, textvariable=self.run_var, state="readonly", width=100)
-        self.run_combo.grid(row=1, column=0, sticky="ew", pady=(4, 12))
+        ttk.Label(frame, text="Run Search").grid(row=0, column=0, sticky="w")
+        self.run_search_entry = ttk.Entry(frame, textvariable=self.run_search_var)
+        self.run_search_entry.grid(row=1, column=0, sticky="ew", pady=(4, 8))
+        self.run_search_var.trace_add("write", lambda *_: self.apply_run_filter())
+
+        ttk.Label(frame, text="Trained Run").grid(row=2, column=0, sticky="w")
+        self.run_combo = ttk.Combobox(frame, textvariable=self.run_var, state="readonly", width=100, height=20)
+        self.run_combo.grid(row=3, column=0, sticky="ew", pady=(4, 12))
         self.run_combo.bind("<<ComboboxSelected>>", lambda _: self.update_info())
 
-        ttk.Label(frame, text="Video").grid(row=2, column=0, sticky="w")
+        ttk.Label(frame, text="Video").grid(row=4, column=0, sticky="w")
         self.video_combo = ttk.Combobox(frame, textvariable=self.video_var, state="readonly", width=100)
-        self.video_combo.grid(row=3, column=0, sticky="ew", pady=(4, 12))
+        self.video_combo.grid(row=5, column=0, sticky="ew", pady=(4, 12))
         self.video_combo.bind("<<ComboboxSelected>>", lambda _: self.update_info())
 
         button_row = ttk.Frame(frame)
-        button_row.grid(row=4, column=0, sticky="w", pady=(0, 12))
+        button_row.grid(row=6, column=0, sticky="w", pady=(0, 12))
         ttk.Button(button_row, text="Refresh", command=self.refresh_options).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(button_row, text="Clear Search", command=self.clear_run_search).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(button_row, text="Analyze And Play", command=self.on_play).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(button_row, text="Quit", command=self.root.destroy).pack(side=tk.LEFT)
 
-        ttk.Label(frame, textvariable=self.info_var, justify=tk.LEFT).grid(row=5, column=0, sticky="w")
-        ttk.Label(frame, textvariable=self.status_var, foreground="#005f99").grid(row=6, column=0, sticky="w", pady=(12, 0))
+        ttk.Label(frame, textvariable=self.info_var, justify=tk.LEFT).grid(row=7, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.status_var, foreground="#005f99").grid(row=8, column=0, sticky="w", pady=(12, 0))
 
         frame.columnconfigure(0, weight=1)
 
@@ -760,19 +771,54 @@ class VideoCheckApp:
         """디스크 상태를 다시 읽어 run / video dropdown 후보를 갱신한다."""
         self.runs = discover_runs()
         self.videos = discover_videos()
-        self.run_lookup = {run.display_name: run for run in self.runs}
         self.video_lookup = {video.name: video for video in self.videos}
 
-        self.run_combo["values"] = list(self.run_lookup.keys())
         self.video_combo["values"] = list(self.video_lookup.keys())
-
-        if self.runs and not self.run_var.get():
-            self.run_var.set(self.runs[0].display_name)
         if self.videos and not self.video_var.get():
             self.video_var.set(self.videos[0].name)
 
+        self.apply_run_filter()
         self.update_info()
-        self.status_var.set(f"Runs: {len(self.runs)} | Videos: {len(self.videos)}")
+        self.status_var.set(
+            f"Runs: {len(self.runs)} total / {len(self.run_lookup)} shown | Videos: {len(self.videos)}"
+        )
+
+    def filtered_runs(self) -> list[RunInfo]:
+        query = self.run_search_var.get().strip().lower()
+        if not query:
+            return list(self.runs)
+
+        matched: list[RunInfo] = []
+        for run in self.runs:
+            haystacks = (
+                run.display_name.lower(),
+                run.model_id.lower(),
+                str(run.run_dir).lower(),
+            )
+            if any(query in haystack for haystack in haystacks):
+                matched.append(run)
+        return matched
+
+    def apply_run_filter(self) -> None:
+        previous = self.run_var.get()
+        filtered_runs = self.filtered_runs()
+        self.run_lookup = {run.display_name: run for run in filtered_runs}
+        self.run_combo["values"] = list(self.run_lookup.keys())
+
+        if previous in self.run_lookup:
+            self.run_var.set(previous)
+        elif filtered_runs:
+            self.run_var.set(filtered_runs[0].display_name)
+        else:
+            self.run_var.set("")
+
+        self.status_var.set(
+            f"Runs: {len(self.runs)} total / {len(self.run_lookup)} shown | Videos: {len(self.videos)}"
+        )
+        self.update_info()
+
+    def clear_run_search(self) -> None:
+        self.run_search_var.set("")
 
     def update_info(self) -> None:
         """현재 선택된 run / video의 핵심 정보만 상태 영역에 표시한다."""
@@ -781,6 +827,10 @@ class VideoCheckApp:
 
         if not run and not video:
             self.info_var.set("No trained run or video found.")
+            return
+
+        if not run and self.run_search_var.get().strip():
+            self.info_var.set(f"No trained run matches search: {self.run_search_var.get().strip()}")
             return
 
         lines = []

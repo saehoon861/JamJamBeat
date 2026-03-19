@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sys
 import tkinter.scrolledtext as scrolledtext
+from typing import Any
 
 import cv2
 import numpy as np
@@ -43,6 +44,66 @@ class TrainingAlignedFeaturePack:
 
 _ORIGINAL_LOAD_RUNTIME_MODEL = base.load_runtime_model
 _ACTIVE_DATASET_VARIANT = "baseline"
+VIEWER_DEFAULT_TAU = 0.90
+NOT_RECORDED = "Not recorded"
+
+
+def load_run_summary(run_info: base.RunInfo) -> tuple[dict[str, Any] | None, str | None]:
+    """Load run_summary.json once and return a friendly warning instead of raising."""
+    if run_info.summary_path is None or not run_info.summary_path.exists():
+        return None, "Run summary metadata unavailable."
+
+    try:
+        summary = json.loads(run_info.summary_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, f"Failed to parse run_summary.json: {exc}"
+
+    if not isinstance(summary, dict):
+        return None, "Run summary metadata unavailable."
+    return summary, None
+
+
+def summary_value(summary: dict[str, Any] | None, *keys: str) -> Any:
+    current: Any = summary
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def run_dataset_key(summary: dict[str, Any] | None) -> str | None:
+    raw = summary_value(summary, "dataset_info", "dataset_key") or summary_value(summary, "dataset_key")
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def resolve_tau_threshold(summary: dict[str, Any] | None) -> float:
+    raw = summary_value(summary, "hyperparameters", "tau")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return VIEWER_DEFAULT_TAU
+
+
+def display_value(value: Any, *, fallback: str = NOT_RECORDED) -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "[]"
+        if len(value) <= 4:
+            return ", ".join(str(item) for item in value)
+        head = ", ".join(str(item) for item in value[:4])
+        return f"{head}, ... ({len(value)} total)"
+    text = str(value).strip()
+    return text if text else fallback
 
 
 def maybe_log_input_verification(
@@ -76,19 +137,11 @@ def maybe_log_input_verification(
 
 def load_inference_source_groups(run_info: base.RunInfo) -> tuple[list[str], str | None]:
     """Read hold-out inference source_file names from the run summary if available."""
-    if run_info.summary_path is None or not run_info.summary_path.exists():
-        return [], "Inference split metadata unavailable."
+    summary, warning = load_run_summary(run_info)
+    if summary is None:
+        return [], warning or "Inference split metadata unavailable."
 
-    try:
-        summary = json.loads(run_info.summary_path.read_text(encoding="utf-8"))
-        source_groups = (
-            summary.get("dataset_info", {})
-            .get("split", {})
-            .get("inference", {})
-            .get("source_groups", [])
-        )
-    except Exception:
-        return [], "Inference split metadata unavailable."
+    source_groups = summary_value(summary, "dataset_info", "split", "inference", "source_groups")
 
     if not isinstance(source_groups, list):
         return [], "Inference split metadata unavailable."
@@ -104,16 +157,23 @@ def load_runtime_model_training_aligned(run_info: base.RunInfo) -> base.RuntimeM
     global _ACTIVE_DATASET_VARIANT
 
     runtime = _ORIGINAL_LOAD_RUNTIME_MODEL(run_info)
+    summary, summary_warning = load_run_summary(run_info)
     resolution = infer_dataset_variant(run_info.run_dir, run_info.summary_path)
+    runtime.run_summary = summary
     runtime.dataset_variant = resolution.variant
+    runtime.dataset_variant_source = resolution.source
+    runtime.dataset_variant_warning = resolution.warning or summary_warning
+    runtime.tau_threshold = resolve_tau_threshold(summary)
     _ACTIVE_DATASET_VARIANT = resolution.variant
 
+    dataset_key = run_dataset_key(summary) or resolution.dataset_key
     print(
         f"[viewer] dataset_variant={resolution.variant} "
-        f"(source={resolution.source}, model={runtime.model_id}, run={run_info.run_dir.name})"
+        f"(source={resolution.source}, dataset_key={dataset_key or '-'}, "
+        f"model={runtime.model_id}, run={run_info.run_dir.name}, tau={runtime.tau_threshold:.2f})"
     )
-    if resolution.warning:
-        print(f"[viewer] dataset_variant_warning={resolution.warning}")
+    if runtime.dataset_variant_warning:
+        print(f"[viewer] dataset_variant_warning={runtime.dataset_variant_warning}")
 
     return runtime
 
@@ -267,69 +327,209 @@ def predict_from_features_training_aligned(
 
     probs = torch.softmax(logits, dim=1)[0].detach().cpu().numpy().astype(float).tolist()
     pred_idx = int(np.argmax(probs))
-    return "ready", pred_idx, float(probs[pred_idx]), probs
+    confidence = float(probs[pred_idx])
+    tau_threshold = runtime.tau_threshold
+    if tau_threshold is not None and pred_idx != runtime.neutral_idx and confidence < float(tau_threshold):
+        return "tau_neutralized", runtime.neutral_idx, confidence, probs
+    return "ready", pred_idx, confidence, probs
 
 
 class TrainingAlignedVideoCheckApp(base.VideoCheckApp):
     """Base viewer UI with an extra panel for run-specific inference split guidance."""
 
     def __init__(self, root: base.tk.Tk):
+        self.summary_cache: dict[str, dict[str, Any] | None] = {}
+        self.summary_warning_cache: dict[str, str | None] = {}
+        self.runtime_error_cache: dict[str, str] = {}
+        self.current_tau_run_key: str | None = None
         super().__init__(root)
         self.root.title("JamJamBeat Video Check (Train Aligned)")
-        self.root.geometry("1080x620")
+        self.root.geometry("1360x760")
 
     def _build_ui(self) -> None:
         frame = base.ttk.Frame(self.root, padding=16)
         frame.pack(fill=base.tk.BOTH, expand=True)
 
         self.inference_hint_var = base.tk.StringVar(value="Inference split metadata unavailable.")
+        self.tau_var = base.tk.StringVar(value=f"{VIEWER_DEFAULT_TAU:.2f}")
 
-        base.ttk.Label(frame, text="Trained Run").grid(row=0, column=0, sticky="w")
-        self.run_combo = base.ttk.Combobox(frame, textvariable=self.run_var, state="readonly", width=100)
-        self.run_combo.grid(row=1, column=0, sticky="ew", pady=(4, 12))
+        base.ttk.Label(frame, text="Run Search").grid(row=0, column=0, sticky="w")
+        self.run_search_entry = base.ttk.Entry(frame, textvariable=self.run_search_var)
+        self.run_search_entry.grid(row=1, column=0, sticky="ew", pady=(4, 8))
+        self.run_search_var.trace_add("write", lambda *_: self.apply_run_filter())
+
+        base.ttk.Label(frame, text="Trained Run").grid(row=2, column=0, sticky="w")
+        self.run_combo = base.ttk.Combobox(frame, textvariable=self.run_var, state="readonly", width=100, height=20)
+        self.run_combo.grid(row=3, column=0, sticky="ew", pady=(4, 12))
         self.run_combo.bind("<<ComboboxSelected>>", lambda _: self.update_info())
 
-        base.ttk.Label(frame, text="Video").grid(row=2, column=0, sticky="w")
+        base.ttk.Label(frame, text="Video").grid(row=4, column=0, sticky="w")
         self.video_combo = base.ttk.Combobox(frame, textvariable=self.video_var, state="readonly", width=100)
-        self.video_combo.grid(row=3, column=0, sticky="ew", pady=(4, 12))
+        self.video_combo.grid(row=5, column=0, sticky="ew", pady=(4, 12))
         self.video_combo.bind("<<ComboboxSelected>>", lambda _: self.update_info())
 
         button_row = base.ttk.Frame(frame)
-        button_row.grid(row=4, column=0, sticky="w", pady=(0, 12))
+        button_row.grid(row=6, column=0, sticky="w", pady=(0, 12))
         base.ttk.Button(button_row, text="Refresh", command=self.refresh_options).pack(side=base.tk.LEFT, padx=(0, 8))
+        base.ttk.Button(button_row, text="Clear Search", command=self.clear_run_search).pack(side=base.tk.LEFT, padx=(0, 8))
         base.ttk.Button(button_row, text="Analyze And Play", command=self.on_play).pack(side=base.tk.LEFT, padx=(0, 8))
+        base.ttk.Label(button_row, text="Tau override").pack(side=base.tk.LEFT, padx=(16, 6))
+        self.tau_entry = base.ttk.Entry(button_row, textvariable=self.tau_var, width=8)
+        self.tau_entry.pack(side=base.tk.LEFT, padx=(0, 8))
         base.ttk.Button(button_row, text="Quit", command=self.root.destroy).pack(side=base.tk.LEFT)
 
-        base.ttk.Label(frame, textvariable=self.info_var, justify=base.tk.LEFT).grid(row=5, column=0, sticky="ew")
+        base.ttk.Label(frame, textvariable=self.info_var, justify=base.tk.LEFT).grid(row=7, column=0, sticky="ew")
 
-        inference_panel = base.ttk.LabelFrame(frame, text="Inference Videos", padding=10)
-        inference_panel.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        panels = base.ttk.Frame(frame)
+        panels.grid(row=8, column=0, sticky="nsew", pady=(12, 0))
+
+        details_panel = base.ttk.LabelFrame(panels, text="Run Details", padding=10)
+        details_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        self.details_text = scrolledtext.ScrolledText(
+            details_panel,
+            height=18,
+            wrap=base.tk.WORD,
+            state="disabled",
+        )
+        self.details_text.grid(row=0, column=0, sticky="nsew")
+
+        inference_panel = base.ttk.LabelFrame(panels, text="Inference Videos", padding=10)
+        inference_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         base.ttk.Label(
             inference_panel,
             textvariable=self.inference_hint_var,
             justify=base.tk.LEFT,
-            wraplength=980,
+            wraplength=620,
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.inference_text = scrolledtext.ScrolledText(
             inference_panel,
-            height=10,
+            height=18,
             wrap=base.tk.WORD,
             state="disabled",
         )
         self.inference_text.grid(row=1, column=0, sticky="nsew")
 
-        base.ttk.Label(frame, textvariable=self.status_var, foreground="#005f99").grid(row=7, column=0, sticky="w", pady=(12, 0))
+        base.ttk.Label(frame, textvariable=self.status_var, foreground="#005f99").grid(row=9, column=0, sticky="w", pady=(12, 0))
 
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(6, weight=1)
+        frame.rowconfigure(8, weight=1)
+        panels.columnconfigure(0, weight=1)
+        panels.columnconfigure(1, weight=1)
+        panels.rowconfigure(0, weight=1)
+        details_panel.columnconfigure(0, weight=1)
+        details_panel.rowconfigure(0, weight=1)
         inference_panel.columnconfigure(0, weight=1)
         inference_panel.rowconfigure(1, weight=1)
+
+    def refresh_options(self) -> None:
+        self.summary_cache.clear()
+        self.summary_warning_cache.clear()
+        self.current_tau_run_key = None
+        super().refresh_options()
 
     def _set_inference_text(self, text: str) -> None:
         self.inference_text.configure(state="normal")
         self.inference_text.delete("1.0", base.tk.END)
         self.inference_text.insert("1.0", text)
         self.inference_text.configure(state="disabled")
+
+    def _set_details_text(self, text: str) -> None:
+        self.details_text.configure(state="normal")
+        self.details_text.delete("1.0", base.tk.END)
+        self.details_text.insert("1.0", text)
+        self.details_text.configure(state="disabled")
+
+    def _summary_for_run(self, run: base.RunInfo) -> tuple[dict[str, Any] | None, str | None]:
+        cache_key = str(run.run_dir)
+        if cache_key not in self.summary_cache:
+            summary, warning = load_run_summary(run)
+            self.summary_cache[cache_key] = summary
+            self.summary_warning_cache[cache_key] = warning
+        return self.summary_cache[cache_key], self.summary_warning_cache.get(cache_key)
+
+    def _parse_tau_override(self) -> float:
+        raw = self.tau_var.get().strip()
+        if not raw:
+            raise ValueError("Tau override cannot be empty.")
+        try:
+            tau = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"Tau override must be a number, got: {raw}") from exc
+        if not 0.0 < tau <= 1.0:
+            raise ValueError("Tau override must be in the range (0, 1].")
+        return tau
+
+    def _sync_tau_for_run(self, run: base.RunInfo, summary: dict[str, Any] | None) -> None:
+        run_key = str(run.run_dir)
+        if self.current_tau_run_key == run_key:
+            return
+        self.tau_var.set(f"{resolve_tau_threshold(summary):.2f}")
+        self.current_tau_run_key = run_key
+
+    def _build_details_text(
+        self,
+        run: base.RunInfo,
+        *,
+        summary: dict[str, Any] | None,
+        summary_warning: str | None,
+        runtime: base.RuntimeModel | None = None,
+    ) -> str:
+        resolution = infer_dataset_variant(run.run_dir, run.summary_path)
+        checkpoint_info = dict(summary_value(summary, "checkpoint_verification") or {})
+        if runtime is not None and runtime.checkpoint_verification:
+            checkpoint_info.update(runtime.checkpoint_verification)
+
+        dataset_variant = runtime.dataset_variant if runtime is not None else resolution.variant
+        dataset_variant_source = (
+            runtime.dataset_variant_source if runtime is not None else resolution.source
+        )
+        dataset_variant_warning = (
+            runtime.dataset_variant_warning if runtime is not None else resolution.warning
+        )
+        dataset_key = run_dataset_key(summary) or resolution.dataset_key
+        hparams = dict(summary_value(summary, "hyperparameters") or {})
+        tau_recorded = hparams.get("tau")
+        tau_line = display_value(tau_recorded)
+        if tau_recorded is None:
+            tau_line = f"{NOT_RECORDED} (viewer default {resolve_tau_threshold(summary):.2f})"
+
+        lines = [
+            f"Run dir: {run.run_dir}",
+            f"Checkpoint: {run.checkpoint_path}",
+            f"Run summary: {run.summary_path if run.summary_path else NOT_RECORDED}",
+            "",
+            f"Dataset key: {display_value(dataset_key)}",
+            f"Normalization family: {display_value(summary_value(summary, 'normalization_family'))}",
+            f"Mode: {display_value(summary_value(summary, 'mode') or run.mode)}",
+            f"Dataset variant: {dataset_variant}",
+            f"Variant source: {dataset_variant_source}",
+            f"Loss type: {display_value(hparams.get('loss_type'))}",
+            f"Weighted sampler: {display_value(hparams.get('use_weighted_sampler'))}",
+            f"Alpha enabled: {display_value(hparams.get('use_alpha'))}",
+            f"Label smoothing enabled: {display_value(hparams.get('use_label_smoothing'))}",
+            f"Focal gamma: {display_value(hparams.get('focal_gamma'))}",
+            f"Label smoothing: {display_value(hparams.get('label_smoothing'))}",
+            f"Tau: {tau_line}",
+            f"Vote N: {display_value(hparams.get('vote_n'))}",
+            f"Debounce K: {display_value(hparams.get('debounce_k'))}",
+            f"Fallback FPS: {display_value(hparams.get('fallback_fps'))}",
+            f"UI tau override: {display_value(self.tau_var.get().strip(), fallback=f'{resolve_tau_threshold(summary):.2f}')}",
+            "",
+            f"Checkpoint fingerprint: {display_value(checkpoint_info.get('checkpoint_fingerprint'))}",
+            f"Strict load verified: {display_value(checkpoint_info.get('strict_load_verified'))}",
+            f"Stored matches loaded state: {display_value(checkpoint_info.get('stored_matches_loaded_state'))}",
+            f"Missing keys: {display_value(checkpoint_info.get('missing_keys'))}",
+            f"Unexpected keys: {display_value(checkpoint_info.get('unexpected_keys'))}",
+        ]
+
+        runtime_error = self.runtime_error_cache.get(str(run.run_dir))
+        if summary_warning:
+            lines.extend(["", f"Summary warning: {summary_warning}"])
+        if dataset_variant_warning:
+            lines.extend(["", f"Variant warning: {dataset_variant_warning}"])
+        if runtime_error:
+            lines.extend(["", f"Last load error: {runtime_error}"])
+        return "\n".join(lines)
 
     def update_info(self) -> None:
         super().update_info()
@@ -339,7 +539,20 @@ class TrainingAlignedVideoCheckApp(base.VideoCheckApp):
         if run is None:
             self.inference_hint_var.set("Inference split metadata unavailable.")
             self._set_inference_text("")
+            self._set_details_text("No run selected.")
             return
+
+        summary, summary_warning = self._summary_for_run(run)
+        self._sync_tau_for_run(run, summary)
+        cached_runtime = self.runtime_cache.get(str(run.run_dir))
+        self._set_details_text(
+            self._build_details_text(
+                run,
+                summary=summary,
+                summary_warning=summary_warning,
+                runtime=cached_runtime,
+            )
+        )
 
         source_groups, warning = load_inference_source_groups(run)
         if warning is not None:
@@ -351,6 +564,10 @@ class TrainingAlignedVideoCheckApp(base.VideoCheckApp):
                     "This usually means the selected run was created before inference split metadata was recorded."
                 )
             self._set_inference_text(details)
+            if not run.checkpoint_path.exists():
+                self.status_var.set(f"Checkpoint missing: {run.checkpoint_path}")
+            else:
+                self.status_var.set("Run selected. Inference split metadata unavailable.")
             return
 
         current_video_stem = video.stem if video is not None else None
@@ -370,6 +587,81 @@ class TrainingAlignedVideoCheckApp(base.VideoCheckApp):
                 lines.append("This video is not in the inference split for the selected run.")
 
         self._set_inference_text("\n".join(lines))
+        if not run.checkpoint_path.exists():
+            self.status_var.set(f"Checkpoint missing: {run.checkpoint_path}")
+        else:
+            self.status_var.set(
+                f"Checkpoint ready | variant={cached_runtime.dataset_variant if cached_runtime else infer_dataset_variant(run.run_dir, run.summary_path).variant} "
+                f"| tau={self.tau_var.get().strip() or f'{resolve_tau_threshold(summary):.2f}'}"
+            )
+
+    def on_play(self) -> None:
+        """Analyze/play selected run with training-aligned variant logic and tau override."""
+        run = self.run_lookup.get(self.run_var.get())
+        video = self.video_lookup.get(self.video_var.get())
+
+        if run is None:
+            base.messagebox.showerror("Missing Run", "Select a trained run first.")
+            return
+        if video is None:
+            base.messagebox.showerror("Missing Video", "Select a video first.")
+            return
+
+        try:
+            tau_override = self._parse_tau_override()
+            self.runtime_error_cache.pop(str(run.run_dir), None)
+
+            self.status_var.set("Loading model...")
+            self.root.update_idletasks()
+            runtime = self.get_runtime(run)
+            runtime.tau_threshold = tau_override
+            self._set_details_text(
+                self._build_details_text(
+                    run,
+                    summary=runtime.run_summary,
+                    summary_warning=self.summary_warning_cache.get(str(run.run_dir)),
+                    runtime=runtime,
+                )
+            )
+
+            cache_key = (str(run.run_dir), str(video), f"{tau_override:.6f}")
+            analyzed = self.analysis_cache.get(cache_key)
+            if analyzed is None:
+                self.status_var.set(
+                    f"Analyzing video with MediaPipe + model inference... (tau={tau_override:.2f})"
+                )
+                self.root.update_idletasks()
+                analyzed = base.analyze_video(runtime, video)
+                self.analysis_cache[cache_key] = analyzed
+
+            self.status_var.set(
+                f"Checkpoint loaded | strict={display_value((runtime.checkpoint_verification or {}).get('strict_load_verified'))} "
+                f"| variant={runtime.dataset_variant} | tau={tau_override:.2f}"
+            )
+            self.root.update_idletasks()
+            self.root.withdraw()
+            try:
+                base.playback(runtime, analyzed)
+            finally:
+                self.root.deiconify()
+                self.root.update()
+                self.root.lift()
+                self.root.focus_force()
+                self.status_var.set(f"Playback finished | tau={tau_override:.2f}")
+        except Exception as exc:
+            self.runtime_error_cache[str(run.run_dir)] = str(exc)
+            self.status_var.set("Error")
+            summary, summary_warning = self._summary_for_run(run)
+            cached_runtime = self.runtime_cache.get(str(run.run_dir))
+            self._set_details_text(
+                self._build_details_text(
+                    run,
+                    summary=summary,
+                    summary_warning=summary_warning,
+                    runtime=cached_runtime,
+                )
+            )
+            base.messagebox.showerror("Viewer Error", str(exc))
 
 
 def main() -> None:

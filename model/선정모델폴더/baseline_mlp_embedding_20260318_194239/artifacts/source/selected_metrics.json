@@ -1,0 +1,10 @@
+{
+  "model_id": "mlp_embedding",
+  "mode": "frame",
+  "accuracy": 0.7747,
+  "macro_f1": 0.7948,
+  "class0_fpr": 0.0884,
+  "class0_fnr": 0.5929,
+  "epochs_ran": 20,
+  "source_comparison_csv": "/home/user/projects/JamJamBeat/model/model_evaluation/pipelines/20260318_194005__baseline/comparison_results.csv"
+}

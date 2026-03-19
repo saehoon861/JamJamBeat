@@ -53,7 +53,20 @@ if str(MODEL_PIPELINES_DIR) not in sys.path:
     sys.path.insert(0, str(MODEL_PIPELINES_DIR))
 
 from evaluation_runtime import DEFAULT_CLASS_NAMES, EvaluationConfig, evaluate_predictions
-from _shared import JOINT_COLS, BONE_COLS, RAW_JOINT_COLS, SplitData, detect_angle_cols
+from _shared import (
+    BONE_COLS,
+    DEFAULT_FOCAL_GAMMA,
+    DEFAULT_LABEL_SMOOTHING,
+    DEFAULT_LOSS_TYPE,
+    DEFAULT_USE_ALPHA,
+    DEFAULT_USE_LABEL_SMOOTHING,
+    DEFAULT_USE_WEIGHTED_SAMPLER,
+    JOINT_COLS,
+    LOSS_TYPE_CHOICES,
+    RAW_JOINT_COLS,
+    SplitData,
+    detect_angle_cols,
+)
 from checkpoint_verification import (
     fingerprint_state_dict,
     instantiate_model_from_state_dict,
@@ -148,6 +161,21 @@ def _rows_by_source_group(df: pd.DataFrame, group_col: str = "__source_group") -
     return {str(group): int(count) for group, count in counts.items()}
 
 
+def _source_counts_by_role(
+    split: SplitData,
+    inference_df: pd.DataFrame | None = None,
+    group_col: str = "__source_group",
+) -> dict[str, int]:
+    counts = {
+        "train": len(_source_groups(split.train_df, group_col=group_col)),
+        "val": len(_source_groups(split.val_df, group_col=group_col)),
+        "test": len(_source_groups(split.test_df, group_col=group_col)),
+    }
+    if inference_df is not None:
+        counts["inference"] = len(_source_groups(inference_df, group_col=group_col))
+    return counts
+
+
 def build_dataset_info(
     input_roles: dict[str, Path],
     merged_df: pd.DataFrame,
@@ -157,11 +185,12 @@ def build_dataset_info(
     inference_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """run/evaluation 폴더에 같이 저장할 데이터셋 메타를 구성한다."""
+    source_counts = _source_counts_by_role(split, inference_df=inference_df)
     info = {
         "dataset_key": dataset_key,
         "normalization_family": normalization_family,
         "fixed_video_level_split": True,
-        "source_counts": {"train": 40, "val": 9, "inference": 7},
+        "source_counts": source_counts,
         "test_kind": "static_images_63d",
         "test_sequence_policy": "independent_repeat",
         "inference_sequence_policy": "sliding",
@@ -382,17 +411,29 @@ def create_weighted_sampler(labels: np.ndarray) -> WeightedRandomSampler:
 # -----------------------------------------------------------------------------
 class FocalLoss(nn.Module):
     """쉬운 샘플의 기여를 줄이고 희소 클래스에 더 집중시키는 loss."""
-    def __init__(self, alpha: torch.Tensor | None = None, gamma: float = 2.0):
+    def __init__(
+        self,
+        alpha: torch.Tensor | None = None,
+        gamma: float = DEFAULT_FOCAL_GAMMA,
+        label_smoothing: float = 0.0,
+    ):
         super().__init__()
         self.gamma = gamma
+        self.label_smoothing = label_smoothing
         if alpha is not None:
             self.register_buffer("alpha", alpha)
         else:
             self.alpha = None
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = F.cross_entropy(logits, targets, reduction="none")
-        pt = torch.exp(-ce)
+        ce = F.cross_entropy(
+            logits,
+            targets,
+            reduction="none",
+            label_smoothing=self.label_smoothing,
+        )
+        probs = F.softmax(logits, dim=1)
+        pt = probs.gather(1, targets.unsqueeze(1)).squeeze(1).clamp_min(1e-8)
         weight = (1.0 - pt) ** self.gamma
         if self.alpha is not None:
             weight = weight * self.alpha[targets]
@@ -419,6 +460,75 @@ def compute_alpha(labels: np.ndarray, num_classes: int, device: torch.device) ->
     inv = 1.0 / counts
     alpha = inv / inv.sum()
     return torch.tensor(alpha, dtype=torch.float32, device=device)
+
+
+def build_training_recipe(
+    *,
+    labels: np.ndarray,
+    num_classes: int,
+    device: torch.device,
+    loss_type: str,
+    use_weighted_sampler: bool,
+    use_alpha: bool,
+    use_label_smoothing: bool,
+    focal_gamma: float,
+) -> tuple[WeightedRandomSampler | None, bool, nn.Module, dict[str, Any]]:
+    """Train sampler / loss 조합을 현재 실험 설정에 맞게 조립한다."""
+    sampler = create_weighted_sampler(labels) if use_weighted_sampler else None
+    shuffle_train = sampler is None
+    alpha = compute_alpha(labels, num_classes=num_classes, device=device) if use_alpha else None
+    label_smoothing = DEFAULT_LABEL_SMOOTHING if use_label_smoothing else 0.0
+
+    if loss_type == "cross_entropy":
+        criterion = nn.CrossEntropyLoss(weight=alpha, label_smoothing=label_smoothing)
+    elif loss_type == "focal":
+        criterion = FocalLoss(
+            alpha=alpha,
+            gamma=focal_gamma,
+            label_smoothing=label_smoothing,
+        )
+    else:
+        raise ValueError(f"Unsupported loss_type: {loss_type}")
+
+    recipe_meta = {
+        "loss_type": loss_type,
+        "sampler_policy": "weighted_sampler" if use_weighted_sampler else "shuffle",
+        "alpha_policy": "enabled" if use_alpha else "disabled",
+        "label_smoothing_enabled": bool(use_label_smoothing),
+        "effective_label_smoothing": float(label_smoothing),
+        "effective_focal_gamma": float(focal_gamma),
+    }
+    return sampler, shuffle_train, criterion, recipe_meta
+
+
+def get_dataset_labels(dataset: Dataset, *, model_id: str, split_name: str = "train") -> np.ndarray:
+    """Dataset이 sampler/loss 계산에 필요한 1차원 label 배열 계약을 만족하는지 검증한다."""
+    dataset_class = dataset.__class__.__name__
+    raw_labels = getattr(dataset, "y", None)
+    if raw_labels is None:
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) must expose `dataset.y` "
+            "as a 1D integer label array."
+        )
+
+    labels = np.asarray(raw_labels)
+    if labels.ndim != 1:
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) has invalid `dataset.y` "
+            f"shape {labels.shape}; expected a 1D label array."
+        )
+    if len(labels) != len(dataset):
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) has len(dataset.y)={len(labels)} "
+            f"but len(dataset)={len(dataset)}."
+        )
+
+    try:
+        return labels.astype(np.int64, copy=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) must provide integer-like labels in `dataset.y`."
+        ) from exc
 
 
 def forward_batch(model: nn.Module, batch: tuple, mode: str, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -643,6 +753,7 @@ def run(args: argparse.Namespace) -> dict:
         normalization_family=normalization_family,
         inference_df=inference_df,
     )
+    source_counts = dict(dataset_info.get("source_counts") or {})
 
     # 평가 리포트와 checkpoint 저장에 같은 class ordering을 사용한다.
     class_names = args.class_names if args.class_names else DEFAULT_CLASS_NAMES
@@ -698,15 +809,24 @@ def run(args: argparse.Namespace) -> dict:
         inference_ds = None
     dataset_info["mode"] = mode
 
-    # train loader만 weighted sampler를 사용하고, val / test는 원본 분포를 유지한다.
-    train_labels = np.array(getattr(train_ds, "y"), dtype=np.int64)
-    sampler = create_weighted_sampler(train_labels)
+    train_labels = get_dataset_labels(train_ds, model_id=args.model_id, split_name="train")
+    sampler, shuffle_train, criterion, recipe_meta = build_training_recipe(
+        labels=train_labels,
+        num_classes=num_classes,
+        device=device,
+        loss_type=args.loss_type,
+        use_weighted_sampler=args.use_weighted_sampler,
+        use_alpha=args.use_alpha,
+        use_label_smoothing=args.use_label_smoothing,
+        focal_gamma=args.focal_gamma,
+    )
 
     pin_memory = device.type == "cuda"
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
         sampler=sampler,
+        shuffle=shuffle_train,
         num_workers=args.num_workers,
         pin_memory=pin_memory,
     )
@@ -736,9 +856,6 @@ def run(args: argparse.Namespace) -> dict:
     else:
         inference_loader = None
 
-    # sampler와 focal loss를 함께 써서 클래스 불균형 영향을 줄인다.
-    alpha = compute_alpha(train_labels, num_classes=num_classes, device=device)
-    criterion = FocalLoss(alpha=alpha, gamma=args.focal_gamma)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(args.epochs, 1))
 
@@ -891,7 +1008,18 @@ def run(args: argparse.Namespace) -> dict:
             "optimizer": "AdamW",
             "weight_decay": args.weight_decay,
             "patience": args.patience,
+            "loss_type": args.loss_type,
+            "use_weighted_sampler": args.use_weighted_sampler,
+            "use_alpha": args.use_alpha,
+            "use_label_smoothing": args.use_label_smoothing,
             "focal_gamma": args.focal_gamma,
+            "label_smoothing": recipe_meta["effective_label_smoothing"],
+            "sampler_policy": recipe_meta["sampler_policy"],
+            "alpha_policy": recipe_meta["alpha_policy"],
+            "tau": args.tau,
+            "vote_n": args.vote_n,
+            "debounce_k": args.debounce_k,
+            "fallback_fps": args.fallback_fps,
         },
         "split_sizes": {
             "train": int(len(split.train_df)),
@@ -905,7 +1033,7 @@ def run(args: argparse.Namespace) -> dict:
             "test": int(len(test_ds)),
         },
         "fixed_video_level_split": True,
-        "source_counts": {"train": 40, "val": 9, "inference": 7},
+        "source_counts": source_counts,
         "test_kind": "static_images_63d",
         "test_sequence_policy": "independent_repeat",
         "inference_sequence_policy": "sliding",
@@ -960,7 +1088,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=6)
-    parser.add_argument("--focal-gamma", type=float, default=2.0)
+    parser.add_argument(
+        "--loss-type",
+        type=str,
+        default=DEFAULT_LOSS_TYPE,
+        choices=LOSS_TYPE_CHOICES,
+        help=f"학습 loss 종류. 기본값: {DEFAULT_LOSS_TYPE}",
+    )
+    parser.add_argument(
+        "--use-weighted-sampler",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_WEIGHTED_SAMPLER,
+        help=f"train loader에 weighted sampler 사용 여부. 기본값: {DEFAULT_USE_WEIGHTED_SAMPLER}",
+    )
+    parser.add_argument(
+        "--use-alpha",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_ALPHA,
+        help=f"class alpha(weight) 사용 여부. 기본값: {DEFAULT_USE_ALPHA}",
+    )
+    parser.add_argument(
+        "--use-label-smoothing",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_LABEL_SMOOTHING,
+        help=(
+            "label smoothing 사용 여부. "
+            f"활성화 시 smoothing={DEFAULT_LABEL_SMOOTHING}"
+        ),
+    )
+    parser.add_argument("--focal-gamma", type=float, default=DEFAULT_FOCAL_GAMMA, help=argparse.SUPPRESS)
 
     parser.add_argument("--seq-len", type=int, default=8)
     parser.add_argument("--seq-stride", type=int, default=2)

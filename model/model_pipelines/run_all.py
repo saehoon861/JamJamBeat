@@ -13,6 +13,16 @@ from pathlib import Path
 
 import pandas as pd
 
+from _shared import (
+    DEFAULT_FOCAL_GAMMA,
+    DEFAULT_LABEL_SMOOTHING,
+    DEFAULT_LOSS_TYPE,
+    DEFAULT_USE_ALPHA,
+    DEFAULT_USE_LABEL_SMOOTHING,
+    DEFAULT_USE_WEIGHTED_SAMPLER,
+    LOSS_TYPE_CHOICES,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 KST = timezone(timedelta(hours=9))
@@ -62,6 +72,20 @@ def normalization_family_from_key(dataset_key: str) -> str:
     return "unknown"
 
 
+def count_sources_in_csv(path: Path) -> int:
+    try:
+        df = pd.read_csv(path, usecols=["source_file"])
+    except ValueError:
+        df = pd.read_csv(path)
+    if "source_file" in df.columns:
+        return int(df["source_file"].dropna().astype(str).nunique())
+    return 0
+
+
+def build_source_counts(dataset_files: dict[str, Path]) -> dict[str, int]:
+    return {role: count_sources_in_csv(path) for role, path in dataset_files.items()}
+
+
 def scan_dataset_registry(dataset_root: Path) -> dict[str, dict[str, Path]]:
     registry: dict[str, dict[str, Path]] = {}
     for train_path in sorted(dataset_root.glob("*_train.csv")):
@@ -86,6 +110,8 @@ def write_suite_manifest(
     dataset_files: dict[str, Path],
     models_requested: list[str],
     status: str,
+    source_counts: dict[str, int],
+    training_recipe: dict[str, object],
     failed_models: list[str] | None = None,
     comparison_path: Path | None = None,
 ) -> None:
@@ -101,10 +127,11 @@ def write_suite_manifest(
         "failed_models": failed_models or [],
         "comparison_results_csv": str(comparison_path) if comparison_path else None,
         "fixed_video_level_split": True,
-        "source_counts": {"train": 40, "val": 9, "inference": 7},
+        "source_counts": source_counts,
         "test_kind": "static_images_63d",
         "test_sequence_policy": "independent_repeat",
         "official_ranking_basis": "test_csv_static_images",
+        "training_recipe": training_recipe,
     }
     with (suite_dir / "comparison_suite.json").open("w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
@@ -149,6 +176,8 @@ def build_cmd(
         str(args.patience),
         "--focal-gamma",
         str(args.focal_gamma),
+        "--loss-type",
+        args.loss_type,
         "--seq-len",
         str(args.seq_len),
         "--seq-stride",
@@ -170,6 +199,9 @@ def build_cmd(
         "--fallback-fps",
         str(args.fallback_fps),
     ]
+    cmd.append("--use-weighted-sampler" if args.use_weighted_sampler else "--no-use-weighted-sampler")
+    cmd.append("--use-alpha" if args.use_alpha else "--no-use-alpha")
+    cmd.append("--use-label-smoothing" if args.use_label_smoothing else "--no-use-label-smoothing")
     if args.class_names:
         cmd += ["--class-names", *args.class_names]
     return cmd
@@ -245,12 +277,23 @@ def run_dataset_suite(
     suite_dir = build_suite_dir(base_output_root, dataset_key)
     suite_dir.mkdir(parents=True, exist_ok=True)
     write_latest_suite(base_output_root, suite_dir)
+    source_counts = build_source_counts(dataset_files)
+    training_recipe = {
+        "loss_type": args.loss_type,
+        "use_weighted_sampler": args.use_weighted_sampler,
+        "use_alpha": args.use_alpha,
+        "use_label_smoothing": args.use_label_smoothing,
+        "focal_gamma": args.focal_gamma,
+        "label_smoothing_default": DEFAULT_LABEL_SMOOTHING,
+    }
     write_suite_manifest(
         suite_dir=suite_dir,
         dataset_key=dataset_key,
         dataset_files=dataset_files,
         models_requested=models_to_run,
         status="running",
+        source_counts=source_counts,
+        training_recipe=training_recipe,
     )
 
     print(f"\n{'=' * 72}")
@@ -295,6 +338,8 @@ def run_dataset_suite(
         dataset_files=dataset_files,
         models_requested=models_to_run,
         status=status,
+        source_counts=source_counts,
+        training_recipe=training_recipe,
         failed_models=failed,
         comparison_path=comparison_path if results else None,
     )
@@ -318,6 +363,14 @@ def run_all(args: argparse.Namespace) -> None:
         registry = {key: registry[key] for key in args.dataset_key}
 
     models_to_run = args.models or (ALL_MODELS if args.include_image_models else CORE_MODELS)
+    invalid_models = sorted(set(models_to_run) - set(ALL_MODELS))
+    if invalid_models:
+        raise SystemExit(
+            "Unknown model id(s): "
+            + ", ".join(invalid_models)
+            + "\nAvailable models: "
+            + ", ".join(ALL_MODELS)
+        )
 
     print(f"\n{'=' * 72}")
     print("JamJamBeat explicit dataset batch runner")
@@ -354,7 +407,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=6)
-    parser.add_argument("--focal-gamma", type=float, default=2.0)
+    parser.add_argument(
+        "--loss-type",
+        type=str,
+        default=DEFAULT_LOSS_TYPE,
+        choices=LOSS_TYPE_CHOICES,
+        help=f"학습 loss 종류. 기본값: {DEFAULT_LOSS_TYPE}",
+    )
+    parser.add_argument(
+        "--use-weighted-sampler",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_WEIGHTED_SAMPLER,
+        help=f"train loader에 weighted sampler 사용 여부. 기본값: {DEFAULT_USE_WEIGHTED_SAMPLER}",
+    )
+    parser.add_argument(
+        "--use-alpha",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_ALPHA,
+        help=f"class alpha(weight) 사용 여부. 기본값: {DEFAULT_USE_ALPHA}",
+    )
+    parser.add_argument(
+        "--use-label-smoothing",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_LABEL_SMOOTHING,
+        help=(
+            "label smoothing 사용 여부. "
+            f"활성화 시 smoothing={DEFAULT_LABEL_SMOOTHING}"
+        ),
+    )
+    parser.add_argument("--focal-gamma", type=float, default=DEFAULT_FOCAL_GAMMA, help=argparse.SUPPRESS)
 
     parser.add_argument("--seq-len", type=int, default=8)
     parser.add_argument("--seq-stride", type=int, default=2)

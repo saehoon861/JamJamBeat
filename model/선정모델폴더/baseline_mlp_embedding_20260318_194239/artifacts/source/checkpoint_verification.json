@@ -1,0 +1,19 @@
+{
+  "checkpoint_path": "/home/user/projects/JamJamBeat/model/model_evaluation/pipelines/20260318_194005__baseline/mlp_embedding/20260318_194239/model.pt",
+  "model_id": "mlp_embedding",
+  "mode": "frame",
+  "seq_len": 8,
+  "image_size": 96,
+  "checkpoint_fingerprint": "70c66caa7344fd69c0a13b5ba4f2654996579f398a70dbb826dc4e6e3c637e59",
+  "key_count": 10,
+  "tensor_count": 10,
+  "total_numel": 33671,
+  "total_bytes": 134684,
+  "saved_matches_best_state": true,
+  "stored_matches_saved_state": true,
+  "stored_checkpoint_fingerprint": "70c66caa7344fd69c0a13b5ba4f2654996579f398a70dbb826dc4e6e3c637e59",
+  "strict": true,
+  "strict_load_verified": true,
+  "missing_keys": [],
+  "unexpected_keys": []
+}

@@ -17,6 +17,14 @@ except ImportError:
 # ──────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────
+LOSS_TYPE_CHOICES = ("cross_entropy", "focal")
+DEFAULT_LOSS_TYPE = "focal"
+DEFAULT_USE_WEIGHTED_SAMPLER = True
+DEFAULT_USE_ALPHA = True
+DEFAULT_USE_LABEL_SMOOTHING = False
+DEFAULT_FOCAL_GAMMA = 2.0
+DEFAULT_LABEL_SMOOTHING = 0.1
+
 HAND_CONNECTIONS = [
     (0, 1), (0, 5), (5, 9), (9, 13), (13, 17), (0, 17),
     (1, 2), (2, 3), (3, 4),

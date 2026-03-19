@@ -25,6 +25,7 @@ class VariantResolution:
 
     variant: str
     source: str
+    dataset_key: str | None = None
     warning: str | None = None
 
 
@@ -59,33 +60,93 @@ def _single_variant(candidates: list[str]) -> str | None:
     return None
 
 
+def _summary_dict(summary_path: Path) -> dict | None:
+    loaded = json.loads(summary_path.read_text(encoding="utf-8"))
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _summary_value(summary: dict, *keys: str) -> object | None:
+    current: object = summary
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _path_variants(raw_values: object) -> list[str]:
+    if not isinstance(raw_values, list):
+        return []
+    candidates: list[str] = []
+    for raw_path in raw_values:
+        csv_name = Path(str(raw_path)).name
+        variant = _variant_from_name(csv_name)
+        if variant is not None:
+            candidates.append(variant)
+    return candidates
+
+
 def infer_dataset_variant(run_dir: Path, summary_path: Path | None) -> VariantResolution:
     """Infer which landmark-coordinate variant a run was trained on."""
-    summary_candidates: list[str] = []
-
     if summary_path is not None and summary_path.exists():
         try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            for raw_path in summary.get("input_csv_paths", []):
-                csv_name = Path(str(raw_path)).name
-                variant = _variant_from_name(csv_name)
-                if variant is not None:
-                    summary_candidates.append(variant)
+            summary = _summary_dict(summary_path)
         except Exception as exc:
             return VariantResolution(
                 variant=BASELINE_VARIANT,
                 source="summary-error",
+                dataset_key=None,
                 warning=f"failed to parse run_summary.json: {exc}",
             )
+        if summary is not None:
+            dataset_info_key = _summary_value(summary, "dataset_info", "dataset_key")
+            top_level_key = _summary_value(summary, "dataset_key")
+            dataset_key_candidates = [
+                candidate
+                for candidate in (
+                    _variant_from_name(str(dataset_info_key or "")),
+                    _variant_from_name(str(top_level_key or "")),
+                )
+                if candidate is not None
+            ]
+            dataset_key = str(dataset_info_key or top_level_key or "").strip() or None
 
-    variant = _single_variant(summary_candidates)
-    if variant is not None:
-        return VariantResolution(variant=variant, source="input_csv_paths")
+            variant = _single_variant(dataset_key_candidates)
+            if variant is not None:
+                source = "dataset_info.dataset_key" if dataset_info_key else "dataset_key"
+                return VariantResolution(variant=variant, source=source, dataset_key=dataset_key)
+
+            path_sources = [
+                ("dataset_info.input_csv_paths", _summary_value(summary, "dataset_info", "input_csv_paths")),
+                ("inputs", _summary_value(summary, "inputs")),
+                ("input_csv_paths", _summary_value(summary, "input_csv_paths")),
+            ]
+            for source_name, raw_values in path_sources:
+                path_candidates = _path_variants(raw_values)
+                variant = _single_variant(path_candidates)
+                if variant is not None:
+                    return VariantResolution(
+                        variant=variant,
+                        source=source_name,
+                        dataset_key=dataset_key,
+                    )
+
+            summary_warning = None
+            if dataset_key_candidates or any(_path_variants(values) for _, values in path_sources):
+                summary_warning = (
+                    "could not resolve a single dataset variant from run_summary metadata; "
+                    "falling back to run/suite name"
+                )
+        else:
+            dataset_key = None
+            summary_warning = "run_summary.json did not contain a JSON object; falling back to run/suite name"
+    else:
+        dataset_key = None
+        summary_warning = None
 
     name_candidates: list[str] = []
     for candidate in (
         run_dir.name,
-        run_dir.parent.name,
         run_dir.parent.parent.name if run_dir.parent.parent != run_dir.parent else "",
     ):
         variant = _variant_from_name(candidate)
@@ -94,21 +155,19 @@ def infer_dataset_variant(run_dir: Path, summary_path: Path | None) -> VariantRe
 
     variant = _single_variant(name_candidates)
     if variant is not None:
-        warning = None
-        if summary_candidates:
-            warning = (
-                "mixed or ambiguous input_csv_paths variants detected; "
-                f"falling back to run/suite name -> {variant}"
-            )
-        return VariantResolution(variant=variant, source="run-name", warning=warning)
-
-    warning = None
-    if summary_candidates:
-        warning = (
-            "could not resolve a single dataset variant from input_csv_paths or run name; "
-            "falling back to baseline"
+        return VariantResolution(
+            variant=variant,
+            source="run-name",
+            dataset_key=dataset_key,
+            warning=summary_warning,
         )
-    return VariantResolution(variant=BASELINE_VARIANT, source="fallback", warning=warning)
+
+    return VariantResolution(
+        variant=BASELINE_VARIANT,
+        source="fallback",
+        dataset_key=dataset_key,
+        warning=summary_warning,
+    )
 
 
 def apply_dataset_variant(raw_landmarks: np.ndarray, dataset_variant: str) -> np.ndarray:

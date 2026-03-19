@@ -124,13 +124,28 @@ uv run python model_pipelines/run_pipeline.py \
 | `--batch-size` | `32` | 배치 크기 (이미지 모델 CPU OOM 방지 기준) |
 | `--lr` | `1e-3` | 학습률 |
 | `--patience` | `6` | Early stopping 기준 에폭 수 |
+| `--loss-type` | `focal` | `cross_entropy` 또는 `focal` |
+| `--use-weighted-sampler` | `true` | train loader에 weighted sampler 사용 여부 |
+| `--use-alpha` | `true` | class alpha(weight) 사용 여부 |
+| `--use-label-smoothing` | `false` | label smoothing 사용 여부 |
 | `--device` | `cpu` | `cpu` / `cuda` / `auto` |
 | `--seed` | `42` | 재현성 시드 |
 
 ```bash
 # 예: 에폭 50, 배치 64로 실행
 uv run python model_pipelines/run_all.py --epochs 50 --batch-size 64
+
+# 예: plain cross entropy 실험
+uv run python model_pipelines/run_all.py \
+  --loss-type cross_entropy \
+  --no-use-weighted-sampler \
+  --no-use-alpha \
+  --no-use-label-smoothing
 ```
+
+손실함수 관련 기본 수치는 `model_pipelines/_shared.py` 상단 상수에서 관리한다.
+- `DEFAULT_FOCAL_GAMMA`
+- `DEFAULT_LABEL_SMOOTHING`
 
 ---
 

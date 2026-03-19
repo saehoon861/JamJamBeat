@@ -242,6 +242,18 @@ uv run python model_pipelines/run_pipeline.py \
     --test-csv data_fusion/학습데이터셋/baseline_test.csv \
     --inference-csv data_fusion/학습데이터셋/baseline_inference.csv
 
+# 손실함수 조합 예시: CE + smoothing, sampler/alpha 비활성
+uv run python model_pipelines/run_pipeline.py \
+    --model-id mlp_baseline \
+    --train-csv data_fusion/학습데이터셋/baseline_train.csv \
+    --val-csv data_fusion/학습데이터셋/baseline_val.csv \
+    --test-csv data_fusion/학습데이터셋/baseline_test.csv \
+    --inference-csv data_fusion/학습데이터셋/baseline_inference.csv \
+    --loss-type cross_entropy \
+    --no-use-weighted-sampler \
+    --no-use-alpha \
+    --use-label-smoothing
+
 # 결과 확인
 cat model/model_evaluation/pipelines/latest_suite.json
 cat model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
@@ -256,6 +268,10 @@ cat model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
 
 **FNR이 높은 경우 (neutral을 제스처로 오판)**
 → `tau` 값 올리거나 `debounce_k` 높이기.
+
+**손실함수 실험을 바꾸고 싶은 경우**
+→ `--loss-type`, `--use-weighted-sampler`, `--use-alpha`, `--use-label-smoothing` 조합을 바꿔 비교한다.  
+기본 수치는 `model/model_pipelines/_shared.py`의 `DEFAULT_FOCAL_GAMMA`, `DEFAULT_LABEL_SMOOTHING` 상수를 수정하면 된다.
 
 **두 모델의 macro_f1이 비슷한 경우**
 → `fp_per_min`과 `latency_p50_ms`로 실서비스 적합성 비교.

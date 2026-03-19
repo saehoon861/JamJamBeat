@@ -14,6 +14,7 @@ env/
 
 # raw data
 data/labeled_data/*.csv
+data/landmark_data/*.csv
 data/raw_data/*.mp4
 data/total_data/*.csv
 data/testset/testdata/*.csv

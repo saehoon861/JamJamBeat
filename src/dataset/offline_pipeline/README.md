@@ -78,7 +78,8 @@ with wandb.init(project="JamJamBeat", job_type="train") as run:
 ### 2단계: config 설정
 * `SCENARIOS` 딕셔너리를 수정하여 원하는 전처리/정규화 조합만 선택하거나 새 시나리오를 추가할 수 있습니다.
 * `PROCESSED_DIR`를 수정해 전처리 작업 후 저장될 경로를 지정할 수 있습니다.
-* `MARGIN_FRAME` 변수를 수정해 다운샘플링 시 제스처 전이 구간(마진) 프레임 배제 마진을 조절할 수 있습니다.
+* `MARGIN_FRAMES_DROP` 변수를 수정해 다운샘플링 시 제스처 전환점 주변 제거할 프레임 수(frame_idx 기준)를 조절할 수 있습니다.
+* `MARGIN_FRAMES_COLLECT` 변수를 수정해 제스처 전환점 주변에서 Class 0으로 수집할 최대 프레임 범위(frame_idx 기준)를 조절할 수 있습니다.
 
 ### 3단계: 파이프라인 실행
 프로젝트 루트(`JamJamBeat/`) 경로에서 아래 명령어를 실행합니다.

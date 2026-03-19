@@ -8,6 +8,8 @@ TOTAL_DIR = DATA_DIR / "total_data"
 PROCESSED_DIR = DATA_DIR / "processed_scenarios"
 
 # --- 파라미터 ---
+MARGIN_FRAMES_DROP = 2 
+MARGIN_FRAMES_COLLECT = 10
 MARGIN_FRAMES = 5  # 전이 구간 근방의 위험군 프레임 배제 마진
 
 # --- MediaPipe 손 랜드마크 구조 매핑 ---

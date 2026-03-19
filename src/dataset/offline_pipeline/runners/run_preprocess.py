@@ -62,7 +62,8 @@ def main():
             df_processed = apply_downsampling(
                 df=df_raw, 
                 target_ratio=ratio, 
-                margin_frames=config.MARGIN_FRAMES
+                margin_drop=config.MARGIN_FRAMES_DROP,
+                margin_collect=config.MARGIN_FRAMES_COLLECT,
             )
             print(f"[{scenario_name}] Downsampling ({ratio}): {len(df_raw)} -> {len(df_processed)} rows")
             

@@ -2,15 +2,16 @@
 
 // localStorage 에 저장할 때 사용할 이름표(key)입니다.
 export const SOUND_MAPPING_KEY = "jamjam.soundMapping.v1";
-export const CUSTOM_SOUNDS_KEY = "jamjam.customSounds.v1";
 export const GESTURE_MAPPING_KEY = "jamjam.gestureMapping.v1";
 
 // 사용자가 별도 설정을 안 했을 때의 기본 사운드 연결표입니다.
 export const DEFAULT_SOUND_MAPPING = {
   drum: "drum",
-  xylophone: "xylophone",
-  tambourine: "tambourine",
-  a: "pinky"
+  xylophone: "piano",
+  tambourine: "guitar",
+  a: "flute",
+  cat: "violin",
+  penguin: "bell"
 };
 
 export const DEFAULT_GESTURE_MAPPING = {
@@ -18,8 +19,8 @@ export const DEFAULT_GESTURE_MAPPING = {
   OpenPalm: "xylophone",
   V: "tambourine",
   Pinky: "a",
-  Animal: "a",
-  KHeart: "a"
+  Animal: "cat",
+  KHeart: "penguin"
 };
 
 const LEGACY_INSTRUMENT_IDS = {
@@ -28,17 +29,10 @@ const LEGACY_INSTRUMENT_IDS = {
 
 // 저장된 사운드 매핑을 읽어오되, 이상한 값은 버리고 안전한 기본값과 섞어줍니다.
 export function loadCustomSounds() {
-  try {
-    const raw = localStorage.getItem(CUSTOM_SOUNDS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return {};
 }
 
-export function loadSoundMapping(soundProfiles, customSounds = loadCustomSounds()) {
+export function loadSoundMapping(soundProfiles) {
   try {
     const raw = localStorage.getItem(SOUND_MAPPING_KEY);
     if (!raw) return { ...DEFAULT_SOUND_MAPPING };
@@ -50,11 +44,6 @@ export function loadSoundMapping(soundProfiles, customSounds = loadCustomSounds(
       const legacyId = LEGACY_INSTRUMENT_IDS[instrumentId];
       const candidate = String(parsed?.[instrumentId] || parsed?.[legacyId] || parsed?.a2 || parsed?.owl || "");
       if (candidate in soundProfiles) {
-        merged[instrumentId] = candidate;
-        return;
-      }
-      const customKey = `custom_${instrumentId}`;
-      if (candidate === customKey && customSounds?.[instrumentId]?.data) {
         merged[instrumentId] = candidate;
       }
     });
@@ -74,7 +63,7 @@ export function loadGestureMapping() {
     const merged = { ...DEFAULT_GESTURE_MAPPING };
     Object.keys(merged).forEach((gestureLabel) => {
       const candidate = String(parsed?.[gestureLabel] || "");
-      if (candidate === "drum" || candidate === "xylophone" || candidate === "tambourine" || candidate === "a") {
+      if (candidate === "drum" || candidate === "xylophone" || candidate === "tambourine" || candidate === "a" || candidate === "cat" || candidate === "penguin") {
         merged[gestureLabel] = candidate;
       }
     });

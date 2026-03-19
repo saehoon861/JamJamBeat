@@ -1,8 +1,9 @@
 // [theme.js] 우리 숲으로 들어가는 '입구' 역할을 하는 파일입니다.
 // 여기서 어떤 모드로 플레이할지 고를 수 있습니다. 마우스 클릭 대신 손을 올려서 선택합니다.
 
-import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import * as Renderer from "./renderer.js";
+import { getConfiguredHandLandmarkerTaskPath, getConfiguredMediaPipeWasmRoot } from "./env_config.js";
 
 const video = document.getElementById("webcam");
 const canvas = document.getElementById("handCanvas");
@@ -248,12 +249,15 @@ function predict() {
 }
 
 async function initMediaPipe() {
-  const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  const modelAssetPath = "/hand_landmarker.task";
+  console.info("[Theme MediaPipe] init:start");
+  const vision = await FilesetResolver.forVisionTasks(getConfiguredMediaPipeWasmRoot());
+  console.info("[Theme MediaPipe] init:vision tasks loaded");
+  const modelAssetPath = getConfiguredHandLandmarkerTaskPath();
   const preferredDelegate = parsePreferredDelegate();
   const fallbackDelegate = preferredDelegate === "GPU" ? "CPU" : "GPU";
 
   try {
+    console.info("[Theme MediaPipe] init:create primary", { delegate: preferredDelegate, modelAssetPath });
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath,
@@ -262,8 +266,10 @@ async function initMediaPipe() {
       runningMode: "VIDEO",
       numHands: 1
     });
+    console.info("[Theme MediaPipe] init:create primary success");
   } catch (delegateError) {
     console.warn(`${preferredDelegate} delegate failed, fallback to ${fallbackDelegate}.`, delegateError);
+    console.info("[Theme MediaPipe] init:create fallback", { delegate: fallbackDelegate, modelAssetPath });
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath,
@@ -272,6 +278,7 @@ async function initMediaPipe() {
       runningMode: "VIDEO",
       numHands: 1
     });
+    console.info("[Theme MediaPipe] init:create fallback success");
   }
 }
 

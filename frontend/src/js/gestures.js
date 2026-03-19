@@ -106,22 +106,33 @@ function getStableState(handKey = "default") {
   return stableStateByHand.get(handKey);
 }
 
-const GESTURE_MODE = (() => {
+function resolveInitialGestureMode() {
   const params = new URLSearchParams(window.location.search); // 주소창의 옵션 값을 읽습니다.
   const queryMode = params.get("gestureMode"); // URL에 적힌 gestureMode 값을 가져옵니다.
   const globalMode = typeof window.__JAMJAM_GESTURE_MODE === "string"
     ? window.__JAMJAM_GESTURE_MODE // 전역 설정값이 있으면 그것도 후보로 씁니다.
     : null; // 없으면 비워둡니다.
-  const raw = (queryMode || globalMode || "hybrid").trim().toLowerCase(); // 없으면 기본값 hybrid를 사용합니다.
+  const raw = (queryMode || globalMode || "model").trim().toLowerCase(); // 없으면 기본값 model을 사용합니다 (ONNX 모델만 사용).
 
   if (raw === "rules" || raw === "model" || raw === "hybrid") {
     return raw; // 허용된 값이면 그대로 사용합니다.
   }
-  return "hybrid"; // 이상한 값이 들어오면 안전하게 혼합 모드로 돌아갑니다.
-})();
+  return "model"; // 이상한 값이 들어오면 model 모드로 돌아갑니다.
+}
+
+let gestureMode = resolveInitialGestureMode();
 
 export function getGestureMode() {
-  return GESTURE_MODE; // 현재 사용 중인 손동작 판정 방식을 알려줍니다.
+  return gestureMode; // 현재 사용 중인 손동작 판정 방식을 알려줍니다.
+}
+
+export function setGestureMode(nextMode) {
+  const raw = String(nextMode || "").trim().toLowerCase();
+  if (raw === "rules" || raw === "model" || raw === "hybrid") {
+    gestureMode = raw;
+    return gestureMode;
+  }
+  return gestureMode;
 }
 
 function normalizeModelLabel(rawLabel) {
@@ -225,7 +236,9 @@ export function resolveGesture(landmarks, now, sessionStarted, handKey = "defaul
   }
 
   const stableState = getStableState(handKey);
-  const modelPrediction = getModelPrediction(landmarks, now, handKey); // AI 서버에 물어본 최근 답변을 가져옵니다.
+  const modelPrediction = gestureMode === "rules"
+    ? null
+    : getModelPrediction(landmarks, now, handKey); // 규칙 전용 모드에서는 모델 통신 자체를 하지 않습니다.
   const modelResult = mapModelToResult(modelPrediction, stableState) || {
     label: "None", // AI 답변이 없으면 일단 인식 안 됨으로 둡니다.
     confidence: 0, // 신뢰도도 0입니다.
@@ -233,13 +246,13 @@ export function resolveGesture(landmarks, now, sessionStarted, handKey = "defaul
   };
 
   let rawResult; // 안정화 전에 사용할 임시 결과를 담을 변수입니다.
-  if (GESTURE_MODE === "model") {
+  if (gestureMode === "model") {
     rawResult = modelResult; // 모델만 쓰는 모드면 AI 답변을 그대로 씁니다.
   } else {
     const rules = detectGesture(landmarks, now, sessionStarted); // 손가락 위치만 보고 규칙 판정을 실행합니다.
     const ruleResult = mapRulesToResult(rules); // 그 결과를 공통 형식으로 바꿉니다.
 
-    if (GESTURE_MODE === "rules") {
+    if (gestureMode === "rules") {
       rawResult = ruleResult; // 규칙만 쓰는 모드면 이 값을 그대로 씁니다.
     } else {
       rawResult = ruleResult.label === "Fist"

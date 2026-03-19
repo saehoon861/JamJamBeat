@@ -1,7 +1,6 @@
-import lottie from "lottie-web";
-
 // [renderer.js] 손 위치를 따라다니는 나비를 그리는 렌더러입니다.
 // 제스처에 따라 나비의 색상, 날개짓 속도, 특수 효과가 달라집니다.
+// Note: Lottie 기능은 비활성화됨 (CSS 애니메이션 사용)
 
 const smoothedHandLandmarksByKey = new Map();
 const smoothedRenderScaleByKey = new Map();
@@ -69,48 +68,14 @@ export function getSmoothedLandmarks(rawLandmarks, smoothingKey = "default") {
     return nextSmoothed;
 }
 
-// ─── Lottie Setup ────────────────────────────────────────
-const lottieContainer = document.createElement('div');
-lottieContainer.style.width = '200px';
-lottieContainer.style.height = '200px';
-let lottieActive = false;
-let currentAnimationSpeed = null;
+// ─── Lottie Setup (비활성화됨) ────────────────────────────────────────
+// Lottie 애니메이션은 CSS 기반 애니메이션으로 대체되었습니다.
+// const lottieContainer = document.createElement('div');
+// const anim = lottie.loadAnimation({...});
+// 위 코드는 더 이상 사용하지 않습니다.
 
-const anim = lottie.loadAnimation({
-    container: lottieContainer,
-    renderer: 'canvas',
-    loop: true,
-    autoplay: false,
-    path: '/assets/butterfly.json',
-    rendererSettings: {
-        clearCanvas: true
-    }
-});
-
-let cachedLottieCanvas = null;
-anim.addEventListener('DOMLoaded', () => {
-    cachedLottieCanvas = lottieContainer.querySelector('canvas');
-    if (RENDER_MODE !== "fancy") {
-        anim.goToAndStop(0, true);
-    }
-});
-
-// 틴트 처리를 위한 임시 캔버스
-const tintCanvas = document.createElement('canvas');
-tintCanvas.width = 200;
-tintCanvas.height = 200;
-const tintCtx = tintCanvas.getContext('2d');
-
-// ─── 제스처별 나비 스타일 정의 ───────────────────────────
-const GESTURE_CONFIG = {
-    Fist: { speed: 0.5, tint: "rgba(255, 165, 0, 0.4)", glow: "rgba(255, 165, 0, 0.6)" }, // orange
-    OpenPalm: { speed: 1.0, tint: "rgba(0, 128, 0, 0.4)", glow: "rgba(0, 128, 0, 0.6)" }, // green
-    V: { speed: 2.0, tint: "rgba(255, 255, 0, 0.4)", glow: "rgba(255, 255, 0, 0.6)" }, // yellow
-    Pinky: { speed: 3.0, tint: "rgba(0, 255, 0, 0.4)", glow: "rgba(0, 255, 0, 0.6)" }, // lime
-    Animal: { speed: 2.5, tint: "rgba(128, 0, 128, 0.4)", glow: "rgba(128, 0, 128, 0.6)" }, // purple
-    KHeart: { speed: 1.5, tint: "rgba(255, 192, 203, 0.4)", glow: "rgba(255, 192, 203, 0.6)" }, // pink
-    None: { speed: 0.8, tint: null, glow: "rgba(200, 182, 255, 0.4)" }
-};
+// ─── 제스처별 나비 스타일 정의 (drawHand 비활성화로 현재 미사용) ───────────────────────────
+// const GESTURE_CONFIG = { ... };  // drawHand 재활성화 시 복원
 
 // ─── drawHand: 메인 렌더링 진입점 ───────────────────────
 export function drawHand(ctx, landmarks, canvas, t, smoothingKey = "default", currentGesture = "None") {
@@ -122,18 +87,9 @@ export function clearHandSmoothing(smoothingKey) {
     smoothedRenderScaleByKey.delete(smoothingKey);
 }
 
-export function setHandAnimationActive(active) {
-    if (RENDER_MODE !== "fancy") return;
-    if (active && !lottieActive) {
-        anim.play();
-        lottieActive = true;
-        return;
-    }
-
-    if (!active && lottieActive) {
-        anim.pause();
-        lottieActive = false;
-    }
+export function setHandAnimationActive(_active) {
+    // Lottie 비활성화됨 - CSS 애니메이션 사용 중
+    // fancy 모드 진입 시 lottieActive/anim 미정의 오류 방지
 }
 
 export function createFloatingNote(container) {

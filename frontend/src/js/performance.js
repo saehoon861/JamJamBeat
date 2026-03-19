@@ -2,14 +2,14 @@
 // 카메라에서 손을 읽고, 규칙 기반 판정과 모델 기반 판정을 비교해서 화면에 보여줍니다.
 
 // MediaPipe 손 인식 도구를 가져옵니다.
-import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 // 손을 예쁘게 그리는 렌더러 모듈입니다.
 import * as Renderer from "./renderer.js";
 // 최종 제스처 결론을 내리는 함수입니다.
 import { resolveGesture } from "./gestures.js";
 // 모델의 원본 예측 결과와 통신 상태를 읽어옵니다.
 import { getModelPrediction, getModelInferenceStatus } from "./model_inference.js";
-import { getConfiguredModelEndpoint } from "./env_config.js";
+import { getConfiguredHandLandmarkerTaskPath, getConfiguredMediaPipeWasmRoot, getConfiguredModelEndpoint } from "./env_config.js";
 
 // 성능 로그를 localStorage 에 저장할 때 쓸 이름입니다.
 const PERF_LOG_KEY = "jamjam.perf.logs.v1";
@@ -222,24 +222,31 @@ function updateNetworkPanel() {
 
 // 성능 페이지에서도 MediaPipe 손 인식 엔진을 준비합니다.
 async function initMediaPipe() {
-  const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  const modelAssetPath = "/hand_landmarker.task";
+  console.info("[Perf MediaPipe] init:start");
+  const vision = await FilesetResolver.forVisionTasks(getConfiguredMediaPipeWasmRoot());
+  console.info("[Perf MediaPipe] init:vision tasks loaded");
+  const modelAssetPath = getConfiguredHandLandmarkerTaskPath();
 
   const preferred = parseDelegate();
   const fallback = preferred === "GPU" ? "CPU" : "GPU";
 
   try {
+    console.info("[Perf MediaPipe] init:create primary", { delegate: preferred, modelAssetPath });
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath, delegate: preferred },
       runningMode: "VIDEO",
       numHands: 2
     });
-  } catch {
+    console.info("[Perf MediaPipe] init:create primary success");
+  } catch (error) {
+    console.warn("[Perf MediaPipe] init:create primary failed", error);
+    console.info("[Perf MediaPipe] init:create fallback", { delegate: fallback, modelAssetPath });
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath, delegate: fallback },
       runningMode: "VIDEO",
       numHands: 2
     });
+    console.info("[Perf MediaPipe] init:create fallback success");
   }
 }
 

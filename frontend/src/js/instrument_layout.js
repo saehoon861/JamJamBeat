@@ -1,14 +1,34 @@
 // [instrument_layout.js] 악기 배치를 읽고 저장하고, 관리자 드래그 편집까지 맡는 모듈입니다.
 
-const INSTRUMENT_IDS = ["a", "drum", "xylophone", "tambourine"];
+const INSTRUMENT_IDS = ["a", "drum", "xylophone", "tambourine", "cat", "penguin"];
 
 // 저장된 배치가 없을 때 사용할 기본 위치값입니다.
 export const DEFAULT_LAYOUT = {
-  drum: { x: 10, y: 14 },
-  xylophone: { x: 38, y: 22 },
-  tambourine: { x: 68, y: 18 },
-  a: { x: 52, y: 10 }
+  drum: { x: 30, y: 4 },
+  xylophone: { x: 43, y: 5 },
+  tambourine: { x: 56, y: 4 },
+  a: { x: 39, y: 0 },
+  cat: { x: 69, y: 0 },
+  penguin: { x: 12, y: 2 }
 };
+
+function getElementSize(el) {
+  if (!el) return { width: 0, height: 0 };
+  const rect = el.getBoundingClientRect();
+  return {
+    width: Math.max(el.offsetWidth || 0, rect.width || 0),
+    height: Math.max(el.offsetHeight || 0, rect.height || 0)
+  };
+}
+
+function getLayoutBounds(el) {
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const { width, height } = getElementSize(el);
+  const maxX = Math.min(90, Math.max(0, 100 - (width / viewportWidth) * 100));
+  const maxY = Math.min(80, Math.max(0, 100 - (height / viewportHeight) * 100));
+  return { maxX, maxY };
+}
 
 function normalizeLegacyLayout(layout) {
   if (!layout || typeof layout !== "object") return null;
@@ -54,10 +74,12 @@ export function applyInstrumentLayout(layout, instrumentElements, clamp) {
     const x = Number(pos.x);
     const y = Number(pos.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const { maxX, maxY } = getLayoutBounds(target);
 
-    target.style.left = `${clamp(x, 0, 90)}vw`;
-    target.style.bottom = `${clamp(y, 0, 80)}vh`;
+    target.style.left = `${clamp(x, 0, maxX)}vw`;
+    target.style.bottom = `${clamp(y, 0, maxY)}vh`;
     target.style.right = "auto";
+    target.style.top = "auto";
     appliedTargets.add(target);
   });
 }
@@ -74,9 +96,10 @@ export function readCurrentInstrumentLayout(instrumentElements, clamp) {
     if (!el) return;
     if (seenTargets.has(el)) return;
     const rect = el.getBoundingClientRect();
+    const { maxX, maxY } = getLayoutBounds(el);
     layout[id] = {
-      x: clamp((rect.left / width) * 100, 0, 90),
-      y: clamp(((height - rect.bottom) / height) * 100, 0, 80)
+      x: clamp((rect.left / width) * 100, 0, maxX),
+      y: clamp(((height - rect.bottom) / height) * 100, 0, maxY)
     };
     seenTargets.add(el);
   });
@@ -120,17 +143,34 @@ export function setupAdminDragMode({
 
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
-    const rect = dragState.el.getBoundingClientRect();
 
-    // 클릭했던 위치 차이를 유지한 채 자연스럽게 따라오게 계산합니다.
-    const leftPx = clamp(event.clientX - dragState.offsetX, 0, width - rect.width);
-    const topPx = clamp(event.clientY - dragState.offsetY, 0, height - rect.height);
-    const x = clamp((leftPx / width) * 100, 0, 90);
-    const y = clamp(((height - (topPx + rect.height)) / height) * 100, 0, 80);
+    // 마우스 위치에서 오프셋을 빼서 요소의 왼쪽 상단 위치를 계산합니다.
+    const leftPx = event.clientX - dragState.offsetX;
+    const topPx = event.clientY - dragState.offsetY;
 
-    dragState.el.style.left = `${x}vw`;
-    dragState.el.style.bottom = `${y}vh`;
+    // 화면 밖으로 나가지 않도록 제한합니다.
+    const clampedLeftPx = clamp(leftPx, 0, width - dragState.elWidth);
+    const clampedTopPx = clamp(topPx, 0, height - dragState.elHeight);
+
+    // bottom CSS 속성은 "요소의 하단"이 "화면 하단"으로부터 떨어진 거리
+    // 요소 하단 위치 = 요소 상단 + 요소 높이
+    const elementBottomPx = clampedTopPx + dragState.elHeight;
+    // 화면 하단에서 요소 하단까지의 거리
+    const bottomPx = height - elementBottomPx;
+
+    // 픽셀을 vw, vh로 변환합니다.
+    const x = (clampedLeftPx / width) * 100;
+    const y = (bottomPx / height) * 100;
+
+    // 최종적으로 범위 제한을 적용합니다.
+    const finalX = clamp(x, 0, dragState.maxX);
+    const finalY = clamp(y, 0, dragState.maxY);
+
+    dragState.el.style.left = `${finalX}vw`;
+    dragState.el.style.bottom = `${finalY}vh`;
     dragState.el.style.right = "auto";
+    dragState.el.style.top = "auto";
+    dragState.el.style.transform = "none";
   };
 
   const onPointerUp = () => {
@@ -152,7 +192,10 @@ export function setupAdminDragMode({
         id,
         el,
         offsetX: event.clientX - rect.left,
-        offsetY: event.clientY - rect.top
+        offsetY: event.clientY - rect.top,
+        elWidth: rect.width,
+        elHeight: rect.height,
+        ...getLayoutBounds(el)
       };
       el.classList.add("is-dragging");
       if (el.setPointerCapture) {

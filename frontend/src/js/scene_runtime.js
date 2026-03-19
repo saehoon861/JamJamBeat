@@ -7,29 +7,25 @@ export function setupSeamlessBackgroundLoop({ crossfadeSec, cleanupDelayMs = 520
   if (!videoA || !videoB) return;
 
   const videos = [videoA, videoB];
-  // 두 영상을 같은 조건으로 준비해두고, 하나는 현재 재생용, 하나는 대기용으로 씁니다.
   videos.forEach((video, idx) => {
     video.muted = true;
     video.playsInline = true;
     video.loop = false;
-    video.playbackRate = 1;
+    video.playbackRate = 0.4;
     video.classList.toggle("is-active", idx === 0);
     video.classList.toggle("is-preload", idx !== 0);
   });
 
   let active = videoA;
   let standby = videoB;
-  let rafId = 0;
   let isSwitching = false;
   let switchSeq = 0;
 
-  // 브라우저 자동재생 정책 때문에 play() 가 실패할 수 있으므로 안전하게 감쌉니다.
   const safePlay = (video) => {
     const p = video.play();
     if (p && typeof p.catch === "function") p.catch(() => {});
   };
 
-  // active 영상이 끝나기 직전이면 standby 영상을 앞으로 끌어와 부드럽게 교체합니다.
   const swap = () => {
     if (isSwitching) return;
     isSwitching = true;
@@ -59,38 +55,37 @@ export function setupSeamlessBackgroundLoop({ crossfadeSec, cleanupDelayMs = 520
     }, cleanupDelayMs);
   };
 
-  // requestAnimationFrame 으로 매 프레임마다 "영상 끝날 때가 됐는지" 감시합니다.
-  const tick = () => {
-    if (!active.paused) {
-      const duration = Number(active.duration);
-      if (Number.isFinite(duration) && duration > 0) {
-        const remaining = duration - active.currentTime;
-        if (Number.isFinite(remaining) && remaining <= crossfadeSec) {
-          swap();
-        }
-      }
+  const maybeSwapNearEnd = () => {
+    if (isSwitching || active.paused) return;
+    const duration = Number(active.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const remaining = duration - active.currentTime;
+    if (Number.isFinite(remaining) && remaining <= crossfadeSec) {
+      swap();
     }
-    rafId = requestAnimationFrame(tick);
   };
 
-  // 배경 루프를 실제로 시작하는 함수입니다.
   const start = () => {
     safePlay(active);
-    cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(tick);
+    // timeupdate 기반으로 종료 시점만 체크해서 requestAnimationFrame 상시 루프 제거
+    maybeSwapNearEnd();
   };
+
+  videos.forEach((video) => {
+    video.addEventListener("timeupdate", () => {
+      if (video === active) maybeSwapNearEnd();
+    });
+  });
 
   if (active.readyState >= 2) start();
   else active.addEventListener("canplay", start, { once: true });
 
   document.addEventListener("visibilitychange", () => {
-    // 탭이 안 보일 때는 재생과 감시를 잠시 멈춰 자원을 아낍니다.
     if (document.hidden) {
       switchSeq += 1;
       isSwitching = false;
       active.pause();
       standby.pause();
-      cancelAnimationFrame(rafId);
       return;
     }
     start();
@@ -110,7 +105,9 @@ export function createFeverController({
   triggerWindowMs,
   triggerHits,
   durationMs,
-  getIdleStatusText
+  getIdleStatusText,
+  onFeverStart,
+  onFeverEnd
 }) {
   // feverUntil 은 피버가 언제 끝나는지 기록하는 시간값입니다.
   let feverUntil = 0;
@@ -123,6 +120,11 @@ export function createFeverController({
     scene.dataset.fever = "on";
     pulseMessage.textContent = "피버 타임! 숲이 깨어났어요!";
     statusText.textContent = "피버 타임 진행 중 - 더 많이 터치해봐!";
+
+    // 피버 시작 콜백 실행
+    if (typeof onFeverStart === "function") {
+      onFeverStart();
+    }
   }
 
   // 최근 몇 초 안에 사용자가 얼마나 많이 상호작용했는지 세서 피버 조건을 검사합니다.
@@ -143,6 +145,11 @@ export function createFeverController({
       pulseMessage.textContent = "손을 잼잼! 해서 숲을 깨워봐!";
       if (sessionStarted) {
         statusText.textContent = getIdleStatusText();
+      }
+
+      // 피버 종료 콜백 실행
+      if (typeof onFeverEnd === "function") {
+        onFeverEnd();
       }
     }
   }

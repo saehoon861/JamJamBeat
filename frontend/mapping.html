@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JamJam Beat - 매칭 설정</title>
-  <link rel="icon" href="/assets/objects/squirrel-effect.png" type="image/png" />
+  <link rel="icon" href="/assets/로고.png" type="image/png" />
   <link rel="stylesheet" href="./src/styles/main.css?v=6" />
 </head>
 
@@ -25,7 +25,7 @@
     <section class="mapping-shell">
       <div class="mapping-header">
         <h1>소리/손동작/오브젝트 매칭</h1>
-        <p>한 페이지에서 오브젝트 소리와 손동작 연결을 같이 설정합니다.</p>
+        <p>매칭 페이지에서는 내장 Web Audio 사운드만 오브젝트 소리로 연결합니다.</p>
       </div>
 
       <div class="mapping-grid">
@@ -34,42 +34,56 @@
 
           <div class="sound-mapping-group">
             <div class="sound-mapping-header">
-              <img src="/assets/objects/hedgehog-drum.png" alt="고슴도치 드럼" class="object-thumbnail" />
+              <video src="/assets/objects/고슴도치1.mov" class="object-thumbnail" autoplay muted loop playsinline preload="auto" aria-hidden="true"></video>
               <label>고슴도치 드럼</label>
             </div>
             <select id="sound-drum"></select>
-            <input type="file" id="upload-drum" accept="audio/mp3,audio/mpeg" />
             <button id="test-drum" class="test-sound-btn" type="button">테스트</button>
           </div>
 
           <div class="sound-mapping-group">
             <div class="sound-mapping-header">
-              <img src="/assets/objects/lily-melody.png" alt="노래하는 백합" class="object-thumbnail" />
-              <label>노래하는 백합</label>
+              <video src="/assets/objects/고슴도치1.mov" class="object-thumbnail" autoplay muted loop playsinline preload="auto" aria-hidden="true"></video>
+              <label>아기 사슴</label>
             </div>
             <select id="sound-xylophone"></select>
-            <input type="file" id="upload-xylophone" accept="audio/mp3,audio/mpeg" />
             <button id="test-xylophone" class="test-sound-btn" type="button">테스트</button>
           </div>
 
           <div class="sound-mapping-group">
             <div class="sound-mapping-header">
-              <img src="/assets/objects/clover-chime.png" alt="행운 클로버" class="object-thumbnail" />
-              <label>행운 클로버</label>
+              <video src="/assets/objects/고슴도치1.mov" class="object-thumbnail" autoplay muted loop playsinline preload="auto" aria-hidden="true"></video>
+              <label>아기 토끼</label>
             </div>
             <select id="sound-tambourine"></select>
-            <input type="file" id="upload-tambourine" accept="audio/mp3,audio/mpeg" />
             <button id="test-tambourine" class="test-sound-btn" type="button">테스트</button>
           </div>
 
           <div class="sound-mapping-group">
             <div class="sound-mapping-header">
-              <img src="/assets/objects/a.png" alt="a 오브젝트" class="object-thumbnail" />
-              <label>a 오브젝트</label>
+              <video src="/assets/objects/고슴도치2.mov" class="object-thumbnail" autoplay muted loop playsinline preload="auto" aria-hidden="true"></video>
+              <label>다람쥐</label>
             </div>
             <select id="sound-a"></select>
-            <input type="file" id="upload-a" accept="audio/mp3,audio/mpeg" />
             <button id="test-a" class="test-sound-btn" type="button">테스트</button>
+          </div>
+
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/assets/objects/고양이.png" class="object-thumbnail" alt="" aria-hidden="true" />
+              <label>고양이</label>
+            </div>
+            <select id="sound-cat"></select>
+            <button id="test-cat" class="test-sound-btn" type="button">테스트</button>
+          </div>
+
+          <div class="sound-mapping-group">
+            <div class="sound-mapping-header">
+              <img src="/assets/objects/팽귄.png" class="object-thumbnail" alt="" aria-hidden="true" />
+              <label>팽귄</label>
+            </div>
+            <select id="sound-penguin"></select>
+            <button id="test-penguin" class="test-sound-btn" type="button">테스트</button>
           </div>
         </section>
 

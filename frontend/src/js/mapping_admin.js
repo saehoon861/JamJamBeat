@@ -1,6 +1,6 @@
+import * as Audio from "./audio.js";
 import {
   SOUND_MAPPING_KEY,
-  CUSTOM_SOUNDS_KEY,
   GESTURE_MAPPING_KEY,
   DEFAULT_SOUND_MAPPING,
   DEFAULT_GESTURE_MAPPING
@@ -8,40 +8,38 @@ import {
 
 const soundOptions = [
   { value: "drum", label: "드럼" },
-  { value: "xylophone", label: "피리" },
-  { value: "tambourine", label: "피아노" },
-  { value: "pinky", label: "심벌즈" },
-  { value: "heart", label: "고양이/랜덤" },
-  { value: "animal", label: "애니멀" },
-  { value: "fist", label: "타격" }
+  { value: "piano", label: "피아노" },
+  { value: "guitar", label: "기타" },
+  { value: "flute", label: "플룻" },
+  { value: "violin", label: "바이올린" },
+  { value: "bell", label: "벨" }
 ];
 
 const objectOptions = [
   { value: "drum", label: "고슴도치 드럼" },
-  { value: "xylophone", label: "노래하는 백합" },
-  { value: "tambourine", label: "행운 클로버" },
-  { value: "a", label: "a 오브젝트" }
+  { value: "xylophone", label: "아기 사슴" },
+  { value: "tambourine", label: "아기 토끼" },
+  { value: "a", label: "다람쥐" },
+  { value: "cat", label: "고양이" },
+  { value: "penguin", label: "팽귄" }
 ];
 
 const soundInputs = {
   drum: document.getElementById("sound-drum"),
   xylophone: document.getElementById("sound-xylophone"),
   tambourine: document.getElementById("sound-tambourine"),
-  a: document.getElementById("sound-a")
-};
-
-const uploadInputs = {
-  drum: document.getElementById("upload-drum"),
-  xylophone: document.getElementById("upload-xylophone"),
-  tambourine: document.getElementById("upload-tambourine"),
-  a: document.getElementById("upload-a")
+  a: document.getElementById("sound-a"),
+  cat: document.getElementById("sound-cat"),
+  penguin: document.getElementById("sound-penguin")
 };
 
 const testButtons = {
   drum: document.getElementById("test-drum"),
   xylophone: document.getElementById("test-xylophone"),
   tambourine: document.getElementById("test-tambourine"),
-  a: document.getElementById("test-a")
+  a: document.getElementById("test-a"),
+  cat: document.getElementById("test-cat"),
+  penguin: document.getElementById("test-penguin")
 };
 
 const gestureInputs = {
@@ -55,8 +53,6 @@ const gestureInputs = {
 
 const saveButton = document.getElementById("saveMappingButton");
 const resetButton = document.getElementById("resetMappingButton");
-
-let audioContext = null;
 const buttonGroupBySelect = new Map();
 
 function createButtonGroup(selectEl) {
@@ -115,7 +111,7 @@ function loadSoundMapping() {
   if (!parsed) return merged;
   Object.keys(merged).forEach((id) => {
     const candidate = String(parsed?.[id] || parsed?.fern || parsed?.owl || "");
-    if (soundOptions.some((option) => option.value === candidate) || candidate === `custom_${id}`) {
+    if (soundOptions.some((option) => option.value === candidate)) {
       merged[id] = candidate;
     }
   });
@@ -133,10 +129,6 @@ function loadGestureMapping() {
     }
   });
   return merged;
-}
-
-function loadCustomSounds() {
-  return loadStoredJson(CUSTOM_SOUNDS_KEY) || {};
 }
 
 function populateSoundOptions() {
@@ -187,7 +179,7 @@ function collectSoundMapping() {
   const result = { ...DEFAULT_SOUND_MAPPING };
   Object.entries(soundInputs).forEach(([id, selectEl]) => {
     const value = String(selectEl?.value || "");
-    if (soundOptions.some((option) => option.value === value) || value === `custom_${id}`) {
+    if (soundOptions.some((option) => option.value === value)) {
       result[id] = value;
     }
   });
@@ -205,105 +197,27 @@ function collectGestureMapping() {
   return result;
 }
 
-function updateSoundOptions(objectId, fileName) {
-  const selectEl = soundInputs[objectId];
-  if (!selectEl) return;
-
-  const customValue = `custom_${objectId}`;
-  const existingOption = selectEl.querySelector(`option[value="${customValue}"]`);
-  if (existingOption) {
-    existingOption.remove();
-  }
-
-  const option = document.createElement("option");
-  option.value = customValue;
-  option.textContent = `커스텀: ${fileName}`;
-  selectEl.appendChild(option);
-  selectEl.value = customValue;
-  renderButtonsForSelect(selectEl);
-  updateButtonGroupState(selectEl);
-}
-
-function handleFileUpload(objectId, file) {
-  if (!file || !file.type.match(/audio\/(mp3|mpeg)/)) {
-    alert("MP3 파일만 업로드 가능합니다.");
-    return;
-  }
-
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const customSounds = loadCustomSounds();
-    customSounds[objectId] = {
-      name: file.name,
-      data: event.target.result,
-      timestamp: Date.now()
-    };
-    localStorage.setItem(CUSTOM_SOUNDS_KEY, JSON.stringify(customSounds));
-    updateSoundOptions(objectId, file.name);
-  };
-  reader.readAsDataURL(file);
-}
-
-function getAudioContext() {
-  if (!audioContext) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  return audioContext;
-}
-
 async function testPlaySound(objectId) {
   const selectedSound = soundInputs[objectId]?.value;
   if (!selectedSound) return;
 
-  let audioUrl = null;
-  if (selectedSound.startsWith("custom_")) {
-    const customSounds = loadCustomSounds();
-    audioUrl = customSounds[objectId]?.data || null;
-  } else {
-    const soundUrlMap = {
-      drum: "/assets/sounds/드럼.mp3",
-      xylophone: "/assets/sounds/피리.mp3",
-      tambourine: "/assets/sounds/피아노.mp3",
-      pinky: "/assets/sounds/심벌즈.mp3",
-      heart: "/assets/sounds/고양이.mp3",
-      animal: "/assets/sounds/고양이.mp3",
-      fist: "/assets/sounds/드럼.mp3"
-    };
-    audioUrl = soundUrlMap[selectedSound] || soundUrlMap.drum;
-  }
-
-  if (!audioUrl) return;
-
   try {
-    const response = await fetch(audioUrl);
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await getAudioContext().decodeAudioData(arrayBuffer);
-    const source = getAudioContext().createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(getAudioContext().destination);
-    source.start(0);
+    await Audio.unlockAudioContext();
+    const testers = {
+      drum: () => Audio.playKids_Drum(),
+      piano: () => Audio.playKids_Piano(),
+      guitar: () => Audio.playKids_Guitar(),
+      flute: () => Audio.playKids_Flute(),
+      violin: () => Audio.playKids_Violin(),
+      bell: () => Audio.playKids_Bell()
+    };
+    testers[selectedSound]?.();
   } catch {
     alert("소리 테스트에 실패했습니다.");
   }
 }
 
-function hydrateCustomSoundOptions() {
-  const customSounds = loadCustomSounds();
-  Object.entries(customSounds).forEach(([objectId, soundData]) => {
-    if (!soundData?.name) return;
-    updateSoundOptions(objectId, soundData.name);
-  });
-}
-
 function bind() {
-  Object.entries(uploadInputs).forEach(([id, input]) => {
-    if (!input) return;
-    input.addEventListener("change", (event) => {
-      const file = event.target.files?.[0];
-      if (file) handleFileUpload(id, file);
-    });
-  });
-
   Object.entries(testButtons).forEach(([id, button]) => {
     if (!button) return;
     button.addEventListener("click", () => {
@@ -323,7 +237,6 @@ function bind() {
   resetButton.addEventListener("click", () => {
     localStorage.removeItem(SOUND_MAPPING_KEY);
     localStorage.removeItem(GESTURE_MAPPING_KEY);
-    localStorage.removeItem(CUSTOM_SOUNDS_KEY);
     populateSoundOptions();
     populateGestureOptions();
     syncSoundInputs(DEFAULT_SOUND_MAPPING);
@@ -334,7 +247,6 @@ function bind() {
 function init() {
   populateSoundOptions();
   populateGestureOptions();
-  hydrateCustomSoundOptions();
   syncSoundInputs(loadSoundMapping());
   syncGestureInputs(loadGestureMapping());
   bind();

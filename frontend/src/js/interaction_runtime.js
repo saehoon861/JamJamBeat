@@ -19,7 +19,9 @@ export function createInteractionRuntime({
   spawnBurst,
   setGestureObjectVariant,
   getGestureInstrumentId,
+  getGesturePlayback,
   getInstrumentPlayback,
+  playGestureSound,
   playInstrumentSound,
   instruments,
   interactionMode,
@@ -36,6 +38,7 @@ export function createInteractionRuntime({
   const activeGestureHands = new Set();
   const rectCache = new WeakMap();
   let lastStatusText = "";
+  const HELD_ONESHOT_INTERVAL_MS = Math.max(gestureCooldownMs, 220);
 
   function setStatusText(nextText) {
     if (typeof nextText !== "string") return;
@@ -48,15 +51,45 @@ export function createInteractionRuntime({
     if (!handStateByKey.has(handKey)) {
       handStateByKey.set(handKey, {
         lastGestureLabel: "None",
-        currentMelodyType: null
+        currentMelodyType: null,
+        lastGestureTriggerAt: 0
       });
     }
     return handStateByKey.get(handKey);
   }
 
+  function markInstrumentTriggered(instrument, now, sourceKey = "default") {
+    if (!instrument) return;
+    if (!(instrument.lastHitAtBySource instanceof Map)) {
+      instrument.lastHitAtBySource = new Map();
+    }
+    instrument.lastHitAtBySource.set(sourceKey, now);
+    instrument.lastHitAt = now;
+  }
+
+  function canTriggerInstrument(instrument, now, sourceKey = "default") {
+    if (!instrument) return false;
+    if (!(instrument.lastHitAtBySource instanceof Map)) {
+      instrument.lastHitAtBySource = new Map();
+    }
+    const lastHitAt = instrument.lastHitAtBySource.get(sourceKey) || 0;
+    if (now - lastHitAt < instrument.cooldownMs) return false;
+    markInstrumentTriggered(instrument, now, sourceKey);
+    return true;
+  }
+
   // 현재 (마지막으로 인식된) 제스처 라벨을 반환합니다.
   function getCurrentGesture(handKey = "default") {
     return getHandState(handKey).lastGestureLabel;
+  }
+
+  function hasRecognizedGesture() {
+    for (const handState of handStateByKey.values()) {
+      if (handState.lastGestureLabel && handState.lastGestureLabel !== "None") {
+        return true;
+      }
+    }
+    return false;
   }
 
   function getGestureStartConfidenceFloor(label) {
@@ -79,7 +112,7 @@ export function createInteractionRuntime({
     if (!element) return false;
     const now = performance.now();
     const cached = rectCache.get(element);
-    const rect = (!cached || now - cached.ts > 120)
+    const rect = (!cached || now - cached.ts > 500)
       ? (() => {
         const nextRect = element.getBoundingClientRect();
         rectCache.set(element, { rect: nextRect, ts: now });
@@ -133,14 +166,14 @@ export function createInteractionRuntime({
   function triggerInstrumentById(id, now, meta = {}) {
     const instrument = instruments.find((item) => item.id === id);
     if (!instrument || !instrument.el) return;
-    if (now - instrument.lastHitAt < instrument.cooldownMs) return;
-
-    instrument.lastHitAt = now;
+    const sourceKey = meta.handKey || meta.gestureSource || "default";
+    if (!canTriggerInstrument(instrument, now, sourceKey)) return;
     audioApi.setPlaybackContext({
       instrumentId: instrument.id,
       gestureLabel: meta.gestureLabel || null,
       gestureSource: meta.gestureSource || null,
-      triggerTs: now
+      triggerTs: now,
+      handKey: meta.handKey || null
     });
     const playedTag = instrument.onHit();
     activateInstrumentElement(instrument);
@@ -148,13 +181,33 @@ export function createInteractionRuntime({
     setStatusText(`${instrument.name} - ${playedTag || instrument.soundTag}`);
   }
 
+  function triggerGesturePlaybackById(id, playback, now, meta = {}) {
+    const instrument = instruments.find((item) => item.id === id);
+    if (!instrument || !instrument.el || !playback) return;
+    const sourceKey = meta.handKey || meta.gestureSource || "default";
+    if (!canTriggerInstrument(instrument, now, sourceKey)) return;
+    audioApi.setPlaybackContext({
+      instrumentId: instrument.id,
+      gestureLabel: meta.gestureLabel || null,
+      gestureSource: meta.gestureSource || null,
+      triggerTs: now,
+      handKey: meta.handKey || null
+    });
+    if (typeof playGestureSound === "function") {
+      playGestureSound(meta.gestureLabel || null, instrument.id, undefined);
+    } else {
+      playInstrumentSound(instrument.id);
+    }
+    activateInstrumentElement(instrument);
+    registerHit(now);
+    setStatusText(`${instrument.name} - ${playback.soundTag || instrument.soundTag}`);
+  }
+
   // 소리는 내지 않고 화면 효과만 잠깐 보여주고 싶을 때 쓰는 함수입니다.
   function triggerVisualOnlyById(id, now, burstType = "pinky") {
     const instrument = instruments.find((item) => item.id === id);
     if (!instrument || !instrument.el) return false;
-    if (now - instrument.lastHitAt < instrument.cooldownMs) return false;
-
-    instrument.lastHitAt = now;
+    if (!canTriggerInstrument(instrument, now, "visual")) return false;
     spawnBurst(burstType, instrument.el);
     activateInstrumentElement(instrument);
     registerHit(now);
@@ -167,6 +220,7 @@ export function createInteractionRuntime({
     if (!isSessionStarted()) return;
     if (isAdminEditMode()) return;
     if (interactionMode === "gesture") return;
+    if (!hasRecognizedGesture()) return;
     const triggeredElements = new Set();
 
     for (const instrument of instruments) {
@@ -174,13 +228,13 @@ export function createInteractionRuntime({
       const hit = points.some((point) => isInsideElement(point, instrument.el));
       if (!hit) continue;
       if (now - instrument.lastHitAt < instrument.cooldownMs) continue;
-
-      instrument.lastHitAt = now;
+      markInstrumentTriggered(instrument, now, "touch");
       audioApi.setPlaybackContext({
         instrumentId: instrument.id,
         gestureLabel: "Touch",
         gestureSource: "touch",
-        triggerTs: now
+        triggerTs: now,
+        handKey: "touch"
       });
       const playedTag = instrument.onHit();
       activateInstrumentElement(instrument);
@@ -205,7 +259,7 @@ export function createInteractionRuntime({
   function runGestureReaction(label, now, handKey = "default") {
     const instrumentId = getGestureInstrumentId?.(label);
     if (!instrumentId) return;
-    const playback = getInstrumentPlayback(instrumentId);
+    const playback = getGesturePlayback?.(label, instrumentId) || getInstrumentPlayback(instrumentId);
     if (!playback) return;
     const handState = getHandState(handKey);
 
@@ -214,7 +268,8 @@ export function createInteractionRuntime({
         audioApi.stopMelodySequence(handState.currentMelodyType);
         handState.currentMelodyType = null;
       }
-      triggerInstrumentById(instrumentId, now, { gestureLabel: label, gestureSource: "model" });
+      triggerGesturePlaybackById(instrumentId, playback, now, { gestureLabel: label, gestureSource: "model", handKey });
+      handState.lastGestureTriggerAt = now;
       return;
     }
 
@@ -231,9 +286,14 @@ export function createInteractionRuntime({
           instrumentId,
           gestureLabel: `${label}:${handKey}`,
           gestureSource: `model:${handKey}`,
-          triggerTs: performance.now()
+          triggerTs: performance.now(),
+          handKey
         });
-        playInstrumentSound(instrumentId, note);
+        if (typeof playGestureSound === "function") {
+          playGestureSound(label, instrumentId, note);
+        } else {
+          playInstrumentSound(instrumentId, note);
+        }
       });
       handState.currentMelodyType = melodyType;
     }
@@ -270,6 +330,7 @@ export function createInteractionRuntime({
       if (handState.currentMelodyType) {
         audioApi.stopMelodySequence(handState.currentMelodyType);
         handState.currentMelodyType = null;
+        handState.lastGestureTriggerAt = 0;
         setStatusText(`${handKey} 손 멜로디 중지됨`);
       }
 
@@ -286,14 +347,16 @@ export function createInteractionRuntime({
 
     // 제스처가 바뀌었을 때만 새 멜로디 시작
     if (gesture.label !== handState.lastGestureLabel) {
+      if (gesture.label === "Fist") activeGestureHands.add(handKey);
+      else activeGestureHands.delete(handKey);
+      setGestureObjectVariant?.(activeGestureHands.size > 0);
+
       if (!audioApi.getAudioState().running) {
         setStatusText("소리가 꺼져 있어요. '소리 켜기' 버튼을 눌러주세요.");
         handState.lastGestureLabel = gesture.label;
         return;
       }
 
-      activeGestureHands.add(handKey);
-      setGestureObjectVariant?.(true);
       runGestureReaction(gesture.label, now, handKey);
       showSquirrelEffect();
 
@@ -303,25 +366,19 @@ export function createInteractionRuntime({
       const displayName = getGestureDisplayName(gesture.label);
       setStatusText(`${handKey}손 ${displayName} 인식! (신뢰도: ${(gesture.confidence * 100).toFixed(0)}%)`);
     } else {
-      activeGestureHands.add(handKey);
-      setGestureObjectVariant?.(true);
-      // 같은 제스처가 유지되는 경우 - 신뢰도도 함께 표시
-      const holdStart = gestureHoldStartByKey.get(handKey) || now;
-      const holdDuration = now - holdStart;
-
-      // 10초(10000ms) 이상 유지하면 피버 타임을 터뜨립니다.
-      if (holdDuration >= 10000 && !feverController.isFever()) {
-        feverController.triggerFever(now);
-        gestureHoldStartByKey.set(handKey, now); // 터뜨린 후엔 초기화
+      if (gesture.label === "Fist") activeGestureHands.add(handKey);
+      else activeGestureHands.delete(handKey);
+      setGestureObjectVariant?.(activeGestureHands.size > 0);
+      const instrumentId = getGestureInstrumentId?.(gesture.label);
+      const playback = getGesturePlayback?.(gesture.label, instrumentId) || getInstrumentPlayback(instrumentId);
+      if (playback?.playbackMode === "oneshot" && audioApi.getAudioState().running) {
+        if (now - handState.lastGestureTriggerAt >= HELD_ONESHOT_INTERVAL_MS) {
+          runGestureReaction(gesture.label, now, handKey);
+          handState.lastGestureTriggerAt = now;
+        }
       }
-
       const displayName = getGestureDisplayName(gesture.label);
-      const remainFever = Math.max(0, 10 - Math.floor(holdDuration / 1000));
-      if (remainFever > 0 && !feverController.isFever()) {
-        setStatusText(`${handKey}손 ${displayName} 유지 중... 🎵 피버까지 ${remainFever}초!`);
-      } else {
-        setStatusText(`${handKey}손 ${displayName} 유지 중... 🎵 (${(gesture.confidence * 100).toFixed(0)}%)`);
-      }
+      setStatusText(`${handKey}손 ${displayName} 유지 중... 🎵 (${(gesture.confidence * 100).toFixed(0)}%)`);
     }
   }
 
@@ -334,6 +391,7 @@ export function createInteractionRuntime({
 
   // 모든 터치 포인트(손가락 끝)에 대해 비눗방울 충돌을 검사합니다.
   function processBubbleCollisions(points) {
+    if (!hasRecognizedGesture()) return;
     if (checkBubbleCollision(points)) {
       // 터질 때 효과음 (성능을 위해 짧고 가볍게)
       Audio.playKids_Triangle(68 + Math.random() * 8);
@@ -353,6 +411,7 @@ export function createInteractionRuntime({
         handState.currentMelodyType = null;
       }
       handState.lastGestureLabel = "None";
+      handState.lastGestureTriggerAt = 0;
       gestureHoldStartByKey.delete(handKey);
     });
 

@@ -80,10 +80,6 @@ from checkpoint_verification import (
 # -----------------------------------------------------------------------------
 MODEL_CHOICES = [
     "mlp_original",
-    "mlp_baseline",
-    "mlp_baseline_seq8",
-    "mlp_sequence_joint",
-    "mlp_temporal_pooling",
     "mlp_sequence_delta",
     "mlp_embedding",
     "cnn1d_tcn",

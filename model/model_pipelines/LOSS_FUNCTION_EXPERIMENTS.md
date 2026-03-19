@@ -18,9 +18,9 @@
 * **목적:** 데이터 불균형은 Sampler로만 잡고(이중 가중치 제거), Focal Loss 대신 표준 CE를 쓰며, Smoothing으로 과도한 확신을 꺾습니다.
 * **명령어:**
 ```bash
-uv run python model/model_pipelines/run_all.py \
+uv run python model_pipelines/run_all.py \
   --dataset-key baseline \
-  --models mlp_baseline \
+  --models mlp_embedding \
   --device auto \
   --loss-type cross_entropy \
   --no-use-alpha \
@@ -39,9 +39,9 @@ uv run python model/model_pipelines/run_all.py \
 
 **실행 명령 (1단계 설정이 최적이라고 가정했을 때):**
 ```bash
-uv run python model/model_pipelines/run_all.py \
+uv run python model_pipelines/run_all.py \
   --dataset-key baseline pos_only scale_only pos_scale \
-  --models mlp_baseline \
+  --models mlp_embedding \
   --device auto \
   --loss-type cross_entropy \
   --no-use-alpha \
@@ -57,9 +57,9 @@ uv run python model/model_pipelines/run_all.py \
 
 **실행 명령 (예시):**
 ```bash
-uv run python model/model_pipelines/run_all.py \
+uv run python model_pipelines/run_all.py \
   --dataset-key pos_scale \
-  --models mlp_baseline mlp_embedding mlp_temporal_pooling mlp_baseline_seq8 \
+  --models mlp_original mlp_embedding mlp_sequence_delta cnn1d_tcn transformer_embedding \
   --device auto \
   --loss-type cross_entropy \
   --no-use-alpha \

@@ -31,10 +31,6 @@ DATASET_ROOT = PROJECT_ROOT / "model" / "data_fusion" / "학습데이터셋"
 
 CORE_MODELS = [
     "mlp_original",
-    "mlp_baseline",
-    "mlp_baseline_seq8",
-    "mlp_sequence_joint",
-    "mlp_temporal_pooling",
     "mlp_sequence_delta",
     "mlp_embedding",
     "cnn1d_tcn",
@@ -391,12 +387,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         nargs="*",
         default=None,
-        help=f"실행할 모델 지정. 기본값: core 9개 ({CORE_MODELS})",
+        help=f"실행할 모델 지정. 기본값: active core {len(CORE_MODELS)}개 ({CORE_MODELS})",
     )
     parser.add_argument(
         "--include-image-models",
         action="store_true",
-        help="기본 core 9개에 image 모델 3종을 추가한다.",
+        help=f"기본 active core {len(CORE_MODELS)}개에 image 모델 3종을 추가한다.",
     )
     parser.add_argument("--dataset-root", default=str(DATASET_ROOT))
     parser.add_argument("--dataset-key", nargs="*", default=None, help="특정 dataset key만 실행")

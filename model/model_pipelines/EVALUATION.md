@@ -223,20 +223,20 @@ latency_p50  < 200ms  → 온디바이스 배포 가능
 cd /home/user/projects/JamJamBeat/model
 uv run python data_fusion/build_training_datasets.py
 
-# 기본 core 9개 모델 순차 실행
+# 기본 active core 5개 모델 순차 실행
 uv run python model_pipelines/run_all.py
 
-# image 모델 3종까지 포함한 12개 실행
+# image 모델 3종까지 포함한 8개 실행
 uv run python model_pipelines/run_all.py --include-image-models
 
 # 일부 모델만 실행
 uv run python model_pipelines/run_all.py \
     --dataset-key baseline_ds_1_none \
-    --models mlp_baseline mlp_embedding transformer_embedding
+    --models mlp_sequence_delta mlp_embedding transformer_embedding
 
 # run_pipeline.py 단독 실행
 uv run python model_pipelines/run_pipeline.py \
-    --model-id mlp_baseline \
+    --model-id mlp_embedding \
     --train-csv data_fusion/학습데이터셋/baseline_train.csv \
     --val-csv data_fusion/학습데이터셋/baseline_val.csv \
     --test-csv data_fusion/학습데이터셋/baseline_test.csv \
@@ -244,7 +244,7 @@ uv run python model_pipelines/run_pipeline.py \
 
 # 손실함수 조합 예시: CE + smoothing, sampler/alpha 비활성
 uv run python model_pipelines/run_pipeline.py \
-    --model-id mlp_baseline \
+    --model-id mlp_embedding \
     --train-csv data_fusion/학습데이터셋/baseline_train.csv \
     --val-csv data_fusion/학습데이터셋/baseline_val.csv \
     --test-csv data_fusion/학습데이터셋/baseline_test.csv \

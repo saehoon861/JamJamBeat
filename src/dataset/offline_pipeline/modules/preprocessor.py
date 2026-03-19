@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from typing import Optional
 
 # 서브그룹 샘플링 비율 상수
 RATIO_HARDNEG = 0.4
@@ -16,42 +17,112 @@ def _remove_null_landmarks(df: pd.DataFrame) -> pd.DataFrame:
     return df[~null_mask].copy()
 
 
-def _classify_group_c(
-    df_original: pd.DataFrame,
-    group_c: pd.DataFrame,
-    margin_drop: int,
+def _collect_padding_for_gesture_segments(
+    df_original   : pd.DataFrame,
+    group_c       : pd.DataFrame,
+    pad_size      : int,
+    target_trans  : int,
+) -> pd.DataFrame:
+    """
+    시퀀스 모드 전용.
+    gesture 1~6 구간의 시작/끝 frame_idx 기준으로
+    앞뒤 pad_size개의 gesture==0 프레임을 수집.
+
+    총량이 target_trans 초과하면 pad_size를 1씩 줄여서 재시도.
+    gesture!=0 프레임은 skip (이미 group_a로 분리됨).
+    """
+    group_c_index = set(group_c.index)
+
+    def _collect_with_pad(pad: int) -> set:
+        collect_indices = set()
+
+        for _, file_group in df_original.groupby('source_file'):
+            file_group = file_group.sort_values('frame_idx')
+            frame_idxs = file_group['frame_idx'].values
+            gestures   = file_group['gesture'].values
+            orig_index = file_group.index.values
+
+            fidx_to_dfidx   = dict(zip(frame_idxs, orig_index))
+            fidx_to_gesture = dict(zip(frame_idxs, gestures))
+
+            # gesture 1~6 구간의 시작/끝 frame_idx 탐지
+            in_gesture = False
+            seg_start  = None
+
+            for i, (fidx, gest) in enumerate(zip(frame_idxs, gestures)):
+                if not in_gesture and gest != 0:
+                    # 구간 시작: 앞쪽 pad 수집
+                    in_gesture = True
+                    seg_start  = fidx
+                    for prev_fidx in frame_idxs:
+                        if seg_start - pad <= prev_fidx < seg_start:
+                            dfidx = fidx_to_dfidx[prev_fidx]
+                            # gesture==0이고 group_c에 속한 프레임만
+                            if fidx_to_gesture[prev_fidx] == 0 and dfidx in group_c_index:
+                                collect_indices.add(dfidx)
+
+                elif in_gesture and gest == 0:
+                    # 구간 끝: 뒤쪽 pad 수집
+                    in_gesture = False
+                    seg_end    = frame_idxs[i - 1]  # 마지막 gesture!=0 frame_idx
+                    for next_fidx in frame_idxs:
+                        if seg_end < next_fidx <= seg_end + pad:
+                            dfidx = fidx_to_dfidx[next_fidx]
+                            if fidx_to_gesture[next_fidx] == 0 and dfidx in group_c_index:
+                                collect_indices.add(dfidx)
+
+            # 파일이 gesture!=0으로 끝나는 경우 뒤쪽 pad 처리
+            if in_gesture:
+                seg_end = frame_idxs[-1]
+                for next_fidx in frame_idxs:
+                    if seg_end < next_fidx <= seg_end + pad:
+                        dfidx = fidx_to_dfidx[next_fidx]
+                        if fidx_to_gesture[next_fidx] == 0 and dfidx in group_c_index:
+                            collect_indices.add(dfidx)
+
+        return collect_indices
+
+    # pad_size부터 1씩 줄이며 target_trans 이하가 될 때까지 재시도
+    for pad in range(pad_size, 0, -1):
+        collect_indices = _collect_with_pad(pad)
+        if len(collect_indices) <= target_trans:
+            break
+
+    return group_c[group_c.index.isin(collect_indices)]
+
+
+def _classify_group_c_frame_mode(
+    df_original   : pd.DataFrame,
+    group_c       : pd.DataFrame,
+    margin_drop   : int,
     margin_collect: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    원본 df에서 전환점을 frame_idx 기준으로 탐지하고,
-    group_c의 각 프레임을 C_transition / drop / C_safe 로 분류.
-
-    - drop 구간    : 전환점 frame_idx ± margin_drop 이내 → 제거
-    - collect 구간 : 전환점 frame_idx ± (margin_drop+1 ~ margin_collect) 이내,
-                     drop 구간과 미겹침, gesture==0 → C_transition
-    - 나머지       : C_safe
+    프레임 단위 모드 전용.
+    전환점 ± margin_drop 프레임 제거,
+    전환점 ± (margin_drop+1 ~ margin_collect) 이내 gesture==0 → C_transition,
+    나머지 → C_safe.
     """
     collect_indices = set()
     drop_indices    = set()
 
-    for source_file, file_group in df_original.groupby('source_file'):
-        # frame_idx 기준으로 정렬
+    for _, file_group in df_original.groupby('source_file'):
         file_group = file_group.sort_values('frame_idx')
         frame_idxs = file_group['frame_idx'].values
         gestures   = file_group['gesture'].values
-        orig_index = file_group.index.values  # DataFrame index (행 번호)
+        orig_index = file_group.index.values
 
-        # frame_idx → DataFrame index 매핑
-        fidx_to_dfidx = dict(zip(frame_idxs, orig_index))
+        fidx_to_dfidx   = dict(zip(frame_idxs, orig_index))
+        fidx_to_gesture = dict(zip(frame_idxs, gestures))
 
-        # 전환점: gesture가 바뀌는 frame_idx 탐지
-        transition_frame_idxs = []
-        for i in range(len(gestures) - 1):
-            if gestures[i] != gestures[i + 1]:
-                # 전환점은 두 프레임 사이 → 앞 프레임의 frame_idx 기록
-                transition_frame_idxs.append(frame_idxs[i])
+        # 전환점 탐지
+        transition_frame_idxs = [
+            frame_idxs[i]
+            for i in range(len(gestures) - 1)
+            if gestures[i] != gestures[i + 1]
+        ]
 
-        # 1) drop 구간: 전환점 ± margin_drop frame_idx 범위에 속하는 프레임
+        # drop 구간
         file_drop_dfidx = set()
         for t_fidx in transition_frame_idxs:
             for fidx, dfidx in fidx_to_dfidx.items():
@@ -59,15 +130,13 @@ def _classify_group_c(
                     file_drop_dfidx.add(dfidx)
         drop_indices.update(file_drop_dfidx)
 
-        # 2) collect 구간: margin_drop < |frame_idx - t_fidx| <= margin_collect
-        #    drop 구간과 미겹침, gesture==0인 프레임만
+        # collect 구간
         for t_fidx in transition_frame_idxs:
             for fidx, dfidx in fidx_to_dfidx.items():
                 dist = abs(fidx - t_fidx)
                 if margin_drop < dist <= margin_collect:
                     if dfidx in file_drop_dfidx:
-                        continue  # 혹시 다른 전환점 drop과 겹치면 skip
-                    # gesture==0인지 확인 (group_c에 있는 프레임인지)
+                        continue
                     if dfidx in group_c.index:
                         collect_indices.add(dfidx)
 
@@ -92,8 +161,8 @@ def _sample_by_source_class(df: pd.DataFrame, n: int, random_state: int = 42) ->
     df = df.copy()
     df['_src_class'] = df['source_file'].str.split('_').str[0]
 
-    class_counts = df['_src_class'].value_counts()
-    total        = len(df)
+    class_counts  = df['_src_class'].value_counts()
+    total         = len(df)
     sampled_parts = []
     remainder     = n
     classes       = class_counts.index.tolist()
@@ -112,17 +181,16 @@ def _sample_by_source_class(df: pd.DataFrame, n: int, random_state: int = 42) ->
         if remainder <= 0:
             break
 
-    result = pd.concat(sampled_parts).drop(columns=['_src_class'])
-    return result
+    return pd.concat(sampled_parts).drop(columns=['_src_class'])
 
 
 def _apply_fallback_sampling(
-    group_hardneg : pd.DataFrame,
-    group_trans   : pd.DataFrame,
-    group_neutral : pd.DataFrame,
-    group_safe    : pd.DataFrame,
-    target_total  : int,
-    random_state  : int = 42,
+    group_hardneg: pd.DataFrame,
+    group_trans  : pd.DataFrame,
+    group_neutral: pd.DataFrame,
+    group_safe   : pd.DataFrame,
+    target_total : int,
+    random_state : int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     우선순위 기반 fallback 샘플링.
@@ -167,8 +235,8 @@ def _apply_fallback_sampling(
 def apply_downsampling(
     df            : pd.DataFrame,
     target_ratio  : str,
-    margin_drop   : int = 2,
-    margin_collect: int = 10,
+    margin_drop   : Optional[int] = None,
+    margin_collect: int = 8,
 ) -> pd.DataFrame:
     """
     target_ratio에 따라 Class 0 프레임을 4개 서브그룹으로 나눠 다운샘플링.
@@ -182,16 +250,17 @@ def apply_downsampling(
     Args:
         df            : 원본 DataFrame
         target_ratio  : 'origin' | '4:1' | '1:1'
-        margin_drop   : 전환점 주변 제거 프레임 수, frame_idx 기준 (default 2)
-        margin_collect: 전환점 주변 수집 최대 프레임 수, frame_idx 기준 (default 10)
+        margin_drop   : None  → 시퀀스 모드, gesture 구간 앞뒤 패딩 수집
+                        int   → 프레임 단위 모드, 전환점 ± margin_drop 제거
+        margin_collect: 시퀀스 모드: pad_size 시작값 (= 윈도우 크기, default 8)
+                        프레임 모드: collect 최대 프레임 수
     """
     if target_ratio == "origin":
         return df.copy()
 
     # ── 전처리: 랜드마크 전부 null 프레임 제거 ──────────────────────────
-    # 원본 df는 전환점 탐지용으로 보존, null 제거는 별도 처리
-    df_for_transition = df.copy()   # 전환점 탐지용 원본 (null 제거 전)
-    df = _remove_null_landmarks(df) # 실제 학습 데이터용
+    df_for_transition = df.copy()
+    df = _remove_null_landmarks(df)
 
     # ── 그룹 분리 ────────────────────────────────────────────────────────
     group_a = df[df['gesture'] != 0]
@@ -206,15 +275,6 @@ def apply_downsampling(
         (df['gesture'] == 0) & ~df['source_file'].str.startswith('0_')
     ]
 
-    # ── Group C → C_transition / C_safe 분리 ────────────────────────────
-    # 전환점 탐지는 null 제거 전 원본 df 기준, 실제 수집은 group_c(null 제거 후) 기준
-    c_transition, c_safe = _classify_group_c(
-        df_original=df_for_transition,
-        group_c=group_c,
-        margin_drop=margin_drop,
-        margin_collect=margin_collect,
-    )
-
     # ── target 계산 ──────────────────────────────────────────────────────
     class_counts = group_a['gesture'].value_counts()
     mean_count   = class_counts.mean() if not class_counts.empty else 0
@@ -225,6 +285,27 @@ def apply_downsampling(
         target_total_0 = int(mean_count * 1)
     else:
         raise ValueError(f"지원하지 않는 target_ratio: {target_ratio}")
+
+    target_trans = int(target_total_0 * RATIO_TRANS)
+
+    # ── Group C → C_transition / C_safe 분리 ────────────────────────────
+    if margin_drop is None:
+        # 시퀀스 모드: gesture 구간 앞뒤 패딩 수집, 총량 초과 시 pad_size 줄임
+        c_transition = _collect_padding_for_gesture_segments(
+            df_original=df_for_transition,
+            group_c=group_c,
+            pad_size=margin_collect,
+            target_trans=target_trans,
+        )
+        c_safe = group_c[~group_c.index.isin(c_transition.index)]
+    else:
+        # 프레임 단위 모드: 전환점 기준 drop/collect
+        c_transition, c_safe = _classify_group_c_frame_mode(
+            df_original=df_for_transition,
+            group_c=group_c,
+            margin_drop=margin_drop,
+            margin_collect=margin_collect,
+        )
 
     # ── fallback 샘플링 ──────────────────────────────────────────────────
     hardneg_final, trans_final, neutral_final, safe_final = _apply_fallback_sampling(

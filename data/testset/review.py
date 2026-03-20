@@ -189,34 +189,9 @@ def make_landmark_figure(row: pd.Series) -> go.Figure:
         paper_bgcolor="#1a1a2e",
         scene=dict(
             aspectmode="cube",
-            xaxis=dict(
-                range=[-0.25,0.25],
-                tickmode="linear",
-                tick0=-0.25,
-                dtick=0.25,
-                title="X",
-                color="#aaa",
-                showbackground=False
-            ),
-            yaxis=dict(
-                range=[-1,1],
-                tickmode="linear",
-                tick0=-1,
-                dtick=0.25,
-                autorange="reversed",
-                title="Y",
-                color="#aaa",
-                showbackground=False
-            ),
-            zaxis=dict(
-                range=[-1,1],
-                tickmode="linear",
-                tick0=-1,
-                dtick=0.5,
-                title="Z",
-                color="#aaa",
-                showbackground=False
-            ),
+            xaxis=dict(range=[-5, 5], title="X", color="#aaa", showbackground=False),
+            yaxis=dict(range=[5, -5], title="Y", color="#aaa", showbackground=False),
+            zaxis=dict(range=[-5, 5], title="Z", color="#aaa", showbackground=False),
             bgcolor="#1a1a2e",
         ),
     )

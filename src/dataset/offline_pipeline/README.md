@@ -12,6 +12,9 @@
 
 파일 이름은 **[다운샘플링 비율]**과 **[정규화 범주]**의 조합으로 결정됩니다. 각 조건 통제(Ablation)를 위해 총 12가지 버전이 준비되어 있습니다.
 
+> 다운샘플링이 적용된 시나리오(`ds_` 접두사)는 **seq** / **frame** 두 가지 모드로 생성됩니다.
+> 시퀀스 기반 모델은 `_seq`, 프레임 단위 모델은 `_frame` suffix가 붙은 파일을 사용하세요.
+
 | 파일명 (`.csv`) | 다운샘플링 비율 | 위치 정규화 | 스케일 정규화 | 설명 |
 |---|:---:|:---:|:---:|---|
 | **baseline** | 원본 유지 | X | X | 아무런 처리도 하지 않은 순정 원본 데이터 |
@@ -82,10 +85,11 @@ with wandb.init(project="JamJamBeat", job_type="train") as run:
 * `data/total_data/` 위치에 `total_data.csv`라는 이름으로 통합 데이터 파일을 준비합니다.
 * 파일명이 다를 경우 `runners/run_preprocess.py`의 18라인 인근에서 로드할 파일명을 직접 수정할 수 있습니다.
 
-> ⚠️ **모델 학습 방식에 따라 config를 먼저 확인하세요.**
-> 시퀀스 기반 모델(Transformer, LSTM 등)을 사용할 경우 `MARGIN_FRAMES_DROP = None`으로 설정해야 합니다.
-> 이 경우 제스처 구간 앞뒤로 인접 프레임을 패딩처럼 보존하는 **시퀀스 모드**로 다운샘플링이 수행됩니다.
-> 프레임 단위 모델을 사용할 경우 `MARGIN_FRAMES_DROP`에 정수값을 설정하세요.
+> ⚠️ **모델 학습 방식에 따라 config와 실행 명령어를 확인하세요.**
+> `MARGIN_FRAMES_DROP = None`이면 seq 모드만 실행 가능합니다.
+> frame 모드를 사용하려면 `MARGIN_FRAMES_DROP`에 정수값을 설정해야 합니다.
+> seq + frame 둘 다 실행하려면 `MARGIN_FRAMES_DROP`에 정수값을 설정한 뒤 `--mode both` 또는 인자 없이 실행하세요.
+
 
 ### 2단계: config 설정
 * `SCENARIOS` 딕셔너리를 수정하여 원하는 전처리/정규화 조합만 선택하거나 새 시나리오를 추가할 수 있습니다.
@@ -100,7 +104,14 @@ with wandb.init(project="JamJamBeat", job_type="train") as run:
 ### 3단계: 파이프라인 실행
 프로젝트 루트(`JamJamBeat/`) 경로에서 아래 명령어를 실행합니다.
 ```bash
+# seq + frame 모드 둘 다 실행 (default)
 uv run python src/dataset/offline_pipeline/runners/run_preprocess.py
+
+# 시퀀스 모드만 실행
+uv run python src/dataset/offline_pipeline/runners/run_preprocess.py --mode seq
+
+# 프레임 단위 모드만 실행
+uv run python src/dataset/offline_pipeline/runners/run_preprocess.py --mode frame
 ```
 
 

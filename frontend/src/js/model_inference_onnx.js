@@ -38,6 +38,25 @@ const perfWindow = {
   maxMs: 0
 };
 
+function normalizeHandKey(handKey = "default") {
+  return String(handKey || "default").trim().toLowerCase();
+}
+
+function isInferenceEnabledForHand(handKey = "default") {
+  return normalizeHandKey(handKey) !== "left";
+}
+
+function createDisabledPrediction() {
+  return {
+    label: "None",
+    confidence: 0,
+    classId: 0,
+    source: "disabled",
+    disabled: true,
+    status: "disabled"
+  };
+}
+
 function flushPerf(now = performance.now()) {
   if (!PERF_ENABLED || now - perfWindow.lastLogAt < PERF_LOG_INTERVAL_MS) return;
   const requestCount = Math.max(1, perfWindow.requestCount);
@@ -192,6 +211,12 @@ function normalizePrediction(predIndex, confidence, probs, tsMs, tau = DEFAULT_T
 
 async function scheduleModelRequest(landmarks, now, handKey = "default") {
   const handState = getHandRequestState(handKey);
+  if (!isInferenceEnabledForHand(handKey)) {
+    handState.inFlight = false;
+    handState.lastRequestAt = 0;
+    handState.lastPrediction = createDisabledPrediction();
+    return;
+  }
   const requestIntervalMs = getRequestIntervalMs();
   if (!onnxSession) {
     // 모델이 아직 로드 안 됐으면 초기화 시도
@@ -253,6 +278,12 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
 // ONNX로 현재 내 손 모양 데이터를 추론하고, AI가 생각하는 정답이 무엇인지 가져오는 기능입니다.
 export function getModelPrediction(landmarks, now = performance.now(), handKey = "default") {
   const handState = getHandRequestState(handKey);
+  if (!isInferenceEnabledForHand(handKey)) {
+    handState.inFlight = false;
+    handState.lastRequestAt = 0;
+    handState.lastPrediction = createDisabledPrediction();
+    return handState.lastPrediction;
+  }
   scheduleModelRequest(landmarks, now, handKey); // 필요하면 새 추론을 예약하거나 바로 실행합니다.
   return handState.lastPrediction; // 지금 시점에서 가장 최근에 받은 답을 돌려줍니다.
 }

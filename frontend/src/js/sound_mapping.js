@@ -15,9 +15,9 @@ export const DEFAULT_GESTURE_MAPPING = {
   Fist: "penguin",
   OpenPalm: "drum",
   V: "tambourine",
-  Pinky: "a",
+  Pinky: "xylophone",
   Animal: "cat",
-  KHeart: "xylophone"
+  KHeart: "a"
 };
 
 export function loadCustomSounds() {

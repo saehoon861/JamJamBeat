@@ -12,6 +12,7 @@ export function createInteractionRuntime({
   gestureSquirrelEffect,
   audioApi,
   resolveGesture,
+  resetGestureState,
   getModelPrediction,
   restartClassAnimation,
   activateStart,
@@ -40,6 +41,19 @@ export function createInteractionRuntime({
   let lastStatusText = "";
   const HELD_ONESHOT_INTERVAL_MS = Math.max(gestureCooldownMs, 220);
 
+  function isGestureEnabledForHand(handKey = "default") {
+    return String(handKey || "default").trim().toLowerCase() !== "left";
+  }
+
+  function createDisabledGestureResult() {
+    return {
+      label: "None",
+      confidence: 0,
+      source: "disabled",
+      disabled: true
+    };
+  }
+
   function setStatusText(nextText) {
     if (typeof nextText !== "string") return;
     if (nextText === lastStatusText) return;
@@ -55,6 +69,7 @@ export function createInteractionRuntime({
         lastGestureTriggerAt: 0,
         lastResolvedGesture: null,
         lastRawModelPrediction: null,
+        lastLandmarks: null,
         lastUpdatedAt: 0
       });
     }
@@ -94,6 +109,9 @@ export function createInteractionRuntime({
         currentMelodyType: handState.currentMelodyType,
         lastResolvedGesture: handState.lastResolvedGesture,
         lastRawModelPrediction: handState.lastRawModelPrediction,
+        lastLandmarks: Array.isArray(handState.lastLandmarks)
+          ? handState.lastLandmarks.map((point) => ({ ...point }))
+          : null,
         lastUpdatedAt: handState.lastUpdatedAt
       };
     });
@@ -122,6 +140,41 @@ export function createInteractionRuntime({
   function getGestureStartConfidenceFloor(label) {
     if (label === "Pinky" || label === "Animal" || label === "KHeart") return 0.2;
     return 0.3;
+  }
+
+  function snapshotLandmarks(landmarks) {
+    return Array.isArray(landmarks)
+      ? landmarks.map((point) => ({
+        x: Number.isFinite(point?.x) ? point.x : 0,
+        y: Number.isFinite(point?.y) ? point.y : 0,
+        z: Number.isFinite(point?.z) ? point.z : 0
+      }))
+      : null;
+  }
+
+  function updateTrackedHandSnapshot(landmarks, now, handKey = "default") {
+    const handState = getHandState(handKey);
+    handState.lastLandmarks = snapshotLandmarks(landmarks);
+    handState.lastUpdatedAt = now;
+
+    if (!isGestureEnabledForHand(handKey)) {
+      const disabledResult = createDisabledGestureResult();
+      if (handState.currentMelodyType) {
+        audioApi.stopMelodySequence(handState.currentMelodyType);
+        handState.currentMelodyType = null;
+      }
+      audioApi.stopMelodiesForHand?.(handKey);
+      handState.lastResolvedGesture = { ...disabledResult };
+      handState.lastRawModelPrediction = { ...disabledResult };
+      handState.lastGestureLabel = "None";
+      handState.lastGestureTriggerAt = 0;
+      gestureHoldStartByKey.delete(handKey);
+      resetGestureState?.(handKey);
+      activeGestureHands.delete(handKey);
+      setGestureObjectVariant?.(activeGestureHands.size > 0);
+    }
+
+    return handState;
   }
 
   // hoverStartedAt / hoverActive 는 시작 버튼 위에 손을 올려둔 시간을 재기 위해 씁니다.
@@ -353,13 +406,16 @@ export function createInteractionRuntime({
   function processGestureTriggers(landmarks, now, handKey = "default") {
     if (!isSessionStarted()) return;
     if (isAdminEditMode()) return;
-    const handState = getHandState(handKey);
+    const handState = updateTrackedHandSnapshot(landmarks, now, handKey);
+
+    if (!isGestureEnabledForHand(handKey)) {
+      return;
+    }
 
     const gesture = resolveGesture(landmarks, now, isSessionStarted(), handKey);
     const rawModel = getModelPrediction(landmarks, now, handKey);
     handState.lastResolvedGesture = gesture ? { ...gesture } : null;
     handState.lastRawModelPrediction = rawModel ? { ...rawModel } : null;
-    handState.lastUpdatedAt = now;
 
     // 제스처가 없거나 신뢰도가 매우 낮으면 멜로디 중지
     const shouldStopMelody = !gesture || gesture.label === "None" ||
@@ -462,6 +518,7 @@ export function createInteractionRuntime({
   // 손이 사라졌을 때 커서를 숨기고, 시작 전이라면 상태 문구도 초기화합니다.
   function resetTrackingState() {
     handCursor.style.opacity = 0;
+    const resetAt = performance.now();
     activeGestureHands.clear();
     setGestureObjectVariant?.(false);
 
@@ -476,8 +533,13 @@ export function createInteractionRuntime({
       handState.lastGestureTriggerAt = 0;
       handState.lastResolvedGesture = null;
       handState.lastRawModelPrediction = null;
+      handState.lastLandmarks = null;
       handState.lastUpdatedAt = 0;
       gestureHoldStartByKey.delete(handKey);
+      resetGestureState?.(handKey);
+      if (isGestureEnabledForHand(handKey)) {
+        getModelPrediction?.(null, resetAt, handKey);
+      }
     });
 
     if (!isSessionStarted()) {
@@ -492,6 +554,7 @@ export function createInteractionRuntime({
     processInstrumentCollision,
     processGestureTriggers,
     processBubbleCollisions,
+    updateTrackedHandSnapshot,
     setPointer,
     resetTrackingState,
     getCurrentGesture,

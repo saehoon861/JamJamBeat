@@ -94,6 +94,25 @@ const perfWindow = {
   warmupCount: 0
 };
 
+function normalizeHandKey(handKey = "default") {
+  return String(handKey || "default").trim().toLowerCase();
+}
+
+function isInferenceEnabledForHand(handKey = "default") {
+  return normalizeHandKey(handKey) !== "left";
+}
+
+function createDisabledPrediction() {
+  return {
+    label: "None",
+    confidence: 0,
+    classId: 0,
+    source: "disabled",
+    disabled: true,
+    status: "disabled"
+  };
+}
+
 function flushPerf(now = performance.now()) {
   if (!PERF_ENABLED || now - perfWindow.lastLogAt < PERF_LOG_INTERVAL_MS) return;
   const requestCount = Math.max(1, perfWindow.requestCount);
@@ -436,6 +455,16 @@ function normalizePrediction(predIndex, confidence, probs, tsMs, status, tau = D
 // 손이 사라졌을 때 버퍼 리셋
 export function pushNoHand(handKey = "default") {
   const handState = getHandState(handKey);
+  if (!isInferenceEnabledForHand(handKey)) {
+    handState.jointBuffer = [];
+    handState.inFlight = false;
+    handState.lastRequestAt = 0;
+    handState.lastStartedAt = 0;
+    handState.lastCompletedAt = 0;
+    handState.lastDurationMs = null;
+    handState.lastPrediction = createDisabledPrediction();
+    return handState.lastPrediction;
+  }
   handState.jointBuffer = [];
   handState.lastPrediction = normalizePrediction(
     0, // neutral
@@ -449,6 +478,16 @@ export function pushNoHand(handKey = "default") {
 
 async function scheduleModelRequest(landmarks, now, handKey = "default") {
   const handState = getHandState(handKey);
+  if (!isInferenceEnabledForHand(handKey)) {
+    handState.jointBuffer = [];
+    handState.inFlight = false;
+    handState.lastRequestAt = 0;
+    handState.lastStartedAt = 0;
+    handState.lastCompletedAt = 0;
+    handState.lastDurationMs = null;
+    handState.lastPrediction = createDisabledPrediction();
+    return;
+  }
   const requestIntervalMs = getRequestIntervalMs();
 
   if (!onnxSession) {
@@ -562,6 +601,16 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
 // 메인 API: 손동작 예측 가져오기
 export function getModelPrediction(landmarks, now = performance.now(), handKey = "default") {
   const handState = getHandState(handKey);
+  if (!isInferenceEnabledForHand(handKey)) {
+    handState.jointBuffer = [];
+    handState.inFlight = false;
+    handState.lastRequestAt = 0;
+    handState.lastStartedAt = 0;
+    handState.lastCompletedAt = 0;
+    handState.lastDurationMs = null;
+    handState.lastPrediction = createDisabledPrediction();
+    return handState.lastPrediction;
+  }
 
   // 손이 없으면 no_hand 처리
   if (!landmarks || !Array.isArray(landmarks) || landmarks.length < 21) {

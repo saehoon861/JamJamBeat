@@ -8,6 +8,9 @@ import logoWebp from "../../assets/로고-removebg-preview.webp";
 const logoPng = logoWebp; 
 import batonImage from "../../assets/objects/지휘봉.png";
 import backgroundVideo from "../../assets/objects/움직이는_동화_영상_만들기.mp4?url";
+import handGesturesGuide from "../../assets/hand_gestures_guide.png";
+import hedgehogCreditVideo from "../../assets/objects/고슴도치1.mov?url";
+import penguinCreditVideo from "../../assets/objects/팽귄1.mov?url";
 
 const INSTRUMENTS = [
   {
@@ -60,6 +63,25 @@ const INSTRUMENTS = [
   }
 ];
 
+const CREDIT_GROUPS = [
+  {
+    title: "Project",
+    lines: ["JamJamBeat"]
+  },
+  {
+    title: "Contributors",
+    lines: ["surya2347", "saehoon861", "RohGyuMin", "OpenClaw Assistant"]
+  },
+  {
+    title: "Built With",
+    lines: ["React", "Vite", "MediaPipe Hands", "ONNX Runtime Web", "Web Audio API"]
+  },
+  {
+    title: "Special Thanks",
+    lines: ["숲의 지휘자가 되어준 모든 플레이어들"]
+  }
+];
+
 function getInstrumentStyle(id, isMvpButton) {
   // MVP 버튼은 그리드 레이아웃 사용하므로 위치 스타일 불필요
   if (isMvpButton) return undefined;
@@ -98,15 +120,57 @@ export default function App() {
   useLegacyMainRuntime();
   const { soundButtonLabel, requestStart, requestSoundToggle } = useMainControls();
   const [showTutorial, setShowTutorial] = React.useState(false);
+  const [showCredits, setShowCredits] = React.useState(false);
+  const [tutorialPracticeEnabled, setTutorialPracticeEnabled] = React.useState(false);
 
   const handleStartClick = () => {
+    setTutorialPracticeEnabled(false);
     setShowTutorial(true);
   };
 
   const closeTutorial = () => {
     setShowTutorial(false);
-    requestStart();
+    if (!tutorialPracticeEnabled) {
+      requestStart();
+    }
   };
+
+  const startTutorialPractice = () => {
+    if (!tutorialPracticeEnabled) {
+      requestStart();
+      setTutorialPracticeEnabled(true);
+    }
+  };
+
+  const skipTutorialAndStart = () => {
+    setShowTutorial(false);
+    if (!tutorialPracticeEnabled) {
+      requestStart();
+    }
+  };
+
+  const openCredits = () => {
+    setShowCredits(true);
+  };
+
+  const closeCredits = () => {
+    setShowCredits(false);
+  };
+
+  const handleExitClick = () => {
+    window.close();
+    window.setTimeout(() => {
+      if (!window.closed) {
+        window.location.replace("about:blank");
+      }
+    }, 120);
+  };
+
+  React.useEffect(() => {
+    if (!showTutorial || tutorialPracticeEnabled) {
+      window.dispatchEvent(new CustomEvent("jamjam:refresh-camera-target"));
+    }
+  }, [showTutorial, tutorialPracticeEnabled]);
 
   return (
     <>
@@ -134,21 +198,117 @@ export default function App() {
       {showTutorial && (
         <section className="tutorial-overlay" aria-live="polite">
           <div className="tutorial-modal">
-            <h2 className="tutorial-title">숲의 지휘자 가이드</h2>
-            <p className="tutorial-description">손동작을 하면 음악이 나옵니다!</p>
-            <div className="tutorial-image-container">
-              <img 
-                src="/assets/hand_gestures_guide.png" 
-                alt="6가지 손동작과 악기 매칭 가이드" 
-                className="tutorial-image" 
-              />
+            <header className="tutorial-header">
+              <span className="tutorial-icon" aria-hidden="true">✨</span>
+              <h2 className="tutorial-title">숲의 지휘자 연습실</h2>
+            </header>
+            
+            <p className="tutorial-description">
+              나의 손동작을 카메라에 비춰보세요!<br/>
+              6가지 동작을 따라 하면 숲의 음악이 시작됩니다.
+            </p>
+
+            <div className="tutorial-interactive-area">
+              <div className="tutorial-image-container">
+                <img 
+                  src={handGesturesGuide} 
+                  alt="6가지 손동작 가이트" 
+                  className="tutorial-image" 
+                />
+              </div>
+              
+              <div className="tutorial-mirror-zone">
+                {tutorialPracticeEnabled ? (
+                  <>
+                    <div className="camera-shell tutorial-camera-shell" aria-hidden="true">
+                      <video id="webcam" autoPlay playsInline muted />
+                    </div>
+                    <canvas id="handCanvas" className="tutorial-hand-canvas" />
+                  </>
+                ) : (
+                  <div className="tutorial-camera-placeholder">
+                    <p>연습하기를 누르면 카메라가 여기서 바로 켜집니다.</p>
+                  </div>
+                )}
+              </div>
             </div>
-            <button 
-              type="button" 
-              className="tutorial-close-button" 
-              onClick={closeTutorial}
-            >
-              알겠어요! 모험 시작하기
+
+            <div className="tutorial-action-stack">
+              <button
+                type="button"
+                className="tutorial-practice-button"
+                onClick={startTutorialPractice}
+                disabled={tutorialPracticeEnabled}
+              >
+                {tutorialPracticeEnabled ? "카메라 켜짐, 손동작 연습 중" : "카메라 켜고 연습하기"}
+              </button>
+              <p className="tutorial-practice-note">
+                연습을 건너뛰고 바로 시작할 수도 있습니다.
+              </p>
+              <div className="tutorial-action-row">
+                <button
+                  type="button"
+                  className="tutorial-skip-button"
+                  onClick={skipTutorialAndStart}
+                >
+                  연습 안 하고 바로 시작
+                </button>
+                <button
+                  type="button"
+                  className="tutorial-close-button"
+                  onClick={closeTutorial}
+                  disabled={!tutorialPracticeEnabled}
+                >
+                  연습 완료! 모험 시작하기
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {showCredits && (
+        <section className="credits-overlay" aria-live="polite" onClick={closeCredits}>
+          <div className="credits-side-video credits-side-video-left" aria-hidden="true">
+            <video autoPlay muted loop playsInline preload="auto">
+              <source src={hedgehogCreditVideo} type="video/quicktime" />
+            </video>
+          </div>
+          <div className="credits-side-video credits-side-video-right" aria-hidden="true">
+            <video autoPlay muted loop playsInline preload="auto">
+              <source src={penguinCreditVideo} type="video/quicktime" />
+            </video>
+          </div>
+          <div
+            className="credits-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="만든 사람들"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="credits-header">
+              <p className="credits-kicker">만든 사람들</p>
+              <h2 className="credits-title">JamJamBeat Credits</h2>
+            </header>
+
+            <div className="credits-roll-viewport" aria-hidden="true">
+              <div className="credits-roll-track">
+                {CREDIT_GROUPS.map((group) => (
+                  <section key={group.title} className="credits-group">
+                    <h3>{group.title}</h3>
+                    {group.lines.map((line) => (
+                      <p key={line}>{line}</p>
+                    ))}
+                  </section>
+                ))}
+                <section className="credits-group credits-group-end">
+                  <p>Thank you for playing.</p>
+                </section>
+              </div>
+            </div>
+
+            <button type="button" className="credits-close-button" onClick={closeCredits}>
+              닫기
             </button>
           </div>
         </section>
@@ -161,6 +321,8 @@ export default function App() {
               <img className="landing-logo" src={logoPng} srcSet={logoWebp} alt="JamJam Beat Logo" loading="eager" />
             </div>
             <button id="landingStartButton" type="button" onClick={handleStartClick}>시작하기</button>
+            <button className="landing-credits-button" type="button" onClick={openCredits}>만든 사람들</button>
+            <button className="landing-exit-button" type="button" onClick={handleExitClick}>종료하기</button>
           </div>
         </section>
 
@@ -203,9 +365,14 @@ export default function App() {
         </section>
 
         <section className="layer layer-foreground" aria-live="polite">
-          <div className="camera-shell" aria-hidden="true">
-            <video id="webcam" autoPlay playsInline muted />
-          </div>
+          {!showTutorial && (
+            <>
+              <div className="camera-shell" aria-hidden="true">
+                <video id="webcam" autoPlay playsInline muted />
+              </div>
+              <canvas id="handCanvas" />
+            </>
+          )}
           <div className="guide-silhouette" aria-hidden="true" />
           <div id="gestureSquirrelEffect" className="gesture-squirrel" aria-hidden="true">🐿️</div>
           <p id="pulseMessage" className="pulse-message">손을 잼잼! 해서 숲을 깨워봐!</p>
@@ -216,8 +383,9 @@ export default function App() {
           <p id="status" className="status">카메라 준비 중...</p>
           <button id="soundUnlockButton" className="sound-unlock" type="button" onClick={requestSoundToggle}>{soundButtonLabel}</button>
           <button id="testModeToggleButton" className="test-mode-toggle" type="button">테스트 모드 켜기</button>
+          <button className="hud-exit-button" type="button" onClick={handleExitClick}>프로그램 끝내기</button>
           <a className="hud-main-link" href="./index.html">메인화면으로</a>
-                    <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
+          <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
         </section>
 
         <section id="adminControls" className="admin-floating-controls" aria-live="polite">
@@ -230,11 +398,30 @@ export default function App() {
           </div>
         </section>
 
-        <canvas id="handCanvas" />
         <canvas id="effectCanvas" aria-hidden="true" />
         <div id="handCursor" className="hand-cursor" aria-hidden="true">
           <img src={batonImage} alt="" aria-hidden="true" />
         </div>
+
+        <section id="testModeVision" className="test-mode-vision is-hidden" aria-live="polite">
+          <div className="test-mode-vision-head">
+            <p className="test-mode-eyebrow">손 입력 미리보기</p>
+            <p id="testModeVisionSummary" className="test-mode-vision-summary">원본 손과 모델 입력 좌표를 비교합니다.</p>
+          </div>
+          <div className="test-mode-vision-grid">
+            <article className="test-mode-vision-card">
+              <h3>원본 손</h3>
+              <div className="test-mode-preview-shell">
+                <video id="testModeWebcamPreview" autoPlay playsInline muted aria-hidden="true" />
+                <canvas id="testModeRawCanvas" width="256" height="144" aria-hidden="true" />
+              </div>
+            </article>
+            <article className="test-mode-vision-card">
+              <h3>모델 입력</h3>
+              <canvas id="testModeNormalizedCanvas" className="test-mode-normalized-canvas" width="220" height="220" aria-hidden="true" />
+            </article>
+          </div>
+        </section>
 
         <section id="testModePanel" className="test-mode-panel is-hidden" aria-live="polite">
           <div className="test-mode-head">

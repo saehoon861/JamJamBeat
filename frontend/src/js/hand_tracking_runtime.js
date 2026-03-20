@@ -6,6 +6,9 @@ export function createHandTrackingRuntime({
   video,
   handCanvas,
   handCtx,
+  getVideo,
+  getHandCanvas,
+  getHandCtx,
   handCursor,
   renderer,
   particleSystem,
@@ -26,7 +29,11 @@ export function createHandTrackingRuntime({
     return Boolean(import.meta.env.DEV);
   })();
   const PERF_LOG_INTERVAL_MS = 2000;
-  const SLOW_FRAME_WARN_MS = 24;
+  const SLOW_FRAME_WARN_MS = (() => {
+    const raw = Number(new URLSearchParams(window.location.search).get("slowFrameWarnMs"));
+    if (!Number.isFinite(raw)) return 40;
+    return Math.max(16, Math.min(200, Math.round(raw)));
+  })();
   const SLOW_FRAME_WARN_INTERVAL_MS = 1000;
   const INFERENCE_MAX_WIDTH = (() => {
     const raw = Number(new URLSearchParams(window.location.search).get("inferWidth"));
@@ -38,11 +45,23 @@ export function createHandTrackingRuntime({
     if (!Number.isFinite(raw)) return 300;
     return Math.max(inferIntervalMs, Math.min(400, Math.round(raw)));
   })();
+  const FORCE_INFERENCE_IDLE_MS = (() => {
+    const raw = Number(new URLSearchParams(window.location.search).get("forceInferIdleMs"));
+    if (!Number.isFinite(raw)) return 600;
+    return Math.max(200, Math.min(2000, Math.round(raw)));
+  })();
+  const FRAME_SIGNAL_STALE_MS = (() => {
+    const raw = Number(new URLSearchParams(window.location.search).get("frameSignalStaleMs"));
+    if (!Number.isFinite(raw)) return 240;
+    return Math.max(120, Math.min(1200, Math.round(raw)));
+  })();
   const perfWindow = {
     startedAt: performance.now(),
     lastLogAt: performance.now(),
     frameCount: 0,
     inferenceCount: 0,
+    forcedInferenceCount: 0,
+    timeFallbackInferenceCount: 0,
     staleRenderCount: 0,
     emptyDetections: 0,
     handsDetectedMax: 0,
@@ -70,6 +89,8 @@ export function createHandTrackingRuntime({
       windowMs: Math.round(now - perfWindow.startedAt),
       frames: perfWindow.frameCount,
       inferences: perfWindow.inferenceCount,
+      forcedInferences: perfWindow.forcedInferenceCount,
+      timeFallbackInferences: perfWindow.timeFallbackInferenceCount,
       staleRenders: perfWindow.staleRenderCount,
       emptyDetections: perfWindow.emptyDetections,
       handsDetectedMax: perfWindow.handsDetectedMax,
@@ -88,6 +109,8 @@ export function createHandTrackingRuntime({
     perfWindow.lastLogAt = now;
     perfWindow.frameCount = 0;
     perfWindow.inferenceCount = 0;
+    perfWindow.forcedInferenceCount = 0;
+    perfWindow.timeFallbackInferenceCount = 0;
     perfWindow.staleRenderCount = 0;
     perfWindow.emptyDetections = 0;
     perfWindow.handsDetectedMax = 0;
@@ -123,6 +146,13 @@ export function createHandTrackingRuntime({
   let lastDetectTimestampMs = 0;
   let lastSlowWarnAt = 0;
   let adaptiveInferIntervalMs = inferIntervalMs;
+  let lastFrameSignalAt = 0;
+  let rvfcProbeArmed = false;
+  let latestVideoFrameSignal = null;
+
+  const resolveVideo = () => getVideo?.() || video;
+  const resolveHandCanvas = () => getHandCanvas?.() || handCanvas;
+  const resolveHandCtx = () => getHandCtx?.() || handCtx;
 
   function getNextDetectTimestamp(baseNow) {
     const normalized = Math.max(1, Math.round(baseNow));
@@ -157,10 +187,11 @@ export function createHandTrackingRuntime({
   }
 
   function drawVideoRegionToCanvas(canvas, ctx, sx, sy, sourceWidth, sourceHeight) {
+    const activeVideo = resolveVideo();
     const { width, height } = resizeCanvasForSource(canvas, sourceWidth, sourceHeight);
-    if (!ctx) return null;
+    if (!ctx || !activeVideo) return null;
     ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(video, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
+    ctx.drawImage(activeVideo, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
     return canvas;
   }
 
@@ -186,29 +217,33 @@ export function createHandTrackingRuntime({
   // 새 계산 결과가 없어도 화면에 손 모양을 잠깐 계속 보여줍니다.
   function renderCachedHand(now) {
     const renderStartedAt = PERF_ENABLED ? performance.now() : 0;
+    const activeHandCanvas = resolveHandCanvas();
+    const activeHandCtx = resolveHandCtx();
     const cacheFresh = cachedHands.length > 0 && now - cachedLandmarksAt <= landmarkStaleMs;
     if (cacheFresh) {
       if (PERF_ENABLED) perfWindow.staleRenderCount += 1;
-      if (now - lastHandRenderAt >= HAND_RENDER_INTERVAL_MS) {
+      if (activeHandCanvas && activeHandCtx && now - lastHandRenderAt >= HAND_RENDER_INTERVAL_MS) {
         renderer.setHandAnimationActive?.(true);
         cachedHands.forEach((hand) => {
           const currentGesture = interactionRuntime.getCurrentGesture(hand.handKey);
-          renderer.drawHand(handCtx, hand.landmarks, handCanvas, now * 0.001, hand.handKey, currentGesture);
+          renderer.drawHand(activeHandCtx, hand.landmarks, activeHandCanvas, now * 0.001, hand.handKey, currentGesture);
         });
         lastHandRenderAt = now;
       }
       // 검지 끝 좌표를 손 커서 위치로 변환합니다.
       const primaryHand = cachedHands.find((hand) => hand.handKey === "right") || cachedHands[0];
-      if (now - lastCachedBubbleCollisionAt >= CACHED_BUBBLE_COLLISION_INTERVAL_MS) {
+      if (activeHandCanvas && now - lastCachedBubbleCollisionAt >= CACHED_BUBBLE_COLLISION_INTERVAL_MS) {
         // 저장된 좌표로는 충돌 검사 빈도를 낮춰도 체감 차이가 적어 부담을 줄입니다.
-        const flickerPoints = [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(primaryHand.landmarks[idx], handCanvas));
+        const flickerPoints = [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(primaryHand.landmarks[idx], activeHandCanvas));
         interactionRuntime.processBubbleCollisions(flickerPoints);
         lastCachedBubbleCollisionAt = now;
       }
 
-      const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
-      // 커서를 실제 화면 위치로 옮깁니다.
-      interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
+      if (activeHandCanvas) {
+        const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], activeHandCanvas);
+        // 커서를 실제 화면 위치로 옮깁니다.
+        interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
+      }
       recordPerf("renderCacheTotalMs", "renderCacheMaxMs", performance.now() - renderStartedAt);
       return;
     }
@@ -222,12 +257,63 @@ export function createHandTrackingRuntime({
     recordPerf("renderCacheTotalMs", "renderCacheMaxMs", performance.now() - renderStartedAt);
   }
 
+  function ensureVideoFrameSignalProbe() {
+    const activeVideo = resolveVideo();
+    if (rvfcProbeArmed) return;
+    if (typeof activeVideo?.requestVideoFrameCallback !== "function") return;
+
+    rvfcProbeArmed = true;
+    const onVideoFrame = (_now, metadata = {}) => {
+      const currentVideo = resolveVideo();
+      if (Number.isFinite(metadata.mediaTime)) {
+        latestVideoFrameSignal = metadata.mediaTime;
+        lastFrameSignalAt = performance.now();
+      }
+      if (typeof currentVideo?.requestVideoFrameCallback === "function") {
+        currentVideo.requestVideoFrameCallback(onVideoFrame);
+      } else {
+        rvfcProbeArmed = false;
+      }
+    };
+
+    activeVideo.requestVideoFrameCallback(onVideoFrame);
+  }
+
   // 이번 프레임에서 실제 손 인식을 새로 돌려야 하는지 판단합니다.
   // "새 카메라 프레임이 들어왔는가?" 와 "지정한 간격이 지났는가?"를 둘 다 봅니다.
   function shouldRunInference(now) {
-    const hasFreshFrame = video.currentTime !== lastVideoTime && video.readyState >= 2 && video.videoWidth > 0;
+    const activeVideo = resolveVideo();
+    if (!(activeVideo?.readyState >= 2 && activeVideo.videoWidth > 0)) {
+      return { run: false, reason: "not_ready" };
+    }
+
+    const currentVideoTime = Number.isFinite(latestVideoFrameSignal)
+      ? latestVideoFrameSignal
+      : (Number.isFinite(activeVideo.currentTime) ? activeVideo.currentTime : lastVideoTime);
+    const hasFreshFrame = currentVideoTime !== lastVideoTime;
+    if (lastFrameSignalAt <= 0) {
+      lastFrameSignalAt = now;
+    }
+    if (hasFreshFrame) {
+      lastFrameSignalAt = now;
+    }
+
     const inferenceDue = now - lastInferenceAt >= adaptiveInferIntervalMs;
-    return hasFreshFrame && inferenceDue;
+    if (hasFreshFrame && inferenceDue) {
+      return { run: true, reason: "fresh_frame", currentVideoTime };
+    }
+
+    const frameSignalStale = now - lastFrameSignalAt >= FRAME_SIGNAL_STALE_MS;
+    if (frameSignalStale && inferenceDue) {
+      return { run: true, reason: "time_fallback", currentVideoTime };
+    }
+
+    const idleTooLong = now - lastInferenceAt >= FORCE_INFERENCE_IDLE_MS;
+    if (idleTooLong) {
+      return { run: true, reason: "idle_recovery", currentVideoTime };
+    }
+
+    return { run: false, reason: "throttled", currentVideoTime };
   }
 
   function updateAdaptiveInferInterval(detectElapsedMs) {
@@ -247,6 +333,7 @@ export function createHandTrackingRuntime({
   // MediaPipe 가 돌려준 손 인식 결과를 받아서,
   // 현재 손이 있는지, 어디 있는지, 어떤 반응을 해야 하는지 다음 단계로 넘깁니다.
   function handleDetectedHands(hands, now) {
+    const activeHandCanvas = resolveHandCanvas();
     if (PERF_ENABLED) {
       perfWindow.handsDetectedMax = Math.max(perfWindow.handsDetectedMax, hands.length);
       if (hands.length === 0) perfWindow.emptyDetections += 1;
@@ -267,17 +354,18 @@ export function createHandTrackingRuntime({
     const landmarks = primaryHand.landmarks;
     cachedHands = hands;
     cachedLandmarksAt = now;
+    if (!activeHandCanvas) return;
 
     // 검지 끝을 화면 좌표로 바꾸고, 시작 버튼 hover 같은 UI 반응을 처리합니다.
     hands.forEach((hand) => {
-      const pointer = interactionRuntime.createInstrumentPoint(hand.landmarks[8], handCanvas);
+      const pointer = interactionRuntime.createInstrumentPoint(hand.landmarks[8], activeHandCanvas);
       interactionRuntime.processLandingHover(pointer, now);
     });
 
     // 모든 손의 손가락 끝 좌표들을 모아서 터치 충돌 판정에 사용합니다.
     const triggerPoints = hands.flatMap((hand) => {
       if (!hand.landmarks) return [];
-      return [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(hand.landmarks[idx], handCanvas));
+      return [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(hand.landmarks[idx], activeHandCanvas));
     });
 
     // 손가락 끝이 악기에 닿았는지 검사합니다.
@@ -287,11 +375,13 @@ export function createHandTrackingRuntime({
     
     // 첫 번째 손 기준으로 제스처 판정과 커서 위치를 업데이트합니다.
     if (primaryHand && primaryHand.landmarks) {
-      const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
+      const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], activeHandCanvas);
       interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
 
       hands.forEach((hand) => {
         if (hand.landmarks) {
+          interactionRuntime.updateTrackedHandSnapshot?.(hand.landmarks, now, hand.handKey);
+          if (String(hand.handKey || "").toLowerCase() === "left") return;
           interactionRuntime.processGestureTriggers(hand.landmarks, now, hand.handKey);
         }
       });
@@ -311,6 +401,9 @@ export function createHandTrackingRuntime({
   // 한 프레임마다 손을 그릴지, 새 인식을 돌릴지, 이펙트를 갱신할지를 결정합니다.
   function predict() {
     try {
+      const activeVideo = resolveVideo();
+      const activeHandCanvas = resolveHandCanvas();
+      const activeHandCtx = resolveHandCtx();
       const predictStartedAt = PERF_ENABLED ? performance.now() : 0;
       const handLandmarker = getHandLandmarker();
       if (!handLandmarker) {
@@ -320,18 +413,32 @@ export function createHandTrackingRuntime({
 
       const now = performance.now();
       if (PERF_ENABLED) perfWindow.frameCount += 1;
-      handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+      if (activeHandCanvas && activeHandCtx) {
+        activeHandCtx.clearRect(0, 0, activeHandCanvas.width, activeHandCanvas.height);
+      }
       onBeforeFrame(now, getSessionStarted());
       renderCachedHand(now);
 
-      if (shouldRunInference(now)) {
-        lastVideoTime = video.currentTime;
+      ensureVideoFrameSignalProbe();
+      const inferenceGate = shouldRunInference(now);
+      if (inferenceGate.run) {
+        if (Number.isFinite(inferenceGate.currentVideoTime)) {
+          lastVideoTime = inferenceGate.currentVideoTime;
+        }
         lastInferenceAt = now;
         if (PERF_ENABLED) perfWindow.inferenceCount += 1;
+        if (PERF_ENABLED && inferenceGate.reason === "idle_recovery") {
+          perfWindow.forcedInferenceCount += 1;
+        }
+        if (PERF_ENABLED && inferenceGate.reason === "time_fallback") {
+          perfWindow.timeFallbackInferenceCount += 1;
+        }
         const detectStartedAt = PERF_ENABLED ? performance.now() : 0;
 
         // tasks-vision JS API는 detectForVideo()/detect() 경로를 사용합니다.
-        const inferenceCanvas = drawVideoRegionToCanvas(fullInferenceCanvas, fullInferenceCtx, 0, 0, video.videoWidth, video.videoHeight);
+        const inferenceCanvas = activeVideo
+          ? drawVideoRegionToCanvas(fullInferenceCanvas, fullInferenceCtx, 0, 0, activeVideo.videoWidth, activeVideo.videoHeight)
+          : null;
         if (inferenceCanvas) {
           try {
             const detectTimestamp = getNextDetectTimestamp(now);

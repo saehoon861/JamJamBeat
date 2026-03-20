@@ -1,7 +1,28 @@
 // [gestures.js] 손모양을 보고 어떤 동작(주먹, 가위, 보 등)인지 맞히는 '퀴즈 정답지' 같은 파일입니다.
 // 손가락이 펴졌는지 굽혀졌는지를 계산해서 손동작의 이름을 결정합니다.
 // 손의 랜드마크 데이터에서 규칙 기반/모델 기반 제스처를 통합 감지하는 모듈입니다.
-import { getModelPrediction } from "./model_inference.js";
+import { getModelPrediction as getDefaultModelPrediction } from "./model_inference.js";
+
+let modelPredictionProvider = getDefaultModelPrediction;
+
+function isGestureEnabledForHand(handKey = "default") {
+  return String(handKey || "default").trim().toLowerCase() !== "left";
+}
+
+function createDisabledGestureResult() {
+  return {
+    label: "None",
+    confidence: 0,
+    source: "disabled",
+    disabled: true,
+    isV: false,
+    isPaper: false
+  };
+}
+
+export function setModelPredictionProvider(provider) {
+  modelPredictionProvider = typeof provider === "function" ? provider : getDefaultModelPrediction;
+}
 
 function distance(a, b) {
   const dx = a.x - b.x; // 두 점의 가로 차이입니다.
@@ -91,6 +112,14 @@ const CLASS_SPECIFIC_STABLE_FRAMES = {
 };
 
 const stableStateByHand = new Map();
+
+export function resetGestureState(handKey = null) {
+  if (handKey == null) {
+    stableStateByHand.clear();
+    return;
+  }
+  stableStateByHand.delete(handKey);
+}
 
 function getStableState(handKey = "default") {
   if (!stableStateByHand.has(handKey)) {
@@ -225,6 +254,10 @@ function stabilize(rawResult, stableState) {
 
 // [최종 판단] 규칙(단순 계산)과 모델(AI)의 결과를 종합하여 지금 어떤 손동작인지 최종 결론을 내립니다.
 export function resolveGesture(landmarks, now, sessionStarted, handKey = "default") {
+  if (!isGestureEnabledForHand(handKey)) {
+    return createDisabledGestureResult();
+  }
+
   if (!sessionStarted) {
     return {
       label: "None", // 시작 전에는 아무 동작도 없다고 판단합니다.
@@ -238,7 +271,7 @@ export function resolveGesture(landmarks, now, sessionStarted, handKey = "defaul
   const stableState = getStableState(handKey);
   const modelPrediction = gestureMode === "rules"
     ? null
-    : getModelPrediction(landmarks, now, handKey); // 규칙 전용 모드에서는 모델 통신 자체를 하지 않습니다.
+    : modelPredictionProvider(landmarks, now, handKey); // 규칙 전용 모드에서는 모델 통신 자체를 하지 않습니다.
   const modelResult = mapModelToResult(modelPrediction, stableState) || {
     label: "None", // AI 답변이 없으면 일단 인식 안 됨으로 둡니다.
     confidence: 0, // 신뢰도도 0입니다.

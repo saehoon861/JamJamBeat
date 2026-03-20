@@ -188,3 +188,35 @@ Numpy 벡터 연산을 활용해 속도를 극대화하고 DataFrame의 `Setting
 * [x] **파일명 기반 σ 자동 분기**: `scale` 포함 여부로 노이즈 분산 레인지를 자동 결정할 것.
 * [x] **무결성 및 메모리 보호**: 증강 모듈 내에서 원본 `df`의 카피본을 통해 인플레이스 업데이트(`copy()` 및 `+=` 등)를 진행하여 참조 변화로 인한 메모리 오염(SettingWithCopyWarning)을 완벽 차단할 것.
 * [x] **재현성 보장**: 파이프라인 구동 시 맨 처음 글로벌 랜덤 시드를 할당할 것.
+
+---
+
+## 6. 구현 기록 (Implementation Log)
+
+### 6.1 작업 일시 및 범위
+* **작업일**: 2026-03-20
+* **수정/신규 파일 목록**:
+
+| 파일 | 상태 | 설명 |
+|---|---|---|
+| `offline_pipeline/config.py` | 수정 | `DIR_AUGMENTED`, `AUG_RANDOM_SEED`, `AUG_PARAMS`, `FINGER_CHAINS` 추가 |
+| `offline_pipeline/modules/augmentor.py` | **신규** | `apply_mirroring`, `apply_blp`, `apply_gaussian_noise` 함수 구현 |
+| `offline_pipeline/runners/run_augment.py` | **신규** | CLI 기반 증강 파이프라인 진입점 |
+| `offline_pipeline/modules/__init__.py` | 수정 | 증강 함수 3개 export 추가 |
+
+### 6.2 계획 대비 변경 / 편차 사항
+* **편차 없음**: 계획서 §4.1 ~ §4.3의 명세를 그대로 구현함.
+* `config.py`의 기존 `ROOT` 경로 체계(`Path(__file__).resolve().parents[3]`)를 그대로 활용하여 `DIR_AUGMENTED` 경로를 파생.
+* `numpy` import를 `config.py` 상단에 추가 (계획서 §4.1 명세 반영, 기존에는 numpy 미사용).
+* `augmentor.py`의 좌표 컬럼 헬퍼(`_get_coord_cols`, `_get_x_cols`)를 내부 유틸로 구현하여 하드코딩 방지.
+
+### 6.3 방어로직 구현 현황
+
+| 체크리스트 항목 | 구현 여부 | 구현 위치 |
+|---|---|---|
+| 손목 원점 노이즈 차단 | ✅ | `augmentor.py` — `noise_matrix[:, 0:3] = 0.0` |
+| 정규화 기준선(0→9) 보호 | ✅ | `augmentor.py` — `FINGER_CHAINS`가 1번부터 시작하므로 0번/9번 뼈대 미포함 |
+| 전 클래스 동일 처리 | ✅ | `run_augment.py` — 클래스 필터링 없이 전체 df에 적용 |
+| 파일명 기반 σ 분기 | ✅ | `run_augment.py` — `'scale' in filename` 조건 분기 |
+| 메모리 보호 (copy) | ✅ | `run_augment.py` — `df_aug = df_origin.copy()` 후 증강 적용 |
+| 재현성 시드 고정 | ✅ | `run_augment.py` — `np.random.seed(config.AUG_RANDOM_SEED)` |

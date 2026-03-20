@@ -97,6 +97,16 @@ export default function App() {
   useInstrumentLayout();
   useLegacyMainRuntime();
   const { soundButtonLabel, requestStart, requestSoundToggle } = useMainControls();
+  const [showTutorial, setShowTutorial] = React.useState(false);
+
+  const handleStartClick = () => {
+    setShowTutorial(true);
+  };
+
+  const closeTutorial = () => {
+    setShowTutorial(false);
+    requestStart();
+  };
 
   return (
     <>
@@ -121,13 +131,36 @@ export default function App() {
         </defs>
       </svg>
 
+      {showTutorial && (
+        <section className="tutorial-overlay" aria-live="polite">
+          <div className="tutorial-modal">
+            <h2 className="tutorial-title">숲의 지휘자 가이드</h2>
+            <p className="tutorial-description">손동작을 하면 음악이 나옵니다!</p>
+            <div className="tutorial-image-container">
+              <img 
+                src="/assets/hand_gestures_guide.png" 
+                alt="6가지 손동작과 악기 매칭 가이드" 
+                className="tutorial-image" 
+              />
+            </div>
+            <button 
+              type="button" 
+              className="tutorial-close-button" 
+              onClick={closeTutorial}
+            >
+              알겠어요! 모험 시작하기
+            </button>
+          </div>
+        </section>
+      )}
+
       <main id="scene" className="scene hide-camera" data-fever="off">
         <section id="landingOverlay" className="landing-overlay" aria-live="polite">
           <div className="landing-panel">
             <div className="landing-logo-container">
               <img className="landing-logo" src={logoPng} srcSet={logoWebp} alt="JamJam Beat Logo" loading="eager" />
             </div>
-            <button id="landingStartButton" type="button" onClick={requestStart}>시작하기</button>
+            <button id="landingStartButton" type="button" onClick={handleStartClick}>시작하기</button>
           </div>
         </section>
 

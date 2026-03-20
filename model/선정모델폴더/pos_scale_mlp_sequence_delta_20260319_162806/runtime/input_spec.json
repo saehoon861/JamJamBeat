@@ -1,0 +1,18 @@
+{
+  "name": "raw_mediapipe_landmark_sequence",
+  "shape": [8, 63],
+  "dtype": "float32",
+  "layout": "sequence",
+  "caller_input_shapes": [[8, 63], [8, 21, 3]],
+  "model_input_shape": [8, 126],
+  "feature_order_path": "runtime/feature_order.json",
+  "description": "Caller provides 8 consecutive raw MediaPipe landmark frames. The bundle internally applies pos_scale normalization per frame, flattens to 63d joint features, builds first-order temporal deltas, and produces the final [8,126] model input.",
+  "notes": [
+    "Official caller contract is raw sequence only: shape [8,63] or [8,21,3].",
+    "Internal normalization is pos_scale: (pts - pts[0]) / ||pts[9]-pts[0]||.",
+    "Internal model features are x0..z20 (63d joint) + d_x0..d_z20 (63d delta).",
+    "Delta = current_frame - previous_frame and the first frame delta is all zeros.",
+    "Maintain a rolling raw landmark buffer of 8 frames in the frontend.",
+    "feature_order.json describes the internal 126d model feature order, not the caller raw input order."
+  ]
+}

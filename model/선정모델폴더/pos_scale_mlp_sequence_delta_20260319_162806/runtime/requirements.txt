@@ -1,4 +1,4 @@
---index-url https://download.pytorch.org/whl/cu128
-torch==2.9.0
+# Python 로컬 검증 용도 (브라우저 추론에는 불필요)
+# 브라우저 ONNX 추론: npm install onnxruntime-web
 numpy>=2.0,<3.0
-onnxruntime>=1.20,<2.0
+onnxruntime>=1.20,<2.0  # Python 환경 전용 (로컬 테스트)

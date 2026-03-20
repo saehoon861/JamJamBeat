@@ -49,9 +49,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(rootDir, "index.html"),
-        theme: resolve(rootDir, "theme.html"),
-        admin: resolve(rootDir, "admin.html"),
-        mapping: resolve(rootDir, "mapping.html")
+        theme: resolve(rootDir, "theme.html")
       }
     }
   },

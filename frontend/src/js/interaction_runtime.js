@@ -431,19 +431,23 @@ export function createInteractionRuntime({
 
   // 손 커서의 위치와 보이기/숨기기를 담당합니다.
   function setPointer(point, now, landmarks = null) {
+    const baseTransform = "translate(-50%, -86%)";
     handCursor.style.opacity = 1;
     handCursor.style.left = `${point.x}px`;
     handCursor.style.top = `${point.y}px`;
 
-    // 손목과 검지 끝의 각도를 계산하여 지휘봉 회전
+    // 손목과 검지 끝의 각도를 계산하여 세로 지휘봉 이미지를 회전합니다.
     if (landmarks && landmarks.length > 8) {
       const wrist = landmarks[0];
       const indexTip = landmarks[8];
       const dx = indexTip.x - wrist.x;
       const dy = indexTip.y - wrist.y;
-      const angle = Math.atan2(dy, -dx) * (180 / Math.PI);
-      handCursor.style.transform = `rotate(${angle}deg)`;
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+      handCursor.style.transform = `${baseTransform} rotate(${angle}deg)`;
+      return;
     }
+
+    handCursor.style.transform = baseTransform;
   }
 
   // 모든 터치 포인트(손가락 끝)에 대해 비눗방울 충돌을 검사합니다.

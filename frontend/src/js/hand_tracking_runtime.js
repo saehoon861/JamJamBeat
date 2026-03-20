@@ -115,8 +115,11 @@ export function createHandTrackingRuntime({
   // cachedLandmarksAt 은 위 좌표를 언제 저장했는지 기록합니다.
   let cachedLandmarksAt = 0;
   let lastHandRenderAt = 0;
+  let lastCachedBubbleCollisionAt = 0;
   const HAND_RENDER_INTERVAL_MS = 33;
   const fullInferenceCanvas = document.createElement("canvas");
+  const fullInferenceCtx = fullInferenceCanvas.getContext("2d", { willReadFrequently: true });
+  const CACHED_BUBBLE_COLLISION_INTERVAL_MS = 48;
   let lastDetectTimestampMs = 0;
   let lastSlowWarnAt = 0;
   let adaptiveInferIntervalMs = inferIntervalMs;
@@ -153,9 +156,8 @@ export function createHandTrackingRuntime({
     return { width, height };
   }
 
-  function drawVideoRegionToCanvas(canvas, sx, sy, sourceWidth, sourceHeight) {
+  function drawVideoRegionToCanvas(canvas, ctx, sx, sy, sourceWidth, sourceHeight) {
     const { width, height } = resizeCanvasForSource(canvas, sourceWidth, sourceHeight);
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(video, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
@@ -197,9 +199,12 @@ export function createHandTrackingRuntime({
       }
       // 검지 끝 좌표를 손 커서 위치로 변환합니다.
       const primaryHand = cachedHands.find((hand) => hand.handKey === "right") || cachedHands[0];
-      // 모든 손가락 끝 위치를 전달하여 비눗방울 터뜨리기를 시도합니다.
-      const flickerPoints = [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(primaryHand.landmarks[idx], handCanvas));
-      interactionRuntime.processBubbleCollisions(flickerPoints);
+      if (now - lastCachedBubbleCollisionAt >= CACHED_BUBBLE_COLLISION_INTERVAL_MS) {
+        // 저장된 좌표로는 충돌 검사 빈도를 낮춰도 체감 차이가 적어 부담을 줄입니다.
+        const flickerPoints = [4, 8, 12, 16, 20].map((idx) => interactionRuntime.createInstrumentPoint(primaryHand.landmarks[idx], handCanvas));
+        interactionRuntime.processBubbleCollisions(flickerPoints);
+        lastCachedBubbleCollisionAt = now;
+      }
 
       const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
       // 커서를 실제 화면 위치로 옮깁니다.
@@ -326,7 +331,7 @@ export function createHandTrackingRuntime({
         const detectStartedAt = PERF_ENABLED ? performance.now() : 0;
 
         // tasks-vision JS API는 detectForVideo()/detect() 경로를 사용합니다.
-        const inferenceCanvas = drawVideoRegionToCanvas(fullInferenceCanvas, 0, 0, video.videoWidth, video.videoHeight);
+        const inferenceCanvas = drawVideoRegionToCanvas(fullInferenceCanvas, fullInferenceCtx, 0, 0, video.videoWidth, video.videoHeight);
         if (inferenceCanvas) {
           try {
             const detectTimestamp = getNextDetectTimestamp(now);

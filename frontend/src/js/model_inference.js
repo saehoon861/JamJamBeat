@@ -202,6 +202,8 @@ let initializationError = null;
 let lastInitFailedAt = 0;
 
 const requestStateByHand = new Map();
+let globalRequestInFlight = false;
+let lastGlobalRequestAt = 0;
 const perfWindow = {
   startedAt: performance.now(),
   lastLogAt: performance.now(),
@@ -237,6 +239,10 @@ function getRequestIntervalMs() {
   const raw = Number(new URLSearchParams(window.location.search).get("modelIntervalMs"));
   if (!Number.isFinite(raw)) return DEFAULT_REQUEST_INTERVAL_MS;
   return Math.max(60, Math.min(400, Math.round(raw)));
+}
+
+function getGlobalRequestGapMs() {
+  return Math.max(45, Math.round(getRequestIntervalMs() * 0.5));
 }
 
 function getHandRequestState(handKey = "default") {
@@ -382,18 +388,23 @@ function normalizePrediction(predIndex, confidence, probs, tsMs, tau = DEFAULT_T
 
 async function scheduleModelRequest(landmarks, now, handKey = "default") {
   const handState = getHandRequestState(handKey);
+  const requestIntervalMs = getRequestIntervalMs();
   if (!onnxSession) {
     // 모델이 아직 로드 안 됐으면 초기화 시도
     const initialized = await initializeModel();
     if (!initialized) return;
   }
   if (handState.inFlight) return; // 이미 추론 중이면 새 요청을 보내지 않습니다.
-  if (now - handState.lastRequestAt < getRequestIntervalMs()) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
+  if (globalRequestInFlight) return; // 양손이 동시에 세션을 점유하지 않도록 직렬화합니다.
+  if (now - handState.lastRequestAt < requestIntervalMs) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
+  if (now - lastGlobalRequestAt < getGlobalRequestGapMs()) return; // 양손 활성 시에도 전체 요청 밀도를 제한합니다.
 
   const features = sanitizeLandmarks(landmarks, handKey);
   if (!features) return; // 손 좌표가 이상하면 추론하지 않습니다.
 
   const tsMs = Math.round(now);
+  globalRequestInFlight = true;
+  lastGlobalRequestAt = now;
   handState.inFlight = true;
   handState.lastRequestAt = now;
   handState.lastStartedAt = performance.now();
@@ -437,6 +448,7 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
       perfWindow.maxMs = Math.max(perfWindow.maxMs, elapsedMs);
     }
   } finally {
+    globalRequestInFlight = false;
     handState.inFlight = false;
     flushPerf();
   }

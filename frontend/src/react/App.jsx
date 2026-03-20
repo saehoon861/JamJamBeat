@@ -4,104 +4,66 @@ import { useInstrumentLayout } from "./hooks/useInstrumentLayout.js";
 import { useMainControls } from "./hooks/useMainControls.js";
 import { useLegacyMainRuntime } from "./hooks/useLegacyMainRuntime.js";
 import logoWebp from "../../assets/로고-removebg-preview.webp";
-import logoPng from "../../assets/로고-removebg-preview.png";
-import hedgehogBaseVideo from "../../assets/objects/고슴도치1.mov?url";
-import hedgehogGestureVideo from "../../assets/objects/고슴도치2.mov?url";
-import foxImage from "../../assets/objects/여우.webp";
-import rabbitImage from "../../assets/objects/토끼.webp";
-import squirrelImage from "../../assets/objects/다람쥐.webp";
-import catImage from "../../assets/objects/고양이.webp";
-import penguinBaseVideo from "../../assets/objects/팽귄1.mov?url";
-import penguinImage from "../../assets/objects/팽귄.webp";
+// import logoPng from "../../assets/로고-removebg-preview.png";
+const logoPng = logoWebp; 
+import batonImage from "../../assets/objects/지휘봉.png";
 import backgroundVideo from "../../assets/objects/움직이는_동화_영상_만들기.mp4?url";
 
 const INSTRUMENTS = [
   {
     id: "drum",
     elementId: "instrumentDrum",
-    className: "instrument instrument-drum instrument-hedgehog1",
+    className: "instrument instrument-drum mvp-button",
     label: "고슴도치 드럼",
-    content: (
-      <>
-        <video
-          className="instrument-art instrument-video-source"
-          src={hedgehogBaseVideo}
-          data-variant-base={hedgehogBaseVideo}
-          data-variant-gesture={hedgehogGestureVideo}
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="auto"
-          aria-hidden="true"
-        />
-        <canvas className="instrument-art instrument-art-canvas" aria-hidden="true" />
-      </>
-    )
+    animal: "🦔",
+    instrument: "🥁"
   },
   {
     id: "xylophone",
     elementId: "instrumentXylophone",
-    className: "instrument instrument-xylophone",
+    className: "instrument instrument-xylophone mvp-button",
     label: "여우 실로폰",
-    content: (
-      <img className="instrument-art" src={foxImage} alt="여우" aria-hidden="true" />
-    )
+    animal: "🦊",
+    instrument: "🎹"
   },
   {
     id: "tambourine",
     elementId: "instrumentTambourine",
-    className: "instrument instrument-tambourine",
+    className: "instrument instrument-tambourine mvp-button",
     label: "토끼 탬버린",
-    content: (
-      <img className="instrument-art" src={rabbitImage} alt="토끼" aria-hidden="true" />
-    )
+    animal: "🐰",
+    instrument: "🪘"
   },
   {
     id: "a",
     elementId: "instrumentA",
-    className: "instrument instrument-squirrel",
+    className: "instrument instrument-squirrel mvp-button",
     label: "다람쥐 심벌즈",
-    content: (
-      <img className="instrument-art" src={squirrelImage} alt="다람쥐" aria-hidden="true" />
-    )
+    animal: "🐿️",
+    instrument: "🔔"
   },
   {
     id: "cat",
     elementId: "instrumentCat",
-    className: "instrument instrument-cat",
+    className: "instrument instrument-cat mvp-button",
     label: "고양이 하트",
-    content: (
-      <img className="instrument-art" src={catImage} alt="고양이" aria-hidden="true" />
-    )
+    animal: "🐱",
+    instrument: "💖"
   },
   {
     id: "penguin",
     elementId: "instrumentPenguin",
-    className: "instrument instrument-penguin instrument-penguin1",
-    label: "펭귄 실로폰",
-    content: (
-      <>
-        <video
-          className="instrument-art instrument-video-source"
-          src={penguinBaseVideo}
-          data-variant-base={penguinBaseVideo}
-          data-variant-gesture={penguinBaseVideo}
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="auto"
-          aria-hidden="true"
-        />
-        <canvas className="instrument-art instrument-art-canvas" aria-hidden="true" />
-        <img className="instrument-art instrument-fallback-art" src={penguinImage} alt="펭귄" aria-hidden="true" />
-      </>
-    )
+    className: "instrument instrument-penguin mvp-button",
+    label: "펭귄 기타",
+    animal: "🐧",
+    instrument: "🎸"
   }
 ];
 
-function getInstrumentStyle(id) {
+function getInstrumentStyle(id, isMvpButton) {
+  // MVP 버튼은 그리드 레이아웃 사용하므로 위치 스타일 불필요
+  if (isMvpButton) return undefined;
+
   const position = DEFAULT_LAYOUT[id];
   if (!position) return undefined;
 
@@ -113,15 +75,20 @@ function getInstrumentStyle(id) {
 }
 
 function InstrumentButton({ instrument }) {
+  const isMvpButton = instrument.className.includes('mvp-button');
+
   return (
     <button
       id={instrument.elementId}
       className={instrument.className}
       type="button"
       aria-label={instrument.label}
-      style={getInstrumentStyle(instrument.id)}
+      style={getInstrumentStyle(instrument.id, isMvpButton)}
     >
-      {instrument.content}
+      <div className="mvp-button-content">
+        <span className="mvp-animal">{instrument.animal}</span>
+        <span className="mvp-instrument">{instrument.instrument}</span>
+      </div>
     </button>
   );
 }
@@ -161,8 +128,6 @@ export default function App() {
               <img className="landing-logo" src={logoPng} srcSet={logoWebp} alt="JamJam Beat Logo" loading="eager" />
             </div>
             <button id="landingStartButton" type="button" onClick={requestStart}>시작하기</button>
-            <a className="landing-admin-link" href="./index.html?admin=1">관리자 모드 (직접 배치)</a>
-            <a className="landing-admin-link" href="./mapping.html">매칭 설정 페이지</a>
           </div>
         </section>
 
@@ -209,7 +174,7 @@ export default function App() {
             <video id="webcam" autoPlay playsInline muted />
           </div>
           <div className="guide-silhouette" aria-hidden="true" />
-          <img id="gestureSquirrelEffect" className="gesture-squirrel" src={squirrelImage} alt="" aria-hidden="true" />
+          <div id="gestureSquirrelEffect" className="gesture-squirrel" aria-hidden="true">🐿️</div>
           <p id="pulseMessage" className="pulse-message">손을 잼잼! 해서 숲을 깨워봐!</p>
         </section>
 
@@ -219,8 +184,7 @@ export default function App() {
           <button id="soundUnlockButton" className="sound-unlock" type="button" onClick={requestSoundToggle}>{soundButtonLabel}</button>
           <button id="testModeToggleButton" className="test-mode-toggle" type="button">테스트 모드 켜기</button>
           <a className="hud-main-link" href="./index.html">메인화면으로</a>
-          <a className="hud-main-link" href="./mapping.html">매칭 설정</a>
-          <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
+                    <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
         </section>
 
         <section id="adminControls" className="admin-floating-controls" aria-live="polite">
@@ -235,7 +199,9 @@ export default function App() {
 
         <canvas id="handCanvas" />
         <canvas id="effectCanvas" aria-hidden="true" />
-        <div id="handCursor" className="hand-cursor" aria-hidden="true" />
+        <div id="handCursor" className="hand-cursor" aria-hidden="true">
+          <img src={batonImage} alt="" aria-hidden="true" />
+        </div>
 
         <section id="testModePanel" className="test-mode-panel is-hidden" aria-live="polite">
           <div className="test-mode-head">

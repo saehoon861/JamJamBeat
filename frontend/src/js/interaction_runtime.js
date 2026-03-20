@@ -52,7 +52,10 @@ export function createInteractionRuntime({
       handStateByKey.set(handKey, {
         lastGestureLabel: "None",
         currentMelodyType: null,
-        lastGestureTriggerAt: 0
+        lastGestureTriggerAt: 0,
+        lastResolvedGesture: null,
+        lastRawModelPrediction: null,
+        lastUpdatedAt: 0
       });
     }
     return handStateByKey.get(handKey);
@@ -83,8 +86,32 @@ export function createInteractionRuntime({
     return getHandState(handKey).lastGestureLabel;
   }
 
+  function getDebugSnapshot() {
+    const snapshot = {};
+    handStateByKey.forEach((handState, handKey) => {
+      snapshot[handKey] = {
+        lastGestureLabel: handState.lastGestureLabel,
+        currentMelodyType: handState.currentMelodyType,
+        lastResolvedGesture: handState.lastResolvedGesture,
+        lastRawModelPrediction: handState.lastRawModelPrediction,
+        lastUpdatedAt: handState.lastUpdatedAt
+      };
+    });
+    return snapshot;
+  }
+
   function hasRecognizedGesture() {
     for (const handState of handStateByKey.values()) {
+      if (handState.lastGestureLabel && handState.lastGestureLabel !== "None") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hasRecognizedGestureExcept(handKey = "default") {
+    for (const [key, handState] of handStateByKey.entries()) {
+      if (key === handKey) continue;
       if (handState.lastGestureLabel && handState.lastGestureLabel !== "None") {
         return true;
       }
@@ -191,6 +218,7 @@ export function createInteractionRuntime({
       gestureLabel: meta.gestureLabel || null,
       gestureSource: meta.gestureSource || null,
       triggerTs: now,
+      inferenceTs: Number.isFinite(meta.inferenceTs) ? meta.inferenceTs : null,
       handKey: meta.handKey || null
     });
     if (typeof playGestureSound === "function") {
@@ -268,25 +296,34 @@ export function createInteractionRuntime({
         audioApi.stopMelodySequence(handState.currentMelodyType);
         handState.currentMelodyType = null;
       }
-      triggerGesturePlaybackById(instrumentId, playback, now, { gestureLabel: label, gestureSource: "model", handKey });
+      audioApi.stopMelodiesForHand?.(handKey);
+      triggerGesturePlaybackById(instrumentId, playback, now, {
+        gestureLabel: label,
+        gestureSource: "model",
+        handKey,
+        inferenceTs: handState.lastUpdatedAt
+      });
       handState.lastGestureTriggerAt = now;
       return;
     }
 
     // 멜로디 시퀀스 시작
-    if (handState.currentMelodyType !== playback.melodyType) {
+    const melodyType = `${playback.melodyType}:${handKey}`;
+    if (handState.currentMelodyType !== melodyType) {
       // 이전 멜로디 중지
       if (handState.currentMelodyType) {
         audioApi.stopMelodySequence(handState.currentMelodyType);
       }
+      audioApi.stopMelodiesForHand?.(handKey);
       // 새 멜로디 시작
-      const melodyType = `${playback.melodyType}:${handKey}`;
+      let pendingInferenceTs = handState.lastUpdatedAt;
       audioApi.startMelodySequence(melodyType, (note) => {
         audioApi.setPlaybackContext({
           instrumentId,
           gestureLabel: `${label}:${handKey}`,
           gestureSource: `model:${handKey}`,
           triggerTs: performance.now(),
+          inferenceTs: Number.isFinite(pendingInferenceTs) ? pendingInferenceTs : null,
           handKey
         });
         if (typeof playGestureSound === "function") {
@@ -294,6 +331,7 @@ export function createInteractionRuntime({
         } else {
           playInstrumentSound(instrumentId, note);
         }
+        pendingInferenceTs = null;
       });
       handState.currentMelodyType = melodyType;
     }
@@ -318,6 +356,10 @@ export function createInteractionRuntime({
     const handState = getHandState(handKey);
 
     const gesture = resolveGesture(landmarks, now, isSessionStarted(), handKey);
+    const rawModel = getModelPrediction(landmarks, now, handKey);
+    handState.lastResolvedGesture = gesture ? { ...gesture } : null;
+    handState.lastRawModelPrediction = rawModel ? { ...rawModel } : null;
+    handState.lastUpdatedAt = now;
 
     // 제스처가 없거나 신뢰도가 매우 낮으면 멜로디 중지
     const shouldStopMelody = !gesture || gesture.label === "None" ||
@@ -326,17 +368,22 @@ export function createInteractionRuntime({
     if (shouldStopMelody) {
       activeGestureHands.delete(handKey);
       setGestureObjectVariant?.(activeGestureHands.size > 0);
+      const hasOtherRecognizedGesture = hasRecognizedGestureExcept(handKey);
+      const hadCurrentMelody = Boolean(handState.currentMelodyType);
       // 손동작이 없거나 불확실하면 멜로디 중지
       if (handState.currentMelodyType) {
         audioApi.stopMelodySequence(handState.currentMelodyType);
         handState.currentMelodyType = null;
         handState.lastGestureTriggerAt = 0;
+      }
+      audioApi.stopMelodiesForHand?.(handKey);
+      const hasOtherActiveMelody = audioApi.hasAnyActiveMelody?.() ?? false;
+      if (hadCurrentMelody && !hasOtherRecognizedGesture && !hasOtherActiveMelody) {
         setStatusText(`${handKey} 손 멜로디 중지됨`);
       }
 
       // 모델도 "아무것도 아님"이라고 보면 사용자에게 다시 동작해달라고 안내합니다.
-      if (!gesture || gesture.label === "None") {
-        const rawModel = getModelPrediction(landmarks, now, handKey);
+      if ((!gesture || gesture.label === "None") && !hasOtherRecognizedGesture && !hasOtherActiveMelody) {
         if (rawModel?.classId === 0 || String(rawModel?.label || "").trim().toLowerCase() === "class0") {
           setStatusText(`${handKey} 손 동작을 다시해주세요.`);
         }
@@ -383,10 +430,20 @@ export function createInteractionRuntime({
   }
 
   // 손 커서의 위치와 보이기/숨기기를 담당합니다.
-  function setPointer(point, now) {
+  function setPointer(point, now, landmarks = null) {
     handCursor.style.opacity = 1;
     handCursor.style.left = `${point.x}px`;
     handCursor.style.top = `${point.y}px`;
+
+    // 손목과 검지 끝의 각도를 계산하여 지휘봉 회전
+    if (landmarks && landmarks.length > 8) {
+      const wrist = landmarks[0];
+      const indexTip = landmarks[8];
+      const dx = indexTip.x - wrist.x;
+      const dy = indexTip.y - wrist.y;
+      const angle = Math.atan2(dy, -dx) * (180 / Math.PI);
+      handCursor.style.transform = `rotate(${angle}deg)`;
+    }
   }
 
   // 모든 터치 포인트(손가락 끝)에 대해 비눗방울 충돌을 검사합니다.
@@ -410,8 +467,12 @@ export function createInteractionRuntime({
         audioApi.stopMelodySequence(handState.currentMelodyType);
         handState.currentMelodyType = null;
       }
+      audioApi.stopMelodiesForHand?.(handKey);
       handState.lastGestureLabel = "None";
       handState.lastGestureTriggerAt = 0;
+      handState.lastResolvedGesture = null;
+      handState.lastRawModelPrediction = null;
+      handState.lastUpdatedAt = 0;
       gestureHoldStartByKey.delete(handKey);
     });
 
@@ -429,6 +490,7 @@ export function createInteractionRuntime({
     processBubbleCollisions,
     setPointer,
     resetTrackingState,
-    getCurrentGesture
+    getCurrentGesture,
+    getDebugSnapshot
   };
 }

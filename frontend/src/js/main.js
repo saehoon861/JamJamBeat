@@ -5,7 +5,7 @@ import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision"; // �
 import * as Audio from "./audio.js"; // 소리 재생 관련 기능을 가져옵니다.
 import * as Renderer from "./renderer.js"; // 화면 그리기 관련 기능을 가져옵니다.
 import { resolveGesture } from "./gestures.js"; // 손동작 인식 로직을 가져옵니다.
-import { getModelPrediction } from "./model_inference.js"; // 모델의 원본 예측 정보를 가져옵니다.
+import { getModelPrediction, getModelInferenceStatus } from "./model_inference.js"; // 모델의 원본 예측 정보를 가져옵니다.
 import { getConfiguredHandLandmarkerTaskPath, getConfiguredMediaPipeWasmRoot, getConfiguredSplitHandInference } from "./env_config.js";
 import { setupSeamlessBackgroundLoop, applySceneMode } from "./scene_runtime.js";
 import { createParticleSystem, restartClassAnimation } from "./particle_system.js";
@@ -58,6 +58,48 @@ const landingOverlay = document.getElementById("landingOverlay"); // 처음 시�
 const landingStartButton = document.getElementById("landingStartButton"); // 시작하기 버튼을 가져옵니다.
 const pulseMessage = document.getElementById("pulseMessage"); // 화면 중앙에 뜨는 안내 메시지를 가져옵니다.
 const gestureSquirrelEffect = document.getElementById("gestureSquirrelEffect"); // 다람쥐 효과 이미지를 가져옵니다.
+const testModeToggleButton = document.getElementById("testModeToggleButton");
+const testModePanel = document.getElementById("testModePanel");
+const testModeSummary = document.getElementById("testModeSummary");
+const testModeSession = document.getElementById("testModeSession");
+const testModeHands = document.getElementById("testModeHands");
+const testModeModel = document.getElementById("testModeModel");
+const testModeInFlight = document.getElementById("testModeInFlight");
+const testModeLastInference = document.getElementById("testModeLastInference");
+const testModeLeftRaw = document.getElementById("testModeLeftRaw");
+const testModeLeftFinal = document.getElementById("testModeLeftFinal");
+const testModeLeftSource = document.getElementById("testModeLeftSource");
+const testModeLeftObject = document.getElementById("testModeLeftObject");
+const testModeLeftInferenceMs = document.getElementById("testModeLeftInferenceMs");
+const testModeLeftSoundMs = document.getElementById("testModeLeftSoundMs");
+const testModeLeftMelody = document.getElementById("testModeLeftMelody");
+const testModeRightRaw = document.getElementById("testModeRightRaw");
+const testModeRightFinal = document.getElementById("testModeRightFinal");
+const testModeRightSource = document.getElementById("testModeRightSource");
+const testModeRightObject = document.getElementById("testModeRightObject");
+const testModeRightInferenceMs = document.getElementById("testModeRightInferenceMs");
+const testModeRightSoundMs = document.getElementById("testModeRightSoundMs");
+const testModeRightMelody = document.getElementById("testModeRightMelody");
+const testModeFieldEls = {
+  left: {
+    raw: testModeLeftRaw,
+    final: testModeLeftFinal,
+    source: testModeLeftSource,
+    object: testModeLeftObject,
+    inferenceMs: testModeLeftInferenceMs,
+    soundMs: testModeLeftSoundMs,
+    melody: testModeLeftMelody
+  },
+  right: {
+    raw: testModeRightRaw,
+    final: testModeRightFinal,
+    source: testModeRightSource,
+    object: testModeRightObject,
+    inferenceMs: testModeRightInferenceMs,
+    soundMs: testModeRightSoundMs,
+    melody: testModeRightMelody
+  }
+};
 
 const instrumentElements = { // 각 동물 악기들의 HTML 요소를 하나로 묶어둡니다.
   drum: document.getElementById("instrumentDrum"), // 고슴도치 드럼 DOM입니다.
@@ -190,6 +232,105 @@ const gestureMapping = loadGestureMapping();
 const particleSystem = createParticleSystem(effectCtx, effectCanvas);
 let animationManager = createNoopAnimationManager();
 const feverController = createNoopFeverController();
+const lastSoundEventByHand = new Map();
+
+let testModeEnabled = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const queryValue = params.get("testMode");
+  if (queryValue === "1" || queryValue === "true") return true;
+  if (queryValue === "0" || queryValue === "false") return false;
+  return false;
+})();
+
+function formatDisplayGesture(label, confidence = null, classId = null) {
+  const normalized = String(label || "").trim().toLowerCase();
+  let displayLabel = "아무것도 아님";
+  if (normalized === "fist" || classId === 1) displayLabel = "주먹";
+  else if (normalized === "openpalm" || normalized === "open_palm" || normalized === "open palm" || classId === 2) displayLabel = "손바닥";
+  else if (normalized === "v" || classId === 3) displayLabel = "브이";
+  else if (normalized === "pinky" || classId === 4) displayLabel = "새끼손가락";
+  else if (normalized === "animal" || classId === 5) displayLabel = "애니멀";
+  else if (normalized === "kheart" || normalized === "k-heart" || classId === 6) displayLabel = "K-하트";
+  else if (normalized && normalized !== "none" && normalized !== "class0") displayLabel = label;
+
+  if (!Number.isFinite(confidence)) return displayLabel;
+  return `${displayLabel} ${(confidence * 100).toFixed(0)}%`;
+}
+
+function getInstrumentName(instrumentId) {
+  const instrument = instruments.find((item) => item.id === instrumentId);
+  return instrument?.name || "-";
+}
+
+function formatMs(value) {
+  return Number.isFinite(value) ? `${value.toFixed(1)}ms` : "-";
+}
+
+function setPanelValue(element, value) {
+  if (!element) return;
+  element.textContent = value;
+}
+
+function syncTestModeUI() {
+  if (testModeToggleButton) {
+    testModeToggleButton.textContent = testModeEnabled ? "테스트 모드 끄기" : "테스트 모드 켜기";
+    testModeToggleButton.setAttribute("aria-pressed", String(testModeEnabled));
+  }
+  if (testModePanel) {
+    testModePanel.classList.toggle("is-hidden", !testModeEnabled);
+  }
+}
+
+function renderTestModePanel() {
+  if (!testModeEnabled) return;
+
+  const debugSnapshot = interactionRuntime.getDebugSnapshot?.() || {};
+  const modelStatus = getModelInferenceStatus(performance.now());
+  const handKeys = Object.keys(debugSnapshot).filter((handKey) => {
+    const hand = debugSnapshot[handKey];
+    return Boolean(hand?.lastUpdatedAt);
+  });
+
+  setPanelValue(testModeSummary, "Raw와 Final을 동시에 보며 추론/후처리를 구분합니다.");
+  setPanelValue(testModeSession, sessionStarted ? "시작됨" : "대기");
+  setPanelValue(testModeHands, handKeys.length > 0 ? handKeys.join(", ") : "없음");
+  setPanelValue(testModeModel, modelStatus.endpointConfigured ? `${modelStatus.mode} ready` : "loading");
+  setPanelValue(
+    testModeInFlight,
+    modelStatus.recentInference
+      ? `Yes${Number.isFinite(modelStatus.lastCompletedAgoMs) ? ` (${Math.round(modelStatus.lastCompletedAgoMs)}ms 전)` : ""}`
+      : "No"
+  );
+  setPanelValue(testModeLastInference, formatMs(modelStatus.lastDurationMs));
+
+  ["left", "right"].forEach((handKey) => {
+    const hand = debugSnapshot[handKey];
+    const rawModel = hand?.lastRawModelPrediction || null;
+    const resolved = hand?.lastResolvedGesture || null;
+    const soundEvent = lastSoundEventByHand.get(handKey) || null;
+    const instrumentId = resolved?.label && resolved.label !== "None"
+      ? (gestureMapping[resolved.label] || null)
+      : null;
+    const fields = testModeFieldEls[handKey];
+    if (!fields) return;
+
+    setPanelValue(fields.raw, formatDisplayGesture(rawModel?.label, rawModel?.confidence, rawModel?.classId ?? null));
+    setPanelValue(fields.final, formatDisplayGesture(resolved?.label, resolved?.confidence));
+    setPanelValue(fields.source, resolved?.source || "-");
+    setPanelValue(fields.object, instrumentId ? getInstrumentName(instrumentId) : "-");
+    setPanelValue(fields.inferenceMs, formatMs(rawModel?.elapsed_ms));
+    setPanelValue(fields.soundMs, formatMs(soundEvent?.inferenceLatencyMs));
+    setPanelValue(fields.melody, hand?.currentMelodyType || "-");
+  });
+}
+
+function startTestModeLoop() {
+  const tick = () => {
+    renderTestModePanel();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
 
 function getMappedSoundProfile(instrumentId) {
   return getSoundProfileForInstrument(soundMapping, DEFAULT_SOUND_MAPPING, SOUND_PROFILES, instrumentId);
@@ -741,6 +882,24 @@ async function init() {
 
   controlRuntime.bind(); // 버튼과 입력 이벤트를 연결합니다.
   controlRuntime.syncSoundButtonUI(); // 소리 버튼 글자를 현재 상태에 맞춥니다.
+  window.addEventListener("jamjam:sound-played", (event) => {
+    const detail = event.detail || {};
+    const handKey = String(detail.handKey || "").toLowerCase();
+    if (!handKey) return;
+    lastSoundEventByHand.set(handKey, {
+      latencyMs: Number.isFinite(detail.latencyMs) ? detail.latencyMs : null,
+      inferenceLatencyMs: Number.isFinite(detail.inferenceLatencyMs) ? detail.inferenceLatencyMs : null,
+      at: Number.isFinite(detail.at) ? detail.at : Date.now()
+    });
+  });
+  if (testModeToggleButton) {
+    testModeToggleButton.addEventListener("click", () => {
+      testModeEnabled = !testModeEnabled;
+      syncTestModeUI();
+    });
+  }
+  syncTestModeUI();
+  startTestModeLoop();
   VIDEO_INSTRUMENT_IDS.forEach((id) => {
     const el = instrumentElements[id];
     if (!el) return;

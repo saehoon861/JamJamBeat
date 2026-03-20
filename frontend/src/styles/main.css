@@ -576,6 +576,26 @@ video.object-thumbnail::-webkit-media-controls {
   box-shadow: 0 6px 16px rgba(125, 182, 154, 0.3);
 }
 
+.test-mode-toggle {
+  margin-top: var(--spacing-sm);
+  margin-left: var(--spacing-sm);
+  border: 1px solid rgba(255, 222, 143, 0.24);
+  border-radius: var(--radius-pill);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-weight: 700;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  color: var(--color-text-main);
+  background: linear-gradient(135deg, rgba(255, 222, 143, 0.14) 0%, rgba(125, 182, 154, 0.16) 100%);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  transition: var(--transition-normal);
+}
+
+.test-mode-toggle:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, rgba(255, 222, 143, 0.2) 0%, rgba(125, 182, 154, 0.22) 100%);
+}
+
 .hud-main-link {
   display: inline-flex;
   margin-top: var(--spacing-sm);
@@ -601,6 +621,84 @@ video.object-thumbnail::-webkit-media-controls {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   line-height: 1.4;
+}
+
+.test-mode-panel {
+  position: absolute;
+  z-index: 8;
+  top: var(--spacing-md);
+  right: var(--spacing-md);
+  width: min(92vw, 420px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(18, 30, 38, 0.9) 0%, rgba(10, 18, 24, 0.94) 100%),
+    radial-gradient(circle at top right, rgba(255, 222, 143, 0.12) 0%, transparent 42%);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  padding: 16px;
+}
+
+.test-mode-panel.is-hidden {
+  display: none;
+}
+
+.test-mode-head {
+  margin-bottom: 12px;
+}
+
+.test-mode-eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffe7a7;
+}
+
+.test-mode-summary {
+  margin: 6px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-sub);
+}
+
+.test-mode-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.test-mode-card {
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.test-mode-card h3 {
+  margin: 0 0 10px;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+}
+
+.test-mode-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.test-mode-grid dt {
+  color: var(--color-text-muted);
+}
+
+.test-mode-grid dd {
+  margin: 0;
+  font-weight: 700;
+  color: var(--color-text-main);
+  word-break: break-word;
 }
 
 .admin-floating-controls {
@@ -698,20 +796,46 @@ video.object-thumbnail::-webkit-media-controls {
 .hand-cursor {
   position: absolute;
   z-index: 7;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 2px solid rgba(180, 255, 210, 0.85);
-  background: radial-gradient(circle at 38% 36%, rgba(200, 255, 220, 0.7) 0%, rgba(120, 220, 160, 0.35) 50%, rgba(80, 180, 130, 0.1) 100%);
+  width: 60px;
+  height: 60px;
+  transform-origin: 20% 50%;
+  pointer-events: none;
+}
+
+.hand-cursor::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  width: 50px;
+  height: 6px;
+  background: linear-gradient(to right, rgba(138, 180, 160, 0.4) 0%, rgba(180, 255, 210, 0.9) 70%, rgba(200, 255, 220, 0.95) 100%);
+  border-radius: 3px;
+  transform: translateY(-50%);
   box-shadow:
     0 0 12px rgba(140, 230, 180, 0.7),
     0 0 28px rgba(100, 200, 150, 0.4),
     0 0 48px rgba(80, 180, 130, 0.15),
     inset 0 0 8px rgba(255, 255, 240, 0.3);
-  transform: translate(-50%, -50%);
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 140ms ease;
+}
+
+.hand-cursor::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  background: radial-gradient(circle at 40% 40%, rgba(230, 255, 240, 0.95) 0%, rgba(180, 255, 210, 0.85) 50%, rgba(120, 220, 160, 0.6) 100%);
+  border: 2px solid rgba(180, 255, 210, 0.9);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  box-shadow:
+    0 0 16px rgba(180, 255, 210, 0.9),
+    0 0 32px rgba(120, 220, 160, 0.6),
+    inset 0 0 6px rgba(255, 255, 240, 0.5);
+  pointer-events: none;
 }
 
 .landing-overlay {
@@ -855,6 +979,7 @@ video.object-thumbnail::-webkit-media-controls {
 
 #landingStartButton:focus-visible,
 .sound-unlock:focus-visible,
+.test-mode-toggle:focus-visible,
 .hud-main-link:focus-visible,
 .admin-floating-controls button:focus-visible,
 .admin-floating-controls a:focus-visible,
@@ -958,16 +1083,26 @@ video.object-thumbnail::-webkit-media-controls {
   animation: messageBeat 0.6s ease-in-out infinite;
 }
 
-.scene[data-fever="on"] .hand-cursor {
-  width: 38px;
-  height: 38px;
-  border-color: rgba(214, 255, 218, 0.96);
-  background: radial-gradient(circle at 38% 36%, rgba(228, 255, 236, 0.92) 0%, rgba(132, 255, 186, 0.56) 52%, rgba(74, 210, 132, 0.2) 100%);
+.scene[data-fever="on"] .hand-cursor::before {
+  height: 8px;
+  background: linear-gradient(to right, rgba(138, 180, 160, 0.5) 0%, rgba(214, 255, 218, 0.96) 70%, rgba(228, 255, 236, 1) 100%);
   box-shadow:
     0 0 18px rgba(178, 255, 198, 0.9),
     0 0 40px rgba(120, 244, 168, 0.62),
     0 0 62px rgba(90, 226, 150, 0.28),
     inset 0 0 11px rgba(255, 255, 245, 0.48);
+}
+
+.scene[data-fever="on"] .hand-cursor::after {
+  width: 18px;
+  height: 18px;
+  border-color: rgba(214, 255, 218, 1);
+  background: radial-gradient(circle at 40% 40%, rgba(255, 255, 245, 1) 0%, rgba(214, 255, 218, 0.96) 50%, rgba(132, 255, 186, 0.7) 100%);
+  box-shadow:
+    0 0 20px rgba(178, 255, 198, 1),
+    0 0 48px rgba(120, 244, 168, 0.8),
+    0 0 72px rgba(90, 226, 150, 0.4),
+    inset 0 0 8px rgba(255, 255, 245, 0.6);
 }
 
 @keyframes feverGlow {
@@ -1051,6 +1186,25 @@ video.object-thumbnail::-webkit-media-controls {
     left: var(--spacing-sm);
     max-width: calc(100vw - var(--spacing-lg));
     padding: var(--spacing-sm) var(--spacing-md);
+  }
+
+  .test-mode-toggle {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .test-mode-panel {
+    top: auto;
+    left: var(--spacing-sm);
+    right: var(--spacing-sm);
+    bottom: var(--spacing-sm);
+    width: auto;
+    max-height: 44vh;
+    overflow: auto;
+  }
+
+  .test-mode-columns {
+    grid-template-columns: 1fr;
   }
 
   .admin-floating-controls {

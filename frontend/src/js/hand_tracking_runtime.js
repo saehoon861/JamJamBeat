@@ -203,7 +203,7 @@ export function createHandTrackingRuntime({
 
       const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
       // 커서를 실제 화면 위치로 옮깁니다.
-      interactionRuntime.setPointer(pointer, now);
+      interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
       recordPerf("renderCacheTotalMs", "renderCacheMaxMs", performance.now() - renderStartedAt);
       return;
     }
@@ -283,7 +283,7 @@ export function createHandTrackingRuntime({
     // 첫 번째 손 기준으로 제스처 판정과 커서 위치를 업데이트합니다.
     if (primaryHand && primaryHand.landmarks) {
       const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], handCanvas);
-      interactionRuntime.setPointer(pointer, now);
+      interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
 
       hands.forEach((hand) => {
         if (hand.landmarks) {

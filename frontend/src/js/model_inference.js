@@ -3,8 +3,13 @@
 
 import * as ortNamespace from "onnxruntime-web";
 
-const DEFAULT_TAU = 0.85; // SPEC.md 기준 tau 값
+const DEFAULT_TAU = 0.85; // 선정_모델_스펙.md 기준 tau 값
 const DEFAULT_REQUEST_INTERVAL_MS = 150;
+const LEFT_HAND_MIRROR_ENABLED = (() => {
+  const raw = new URLSearchParams(window.location.search).get("leftHandMirror");
+  if (raw === "0" || raw === "false" || raw === "off") return false;
+  return true;
+})();
 const PERF_ENABLED = (() => {
   const raw = new URLSearchParams(window.location.search).get("profilePerf");
   if (raw === "1" || raw === "true") return true;
@@ -239,7 +244,10 @@ function getHandRequestState(handKey = "default") {
     requestStateByHand.set(handKey, {
       lastRequestAt: 0,
       inFlight: false,
-      lastPrediction: null
+      lastPrediction: null,
+      lastStartedAt: 0,
+      lastCompletedAt: 0,
+      lastDurationMs: null
     });
   }
   return requestStateByHand.get(handKey);
@@ -315,15 +323,31 @@ function softmax(logits) {
   return exps.map((x) => x / sumExps);
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getMirrorPivotX(landmarks) {
+  const wristX = Number.isFinite(landmarks?.[0]?.x) ? landmarks[0].x : 0.5;
+  const indexMcpX = Number.isFinite(landmarks?.[5]?.x) ? landmarks[5].x : wristX;
+  const pinkyMcpX = Number.isFinite(landmarks?.[17]?.x) ? landmarks[17].x : wristX;
+  return (wristX + indexMcpX + pinkyMcpX) / 3;
+}
+
 // 카메라로 찍은 손 위치 데이터가 올바른 형식인지 검사하고 63차원 배열로 변환합니다.
-function sanitizeLandmarks(landmarks) {
+function sanitizeLandmarks(landmarks, handKey = "default") {
   if (!Array.isArray(landmarks) || landmarks.length < 21) return null;
 
+  const normalizedHandKey = String(handKey || "default").trim().toLowerCase();
+  const shouldMirrorLeft = LEFT_HAND_MIRROR_ENABLED && normalizedHandKey === "left";
+  const mirrorPivotX = shouldMirrorLeft ? getMirrorPivotX(landmarks) : 0;
   const features = [];
   for (let i = 0; i < 21; i++) {
     const point = landmarks[i];
+    const rawX = Number.isFinite(point?.x) ? point.x : 0;
+    const mirroredX = shouldMirrorLeft ? clamp(mirrorPivotX * 2 - rawX, 0, 1) : rawX;
     features.push(
-      Number.isFinite(point?.x) ? point.x : 0,
+      mirroredX,
       Number.isFinite(point?.y) ? point.y : 0,
       Number.isFinite(point?.z) ? point.z : 0
     );
@@ -366,12 +390,13 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
   if (handState.inFlight) return; // 이미 추론 중이면 새 요청을 보내지 않습니다.
   if (now - handState.lastRequestAt < getRequestIntervalMs()) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
 
-  const features = sanitizeLandmarks(landmarks);
+  const features = sanitizeLandmarks(landmarks, handKey);
   if (!features) return; // 손 좌표가 이상하면 추론하지 않습니다.
 
   const tsMs = Math.round(now);
   handState.inFlight = true;
   handState.lastRequestAt = now;
+  handState.lastStartedAt = performance.now();
   const requestStartedAt = PERF_ENABLED ? performance.now() : 0;
   if (PERF_ENABLED) perfWindow.requestCount += 1;
 
@@ -387,18 +412,24 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
     const probs = softmax(logits);
     const predIndex = probs.indexOf(Math.max(...probs));
     const confidence = probs[predIndex];
+    const elapsedMs = performance.now() - handState.lastStartedAt;
 
     const prediction = normalizePrediction(predIndex, confidence, probs, tsMs);
+    prediction.elapsed_ms = elapsedMs;
+    prediction.completed_at_ms = performance.now();
     handState.lastPrediction = prediction;
+    handState.lastCompletedAt = prediction.completed_at_ms;
+    handState.lastDurationMs = elapsedMs;
 
     if (PERF_ENABLED) {
-      const elapsedMs = performance.now() - requestStartedAt;
       perfWindow.successCount += 1;
       perfWindow.totalMs += elapsedMs;
       perfWindow.maxMs = Math.max(perfWindow.maxMs, elapsedMs);
     }
   } catch (error) {
     console.error("[ModelInferenceONNX] 추론 실패:", error);
+    handState.lastCompletedAt = performance.now();
+    handState.lastDurationMs = handState.lastStartedAt > 0 ? (handState.lastCompletedAt - handState.lastStartedAt) : null;
     if (PERF_ENABLED) {
       const elapsedMs = performance.now() - requestStartedAt;
       perfWindow.failureCount += 1;
@@ -420,9 +451,20 @@ export function getModelPrediction(landmarks, now = performance.now(), handKey =
 
 export function getModelInferenceStatus(now = performance.now()) {
   const states = [...requestStateByHand.values()];
+  const lastCompletedAt = states.reduce((max, state) => Math.max(max, state.lastCompletedAt || 0), 0);
+  const lastDurationMs = states.reduce((latest, state) => {
+    if (!Number.isFinite(state.lastCompletedAt) || state.lastCompletedAt <= 0) return latest;
+    if (!latest || state.lastCompletedAt > latest.completedAt) {
+      return { completedAt: state.lastCompletedAt, durationMs: state.lastDurationMs };
+    }
+    return latest;
+  }, null);
   return {
     endpointConfigured: onnxSession !== null, // ONNX 모델이 로드되어 있는지 알려줍니다.
     inFlight: states.some((state) => state.inFlight), // 현재 추론 중인지 알려줍니다.
+    recentInference: states.some((state) => state.inFlight || (state.lastCompletedAt > 0 && now - state.lastCompletedAt <= 1200)),
+    lastCompletedAgoMs: lastCompletedAt > 0 ? now - lastCompletedAt : null,
+    lastDurationMs: lastDurationMs?.durationMs ?? null,
     disabled: false, // ONNX는 fail-open 정책이 없으므로 항상 활성화
     mode: "onnx-local"
   };

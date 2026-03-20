@@ -17,6 +17,7 @@ let activeVoiceCount = 0;
 
 const activeMelodies = new Map();
 const melodyTickMs = 300;
+const MELODY_STEPS = 16;
 const MASTER_TARGET_GAIN = 0.82;
 const REVERB_SEND_DEFAULT = 0.12;
 const DELAY_SEND_DEFAULT = 0.04;
@@ -114,6 +115,12 @@ const MELODY_ALIAS = {
   tambourine: "guitar",
   whistle: "flute",
   triangle: "bell"
+};
+
+const globalSequencer = {
+  timer: null,
+  currentStep: -1,
+  startedAtMs: 0
 };
 
 const melodyCursor = new Map();
@@ -247,6 +254,48 @@ function clamp(value, min, max) {
 
 function nowTime() {
   return audioCtx ? audioCtx.currentTime : 0;
+}
+
+function stopGlobalSequencer() {
+  if (Number.isFinite(globalSequencer.timer)) {
+    window.clearInterval(globalSequencer.timer);
+  }
+  globalSequencer.timer = null;
+  globalSequencer.currentStep = -1;
+  globalSequencer.startedAtMs = 0;
+}
+
+function tickGlobalSequencer() {
+  if (!soundEnabled || !audioCtx || audioCtx.state !== "running") return;
+  globalSequencer.currentStep = (globalSequencer.currentStep + 1) % MELODY_STEPS;
+
+  activeMelodies.forEach((sequence, instrumentType) => {
+    if (!sequence || typeof sequence.playFunction !== "function") return;
+
+    if (!sequence.started) {
+      if (globalSequencer.currentStep !== sequence.startOnStep) return;
+      sequence.started = true;
+    }
+
+    if (activeVoiceCount >= ADAPTIVE_MELODY_SLOWDOWN_THRESHOLD && globalSequencer.currentStep % 2 === 1) {
+      return;
+    }
+
+    sequence.lastStep = globalSequencer.currentStep;
+    sequence.playFunction(globalSequencer.currentStep);
+  });
+}
+
+function ensureGlobalSequencer() {
+  const ctx = ensureAudioContext();
+  if (!ctx || !soundEnabled) return false;
+  if (ctx.state !== "running") return false;
+  if (Number.isFinite(globalSequencer.timer)) return true;
+
+  globalSequencer.currentStep = -1;
+  globalSequencer.startedAtMs = performance.now();
+  globalSequencer.timer = window.setInterval(tickGlobalSequencer, melodyTickMs);
+  return true;
 }
 
 function getPlaybackPan() {
@@ -496,6 +545,26 @@ function playDrumHit(pattern = "kick") {
 
 export function setPlaybackContext(context) {
   playbackContext = context && typeof context === "object" ? { ...context } : null;
+}
+
+function emitSoundPlayed(soundKey, playMode) {
+  const now = performance.now();
+  const triggerTs = Number.isFinite(playbackContext?.triggerTs) ? playbackContext.triggerTs : null;
+  const inferenceTs = Number.isFinite(playbackContext?.inferenceTs) ? playbackContext.inferenceTs : null;
+
+  window.dispatchEvent(new CustomEvent("jamjam:sound-played", {
+    detail: {
+      at: Date.now(),
+      soundKey,
+      playMode,
+      instrumentId: playbackContext?.instrumentId || null,
+      gestureLabel: playbackContext?.gestureLabel || null,
+      gestureSource: playbackContext?.gestureSource || null,
+      handKey: playbackContext?.handKey || null,
+      latencyMs: triggerTs == null ? null : (now - triggerTs),
+      inferenceLatencyMs: inferenceTs == null ? null : (now - inferenceTs)
+    }
+  }));
 }
 
 export function ensureAudioContext() {
@@ -825,6 +894,13 @@ export function playKids_AnimalSurprise() {
 
 export function startMelodySequence(instrumentType, playFunction) {
   if (!instrumentType || typeof playFunction !== "function") return;
+  const ctx = ensureAudioContext();
+  if (!ctx || !soundEnabled) return;
+  if (ctx.state !== "running") {
+    void unlockAudioContext();
+    if (ctx.state !== "running") return;
+  }
+
   stopMelodySequence(instrumentType);
 
   const [rawMelodyName, rawHandKey] = String(instrumentType).split(":");
@@ -843,34 +919,33 @@ export function startMelodySequence(instrumentType, playFunction) {
     state.freeStep = 0;
   }
 
-  let step = Math.floor(Math.random() * 4);
-  const tick = () => {
-    if (!soundEnabled || !audioCtx || audioCtx.state !== "running") return;
+  const sequencerReady = ensureGlobalSequencer();
+  if (!sequencerReady) return;
 
-    // 오디오 노드가 과밀하면 한 박자 쉬어 CPU/오디오 과부하를 완화
-    if (activeVoiceCount >= ADAPTIVE_MELODY_SLOWDOWN_THRESHOLD && step % 2 === 1) {
-      step = (step + 1) % 16;
-      return;
-    }
-
-    playFunction(step);
-    step = (step + 1) % 16;
-  };
-
-  tick();
-  const timer = window.setInterval(tick, melodyTickMs);
-  activeMelodies.set(instrumentType, { timer });
+  activeMelodies.set(instrumentType, {
+    playFunction,
+    started: false,
+    startOnStep: (globalSequencer.currentStep + 1 + MELODY_STEPS) % MELODY_STEPS,
+    lastStep: -1
+  });
 }
 
 export function stopMelodySequence(instrumentType) {
   const token = activeMelodies.get(instrumentType);
-  if (token && typeof token === "object" && Number.isFinite(token.timer)) {
-    window.clearInterval(token.timer);
-  }
-  if (Number.isFinite(token)) {
-    window.clearInterval(token);
-  }
+  if (!token) return;
   activeMelodies.delete(instrumentType);
+  if (activeMelodies.size === 0) {
+    stopGlobalSequencer();
+  }
+}
+
+export function stopMelodiesForHand(handKey = "default") {
+  const suffix = `:${String(handKey || "default").toLowerCase()}`;
+  Array.from(activeMelodies.keys()).forEach((key) => {
+    if (String(key).toLowerCase().endsWith(suffix)) {
+      stopMelodySequence(key);
+    }
+  });
 }
 
 export function stopAllMelodies() {
@@ -878,8 +953,13 @@ export function stopAllMelodies() {
     if (String(key).startsWith("step:")) return;
     stopMelodySequence(key);
   });
+  stopGlobalSequencer();
 }
 
 export function isMelodyPlaying(instrumentType) {
   return activeMelodies.has(instrumentType);
+}
+
+export function hasAnyActiveMelody() {
+  return activeMelodies.size > 0;
 }

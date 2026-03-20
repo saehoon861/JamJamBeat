@@ -5,8 +5,13 @@ import * as ort from "onnxruntime-web";
 
 const MODEL_PATH = "/runtime/model.onnx";
 const CLASS_NAMES_PATH = "/runtime/class_names.json";
-const DEFAULT_TAU = 0.85; // SPEC.md 기준 tau 값
+const DEFAULT_TAU = 0.85; // 선정_모델_스펙.md 기준 tau 값
 const DEFAULT_REQUEST_INTERVAL_MS = 150;
+const LEFT_HAND_MIRROR_ENABLED = (() => {
+  const raw = new URLSearchParams(window.location.search).get("leftHandMirror");
+  if (raw === "0" || raw === "false" || raw === "off") return false;
+  return true;
+})();
 const PERF_ENABLED = (() => {
   const raw = new URLSearchParams(window.location.search).get("profilePerf");
   if (raw === "1" || raw === "true") return true;
@@ -122,15 +127,31 @@ function softmax(logits) {
   return exps.map((x) => x / sumExps);
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getMirrorPivotX(landmarks) {
+  const wristX = Number.isFinite(landmarks?.[0]?.x) ? landmarks[0].x : 0.5;
+  const indexMcpX = Number.isFinite(landmarks?.[5]?.x) ? landmarks[5].x : wristX;
+  const pinkyMcpX = Number.isFinite(landmarks?.[17]?.x) ? landmarks[17].x : wristX;
+  return (wristX + indexMcpX + pinkyMcpX) / 3;
+}
+
 // 카메라로 찍은 손 위치 데이터가 올바른 형식인지 검사하고 63차원 배열로 변환합니다.
-function sanitizeLandmarks(landmarks) {
+function sanitizeLandmarks(landmarks, handKey = "default") {
   if (!Array.isArray(landmarks) || landmarks.length < 21) return null;
 
+  const normalizedHandKey = String(handKey || "default").trim().toLowerCase();
+  const shouldMirrorLeft = LEFT_HAND_MIRROR_ENABLED && normalizedHandKey === "left";
+  const mirrorPivotX = shouldMirrorLeft ? getMirrorPivotX(landmarks) : 0;
   const features = [];
   for (let i = 0; i < 21; i++) {
     const point = landmarks[i];
+    const rawX = Number.isFinite(point?.x) ? point.x : 0;
+    const mirroredX = shouldMirrorLeft ? clamp(mirrorPivotX * 2 - rawX, 0, 1) : rawX;
     features.push(
-      Number.isFinite(point?.x) ? point.x : 0,
+      mirroredX,
       Number.isFinite(point?.y) ? point.y : 0,
       Number.isFinite(point?.z) ? point.z : 0
     );
@@ -173,7 +194,7 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
   if (handState.inFlight) return; // 이미 추론 중이면 새 요청을 보내지 않습니다.
   if (now - handState.lastRequestAt < getRequestIntervalMs()) return; // 너무 자주 요청하지 않도록 간격을 지킵니다.
 
-  const features = sanitizeLandmarks(landmarks);
+  const features = sanitizeLandmarks(landmarks, handKey);
   if (!features) return; // 손 좌표가 이상하면 추론하지 않습니다.
 
   const tsMs = Math.round(now);

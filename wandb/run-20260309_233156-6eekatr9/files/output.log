@@ -1,0 +1,26 @@
+Epoch [1/30] | Train Loss: 0.8338, Train Acc: 0.7589 | Val Loss: 0.7795, Val Acc: 0.7068
+Epoch [2/30] | Train Loss: 0.3823, Train Acc: 0.8838 | Val Loss: 0.4904, Val Acc: 0.8037
+Epoch [3/30] | Train Loss: 0.3026, Train Acc: 0.9022 | Val Loss: 0.7449, Val Acc: 0.7351
+Epoch [4/30] | Train Loss: 0.2741, Train Acc: 0.9100 | Val Loss: 0.4116, Val Acc: 0.8371
+Epoch [5/30] | Train Loss: 0.2536, Train Acc: 0.9177 | Val Loss: 0.4687, Val Acc: 0.8208
+Epoch [6/30] | Train Loss: 0.2482, Train Acc: 0.9179 | Val Loss: 0.4412, Val Acc: 0.8296
+Epoch [7/30] | Train Loss: 0.2344, Train Acc: 0.9211 | Val Loss: 0.5068, Val Acc: 0.8069
+Epoch [8/30] | Train Loss: 0.2039, Train Acc: 0.9323 | Val Loss: 0.3779, Val Acc: 0.8503
+Epoch [9/30] | Train Loss: 0.1964, Train Acc: 0.9346 | Val Loss: 0.4087, Val Acc: 0.8464
+Epoch [10/30] | Train Loss: 0.1934, Train Acc: 0.9352 | Val Loss: 0.4260, Val Acc: 0.8421
+Epoch [11/30] | Train Loss: 0.1896, Train Acc: 0.9372 | Val Loss: 0.3643, Val Acc: 0.8607
+Epoch [12/30] | Train Loss: 0.1823, Train Acc: 0.9401 | Val Loss: 0.3546, Val Acc: 0.8667
+Epoch [13/30] | Train Loss: 0.1813, Train Acc: 0.9394 | Val Loss: 0.3535, Val Acc: 0.8660
+Epoch [14/30] | Train Loss: 0.1835, Train Acc: 0.9402 | Val Loss: 0.3749, Val Acc: 0.8589
+Epoch [15/30] | Train Loss: 0.1784, Train Acc: 0.9398 | Val Loss: 0.3290, Val Acc: 0.8714
+Epoch [16/30] | Train Loss: 0.1783, Train Acc: 0.9407 | Val Loss: 0.2897, Val Acc: 0.8926
+Epoch [17/30] | Train Loss: 0.1742, Train Acc: 0.9429 | Val Loss: 0.3348, Val Acc: 0.8738
+Epoch [18/30] | Train Loss: 0.1744, Train Acc: 0.9416 | Val Loss: 0.3612, Val Acc: 0.8686
+Epoch [19/30] | Train Loss: 0.1729, Train Acc: 0.9415 | Val Loss: 0.4307, Val Acc: 0.8475
+Epoch [20/30] | Train Loss: 0.1613, Train Acc: 0.9472 | Val Loss: 0.2741, Val Acc: 0.8937
+Epoch [21/30] | Train Loss: 0.1584, Train Acc: 0.9476 | Val Loss: 0.3460, Val Acc: 0.8735
+Epoch [22/30] | Train Loss: 0.1530, Train Acc: 0.9487 | Val Loss: 0.3475, Val Acc: 0.8706
+Epoch [23/30] | Train Loss: 0.1543, Train Acc: 0.9501 | Val Loss: 0.3612, Val Acc: 0.8693
+Epoch [24/30] | Train Loss: 0.1469, Train Acc: 0.9517 | Val Loss: 0.3380, Val Acc: 0.8770
+Epoch [25/30] | Train Loss: 0.1485, Train Acc: 0.9525 | Val Loss: 0.3193, Val Acc: 0.8800
+  --> Early stopping triggered.

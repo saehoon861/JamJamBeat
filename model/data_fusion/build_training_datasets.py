@@ -56,54 +56,54 @@ SPECS = (
         train_source=TRAIN_SOURCE_DIR / "pos_only.csv",
         test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
     ),
-    DatasetSpec(
-        dataset_key="pos_only_ds_1_pos",
-        normalization_family="pos_only",
-        train_source=TRAIN_SOURCE_DIR / "pos_only_ds_1_pos.csv",
-        test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
-    ),
-    DatasetSpec(
-        dataset_key="pos_only_ds_4_pos",
-        normalization_family="pos_only",
-        train_source=TRAIN_SOURCE_DIR / "pos_only_ds_4_pos.csv",
-        test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
-    ),
+    # DatasetSpec(
+    #     dataset_key="pos_only_ds_1_pos",
+    #     normalization_family="pos_only",
+    #     train_source=TRAIN_SOURCE_DIR / "pos_only_ds_1_pos.csv",
+    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
+    # ),
+    # DatasetSpec(
+    #     dataset_key="pos_only_ds_4_pos",
+    #     normalization_family="pos_only",
+    #     train_source=TRAIN_SOURCE_DIR / "pos_only_ds_4_pos.csv",
+    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
+    # ),
     DatasetSpec(
         dataset_key="scale_only",
         normalization_family="scale_only",
         train_source=TRAIN_SOURCE_DIR / "scale_only.csv",
         test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
     ),
-    DatasetSpec(
-        dataset_key="scale_only_ds_1_scale",
-        normalization_family="scale_only",
-        train_source=TRAIN_SOURCE_DIR / "scale_only_ds_1_scale.csv",
-        test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
-    ),
-    DatasetSpec(
-        dataset_key="scale_only_ds_4_scale",
-        normalization_family="scale_only",
-        train_source=TRAIN_SOURCE_DIR / "scale_only_ds_4_scale.csv",
-        test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
-    ),
+    # DatasetSpec(
+    #     dataset_key="scale_only_ds_1_scale",
+    #     normalization_family="scale_only",
+    #     train_source=TRAIN_SOURCE_DIR / "scale_only_ds_1_scale.csv",
+    #     test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
+    # ),
+    # DatasetSpec(
+    #     dataset_key="scale_only_ds_4_scale",
+    #     normalization_family="scale_only",
+    #     train_source=TRAIN_SOURCE_DIR / "scale_only_ds_4_scale.csv",
+    #     test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
+    # ),
     DatasetSpec(
         dataset_key="pos_scale",
         normalization_family="pos_scale",
         train_source=TRAIN_SOURCE_DIR / "pos_scale.csv",
         test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
     ),
-    DatasetSpec(
-        dataset_key="pos_scale_ds_1_pos_scale",
-        normalization_family="pos_scale",
-        train_source=TRAIN_SOURCE_DIR / "pos_scale_ds_1_pos_scale.csv",
-        test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
-    ),
-    DatasetSpec(
-        dataset_key="pos_scale_ds_4_pos_scale",
-        normalization_family="pos_scale",
-        train_source=TRAIN_SOURCE_DIR / "pos_scale_ds_4_pos_scale.csv",
-        test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
-    ),
+    # DatasetSpec(
+    #     dataset_key="pos_scale_ds_1_pos_scale",
+    #     normalization_family="pos_scale",
+    #     train_source=TRAIN_SOURCE_DIR / "pos_scale_ds_1_pos_scale.csv",
+    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
+    # ),
+    # DatasetSpec(
+    #     dataset_key="pos_scale_ds_4_pos_scale",
+    #     normalization_family="pos_scale",
+    #     train_source=TRAIN_SOURCE_DIR / "pos_scale_ds_4_pos_scale.csv",
+    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
+    # ),
 )
 
 

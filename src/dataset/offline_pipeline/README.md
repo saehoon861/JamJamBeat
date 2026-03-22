@@ -1,146 +1,99 @@
-# 데이터 전처리 파이프라인 (Offline Pipeline)
+# 오프라인 데이터 파이프라인 (Offline Pipeline)
 
-> ⚠️ **주의:** 본 전처리 도구는 정규화와 다운샘플링만 수행하며, 본격적인 Feature Engineering 단계는 포함하지 않습니다.
-
----
-
-## 📂 결과 데이터 사용 방법
-
-파이프라인 실행 결과물은 `data/processed_scenarios/` 디렉터리 내에 `.csv` 파일들로 추출됩니다. 팀원 분들은 실험하고자 하는 시나리오에 맞는 파일을 그대로 가져다 모델 학습 및 분석에 사용하시면 됩니다.
-
-### 시나리오 명칭 규칙 (총 12개 데이터셋)
-
-파일 이름은 **[다운샘플링 비율]**과 **[정규화 범주]**의 조합으로 결정됩니다. 각 조건 통제(Ablation)를 위해 총 12가지 버전이 준비되어 있습니다.
-
-> 다운샘플링이 적용된 시나리오(`ds_` 접두사)는 **seq** / **frame** 두 가지 모드로 생성됩니다.
-> 시퀀스 기반 모델은 `_seq`, 프레임 단위 모델은 `_frame` suffix가 붙은 파일을 사용하세요.
-
-| 파일명 (`.csv`) | 다운샘플링 비율 | 위치 정규화 | 스케일 정규화 | 설명 |
-|---|:---:|:---:|:---:|---|
-| **baseline** | 원본 유지 | X | X | 아무런 처리도 하지 않은 순정 원본 데이터 |
-| **ds_4_none** | 4:1 | X | X | 0번 단일 클래스만 4:1 다운샘플링 |
-| **ds_1_none** | 1:1 | X | X | 0번 단일 클래스만 1:1 다운샘플링 |
-| **pos_only** | 원본 유지 | O | X | 위치 정규화만 적용 (스케일 원본 유지) |
-| **ds_4_pos** | 4:1 | O | X | 4:1 다운샘플링 + 위치 정규화 |
-| **ds_1_pos** | 1:1 | O | X | 1:1 다운샘플링 + 위치 정규화 |
-| **scale_only** | 원본 유지 | X | O | 스케일 정규화만 적용 (위치 좌표 원본 유지) |
-| **ds_4_scale** | 4:1 | X | O | 4:1 다운샘플링 + 스케일 정규화 |
-| **ds_1_scale** | 1:1 | X | O | 1:1 다운샘플링 + 스케일 정규화 |
-| **pos_scale** | 원본 유지 | O | O | 위치와 스케일 정규화 모두 적용 |
-| **ds_4_pos_scale** | 4:1 | O | O | 4:1 샘플링 + 전체 정규화 적용 풀-패키지 |
-| **ds_1_pos_scale** | 1:1 | O | O | 1:1 샘플링 + 전체 정규화 적용 풀-패키지 |
-
-### W&B Artifact로 시나리오 데이터셋 불러오기
-
-학습 코드에서 아래 패턴을 사용하면 **"이 실험이 어떤 데이터셋을 썼는지"** 가 W&B에 자동으로 연결됩니다.
-`use_artifact()` 호출이 없으면 데이터-모델 간 lineage가 기록되지 않으니 반드시 포함해 주세요.
-
-```python
-import wandb
-import pandas as pd
-
-# ✅ wandb.init()은 학습 전체를 감싸야 lineage가 기록됩니다
-with wandb.init(project="JamJamBeat", job_type="train") as run:
-
-    # 1. 사용할 시나리오 이름을 아래에서 골라 교체하세요
-    #    (예: "baseline", "ds_1_pos_scale", "pos_only" ...)
-    artifact = run.use_artifact("ds_1_pos_scale:latest")
-    data_dir = artifact.download()
-
-    # 2. 이후 기존 방식 그대로 데이터 로드
-    df = pd.read_csv(f"{data_dir}/ds_1_pos_scale.csv")
-
-    # 3. 학습 코드 ...
-```
-
-> 시나리오 이름 목록은 위 테이블의 **파일명** 열을 참고하세요.
----
-
-## ⚙️ 주요 파이프라인 전처리 로직
-
-### 1. 데이터 다운샘플링 (Downsampling)
-`0`번 클래스(None)는 특성상 데이터 수가 압도적으로 많아 심각한 클래스 불균형이 발생합니다. 이를 해소하기 위해 **액션 클래스(1~6)의 평균 데이터 수**를 기준으로 0번 클래스를 다운샘플링합니다.
-* **적용 비율**: `원본(관측상 약 10:1)`, `4:1`, `1:1` 세 가지 강도로 실험 가능.
-* **4개 서브그룹 우선순위 샘플링**: 단순 무작위 샘플링이 아닌, 학습 품질을 위해 0번 클래스를 성격별로 분류하여 우선순위에 따라 수집합니다.
-  * `0_hardneg` (40%): 유사동작 데이터. 오인식 방지를 위해 최우선 보존.
-  * `C_transition` (30%): 제스처 구간 앞뒤 인접 프레임. 시퀀스 맥락 학습을 위해 패딩처럼 수집.
-  * `0_neutral` (20%): 순수 배경 데이터.
-  * `C_safe` (10%): 그 외 일반 None 프레임.
-* **두 가지 실험 모드**: `MARGIN_FRAMES_DROP` 설정으로 전환 가능.
-  * `None` (시퀀스 모드): 제스처 구간 앞뒤로 `MARGIN_FRAMES_COLLECT` 프레임씩 패딩 수집.
-  * `int` (프레임 단위 모드): 제스처 전환점 주변 `MARGIN_FRAMES_DROP` 프레임 제거 후 수집.
-
-### 2. 데이터 정규화 (Normalization)
-오브젝트가 카메라로부터 멀어지거나 화면 귀퉁이에 위치하더라도 손 모양 자체가 같으면 동일하게 인식하도록 강건성을 부여합니다.
-* **위치 정규화 (Position)**: `wrist(손목, 0번 마디)` 랜드마크를 절대 원점인 `(0, 0, 0)`으로 일괄 평행 이동시킵니다.
-* **거리/스케일 정규화 (Scale/Distance)**: `wrist(0번)`부터 손바닥 중앙부인 `middle_mcp(중지 첫 마디, 9번)`까지의 유클리드 거리를 측정하고, 전체 손 뼈대 스케일이 화면 크기와 무관하게 `1.0` 배율 안에 들어오도록 리스케일링합니다.
+이 디렉토리는 모델 학습 전 로컬에서 수행되는 **데이터 전처리 및 증강** 파이프라인입니다.
+파이프라인은 크게 **2개의 독립적인 단계(Step)** 로 나뉘어 실행 가능합니다. 
+상세한 기법이나 수식 등 기획 관련 내용은 `data/docs/` 내의 문서를 참고하세요.
 
 ---
 
-## 🚀 전처리 파이프라인 재실행 방법
+## 🌊 과정 1: 전처리 (Downsampling & Normalization)
 
-원본 데이터가 업데이트되어 12개 시나리오 CSV 파일을 새로 생성해야 할 경우 아래 순서를 따릅니다.
+클래스 간 불균형 해소(다운샘플링)와 좌표 강건성 확보(정규화)를 수행합니다.
 
-### 1단계: 데이터 준비
-* `data/total_data/` 위치에 `total_data.csv`라는 이름으로 통합 데이터 파일을 준비합니다.
-* 파일명이 다를 경우 `runners/run_preprocess.py`의 18라인 인근에서 로드할 파일명을 직접 수정할 수 있습니다.
-
-> ⚠️ **모델 학습 방식에 따라 config와 실행 명령어를 확인하세요.**
-> `MARGIN_FRAMES_DROP = None`이면 seq 모드만 실행 가능합니다.
-> frame 모드를 사용하려면 `MARGIN_FRAMES_DROP`에 정수값을 설정해야 합니다.
-> seq + frame 둘 다 실행하려면 `MARGIN_FRAMES_DROP`에 정수값을 설정한 뒤 `--mode both` 또는 인자 없이 실행하세요.
-
-
-### 2단계: config 설정
-* `SCENARIOS` 딕셔너리를 수정하여 원하는 전처리/정규화 조합만 선택하거나 새 시나리오를 추가할 수 있습니다.
-* `PROCESSED_DIR`를 수정해 전처리 작업 후 저장될 경로를 지정할 수 있습니다.
-* `MARGIN_FRAMES_DROP` 변수로 다운샘플링 모드를 선택합니다.
-  * `None`: 시퀀스 모드 — 제스처 구간 앞뒤 인접 프레임을 보존하는 방식으로 다운샘플링
-  * 정수값: 프레임 단위 모드 — 전환점 주변 해당 프레임 수만큼 제거 후 수집
-* `MARGIN_FRAMES_COLLECT` 변수를 수정해 수집할 프레임 범위를 조절합니다.
-  * 시퀀스 모드: 제스처 구간 앞뒤로 패딩할 프레임 수 (시퀀스 윈도우 크기에 맞게 설정)
-  * 프레임 단위 모드: 전환점 주변에서 Class 0으로 랜덤으로 수집할 최대 프레임 범위
-
-### 3단계: 파이프라인 실행
-프로젝트 루트(`JamJamBeat/`) 경로에서 아래 명령어를 실행합니다.
+### 실행 방법
 ```bash
-# seq + frame 모드 둘 다 실행 (default)
 uv run python src/dataset/offline_pipeline/runners/run_preprocess.py
-
-# 시퀀스 모드만 실행
-uv run python src/dataset/offline_pipeline/runners/run_preprocess.py --mode seq
-
-# 프레임 단위 모드만 실행
-uv run python src/dataset/offline_pipeline/runners/run_preprocess.py --mode frame
 ```
+* **입력**: `data/total_data/total_data.csv`
+* **출력**: `data/processed_scenarios/` 에 통제 조건별 12개의 시나리오 파일 생성
 
+### 시나리오 명칭 규칙 (총 12개)
 
+파일 이름은 **[다운샘플링 비율]**과 **[정규화 범주]**의 조합으로 결정됩니다.
 
+| 파일명 (`.csv`) | 다운샘플링 비율 | 위치 정규화 | 스케일 정규화 |
+|---|:---:|:---:|:---:|
+| **baseline** | 원본 유지 | X | X |
+| **ds_4_none** | 4:1 | X | X |
+| **ds_1_none** | 1:1 | X | X |
+| **pos_only** | 원본 유지 | O | X |
+| **ds_4_pos** | 4:1 | O | X |
+| **ds_1_pos** | 1:1 | O | X |
+| **scale_only** | 원본 유지 | X | O |
+| **ds_4_scale** | 4:1 | X | O |
+| **ds_1_scale** | 1:1 | X | O |
+| **pos_scale** | 원본 유지 | O | O |
+| **ds_4_pos_scale** | 4:1 | O | O |
+| **ds_1_pos_scale** | 1:1 | O | O |
 
-### 추가단계: 검증
-비율 통계 확인 - outputdir에 존재하는 모든 데이터들에 대한 비율 통계확인
-```bash
-uv run python src/dataset/offline_pipeline/tests/test_downsampled.py
-```
+> **TIPS**: 다운샘플링 없이 지정한 파일에 대해 정규화만 수행하고 싶다면 `run_normalization.py`를 사용하세요.
 
-정규화 시각화 확인 - 지정 데이터에 대해 랜덤으로 1~6클래스의 프레임을 시각화.
-```bash
-uv run python src/dataset/offline_pipeline/tests/test_normalization.py data/processed_scenarios/ds_1_pos_scale.csv
-```
-
-
-
-## 추가기능 - 정규화만 하는 파이프라인
-
-### 사용 방법
-
+> 실행 방법
 ```bash
 uv run python src/dataset/offline_pipeline/runners/run_normalization.py
 ```
 
 
-1. src/dataset/offline_pipeline/config.py:7 에 있는 `TOTAL_DIR`(default: data/total_data/)를 원하는 **데이터 경로**로 변경하고 
+---
 
-2. 작업을 하기 위한 **원본 파일 명**을 src/dataset/offline_pipeline/runners/run_normalize_only.py:91 의 `total_csv_path = config.TOTAL_DIR / "total_data_test.csv"`와 일치하도록 변경하거나, run_normalize_only.py:91 라인을 수정해서 실행하면 됩니다.
+## 🌊 과정 2: 데이터 증강 (Augmentation)
 
-> 시나리오를 변경하고 싶다면, src/dataset/offline_pipeline/runners/run_normalize_only.py:16 에 있는 **`NORMALIZE_SCENARIOS` 딕셔너리를 수정**해서 원하는 시나리오로 작업하면 됩니다.
+1단계에서 생성된 전처리 시나리오 데이터를 기반으로 오프라인 증강을 수행합니다.
+한 번에 전부 증강하는 방식이 아니라, 필요한 시나리오만 선택해 증강 후 결합합니다. (Mirroring 50% → BLP 100% → Gaussian Noise 100%)
+
+### 실행 방법
+```bash
+uv run python src/dataset/offline_pipeline/runners/run_augment.py
+```
+* **동작 방식**: CLI 목록에서 대상 파일을 고르면 즉시 해당 시나리오 증강
+* **입력**: `data/processed_scenarios/` 디렉토리에 있는 시나리오 CSV
+* **출력**: `data/augmented_scenarios/` 디렉토리에 원본 대비 **2배수**(원본 1배수 + 증강 1배수 결합)로 데이터가 결합된 `{시나리오명}_aug.csv` 생성
+
+---
+
+## ⚙️ 설정 가이드 (`config.py`)
+
+파이프라인의 핵심 파라미터와 경로는 모두 `config.py`에서 중앙 제어됩니다. 상황에 맞게 값을 수정하여 파이프라인의 동작을 세밀하게 조정할 수 있습니다.
+
+### 과정 1 (샘플링 + 정규화) 제어
+* **작업 폴더 위치**: `TOTAL_DIR`(입력), `PROCESSED_DIR`(출력) 경로 지정.
+* **제작 시나리오 정의 (`SCENARIOS`)**: 추출할 시나리오 딕셔너리. 각 시나리오별 다운샘플링 비율과 정규화 옵션(위치/스케일) 적용 여부를 켜고 끌 수 있습니다.
+* **정규화/샘플링 방어 기준 (`MARGIN_FRAMES`, `THRESHOLD_DIST`)**: 손실 방지를 위한 마진 프레임과 거리 임계값을 조정합니다.
+
+### 과정 2 (데이터 증강) 제어
+* **경로 및 난수 (`DIR_AUGMENTED`, `AUG_RANDOM_SEED`)**: 증강 출력 폴더 및 실험 재현성을 위한 글로벌 랜덤 시드 고정.
+* **적용 확률 (`AUG_PARAMS['prob']`)**: Mirroring, BLP, Gaussian Noise 각 기법별로 파이프라인에서 작동할 확률 퍼센티지 조정.
+* **노이즈 스케일 (`AUG_PARAMS['noise_sigma_range']`)**: 스케일 정규화 적용 유무(파일명 기반)에 따라 부여될 가우시안 노이즈의 $\sigma$ 최소~최대 범위.
+* **뼈 길이 축소 (`AUG_PARAMS['blp_scales']`)**: 손가락 마디(근위, 중위, 원위) 계층별로 적용할 길이 축소(Scaling) 계수 레인지 제어.
+
+---
+
+## 🧪 기타 유틸리티 및 검증 도구
+
+### 학습 파이프라인 연동 예시
+```python
+# W&B Artifact 로 특정 시나리오 데이터셋만 불러오기
+with wandb.init(project="JamJamBeat", job_type="train") as run:
+    artifact = run.use_artifact("ds_1_pos_scale_aug:latest") # 시나리오명 매칭
+    data_dir = artifact.download()
+    df = pd.read_csv(f"{data_dir}/ds_1_pos_scale_aug.csv")
+```
+
+### 파이프라인 결과 자체 검증 도구
+```bash
+# 다운샘플링 데이터 비율 통계 확인 (processed_scenarios 대상)
+uv run python src/dataset/offline_pipeline/tests/test_downsampled.py
+
+# 정규화 좌표가 틀어지지 않았는지 확인하기 위한 시각화 플레이어
+uv run python src/dataset/offline_pipeline/tests/test_normalization.py data/processed_scenarios/ds_1_pos_scale.csv
+```

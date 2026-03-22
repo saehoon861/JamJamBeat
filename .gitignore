@@ -72,6 +72,18 @@ model/cron_logs/
 wandb/
 model/*.png
 
+# raw data
+data/labeled_data/*.csv
+data/augmented_scenarios/*.csv
+data/raw_data/*.mp4
+data/total_data/*.csv
+data/total_data/notnull/*.csv
+data/total_data/temp/*.csv
+data/testset/testdata/*.csv
+data/testset/testdata/images/*
+data/testset/testdata/drop_images/*
+data/processed_scenarios/*.csv
+
 # Browser dashboard generated data
 model/frontend/eval_dashboard/data/
 

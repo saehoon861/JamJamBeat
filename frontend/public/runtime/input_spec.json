@@ -1,0 +1,15 @@
+{
+  "name": "raw_joint63_frame",
+  "shape": [
+    63
+  ],
+  "dtype": "float32",
+  "layout": "flat",
+  "feature_order_path": "runtime/feature_order.json",
+  "description": "Single-frame raw MediaPipe hand landmarks flattened as x0,y0,z0,...,x20,y20,z20.",
+  "notes": [
+    "Input must contain exactly 63 float values.",
+    "This bundle expects baseline/raw landmark coordinates, not normalized bone or angle features.",
+    "No sequence windowing or image rendering is required for this model."
+  ]
+}

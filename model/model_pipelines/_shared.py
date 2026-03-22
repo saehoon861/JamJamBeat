@@ -17,6 +17,14 @@ except ImportError:
 # ──────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────
+LOSS_TYPE_CHOICES = ("cross_entropy", "focal")
+DEFAULT_LOSS_TYPE = "focal"
+DEFAULT_USE_WEIGHTED_SAMPLER = True
+DEFAULT_USE_ALPHA = True
+DEFAULT_USE_LABEL_SMOOTHING = False
+DEFAULT_FOCAL_GAMMA = 2.0
+DEFAULT_LABEL_SMOOTHING = 0.1
+
 HAND_CONNECTIONS = [
     (0, 1), (0, 5), (5, 9), (9, 13), (13, 17), (0, 17),
     (1, 2), (2, 3), (3, 4),
@@ -28,6 +36,9 @@ HAND_CONNECTIONS = [
 
 JOINT_COLS = [f"n{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
 BONE_COLS  = [f"b{axis}{i}" for i in range(21) for axis in ("x", "y", "z", "l")]
+
+# Raw landmark 컬럼 (직접 63d joint 기준)
+RAW_JOINT_COLS = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
 
 
 # ──────────────────────────────────────────────────────
@@ -107,6 +118,23 @@ def sequence_arrays(
     return np.stack(samples, axis=0), np.array(labels, dtype=np.int64), meta
 
 
+def repeated_sequence_arrays(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    seq_len: int,
+) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
+    """독립 정지사진을 sequence 모델에 넣기 위해 한 프레임을 seq_len만큼 반복한다."""
+    X = df[feature_cols].to_numpy(dtype=np.float32)
+    y = df["gesture"].to_numpy(dtype=np.int64)
+    meta = [sample_metadata(df, i) for i in range(len(df))]
+
+    if len(X) == 0:
+        raise ValueError("No repeated sequence samples built. Check test split size.")
+
+    seq = np.repeat(X[:, None, :], max(int(seq_len), 1), axis=1).astype(np.float32)
+    return seq, y, meta
+
+
 # ──────────────────────────────────────────────────────
 # Dataset classes
 # ──────────────────────────────────────────────────────
@@ -130,33 +158,6 @@ class FrameDataset(Dataset):
     def __getitem__(self, idx: int):
         return (
             torch.from_numpy(self.X[idx]),
-            torch.tensor(self.y[idx], dtype=torch.long),
-            torch.tensor(idx, dtype=torch.long),
-        )
-
-
-class TwoStreamDataset(Dataset):
-    """Joint / Bone+Angle 두 스트림을 병렬로 내보내는 Dataset."""
-
-    def __init__(
-        self,
-        X_joint: np.ndarray,
-        X_bone: np.ndarray,
-        y: np.ndarray,
-        meta: list[dict[str, Any]],
-    ):
-        self.X_joint = X_joint.astype(np.float32)
-        self.X_bone  = X_bone.astype(np.float32)
-        self.y       = y.astype(np.int64)
-        self.meta    = meta
-
-    def __len__(self) -> int:
-        return len(self.y)
-
-    def __getitem__(self, idx: int):
-        return (
-            torch.from_numpy(self.X_joint[idx]),
-            torch.from_numpy(self.X_bone[idx]),
             torch.tensor(self.y[idx], dtype=torch.long),
             torch.tensor(idx, dtype=torch.long),
         )
@@ -196,6 +197,7 @@ class LandmarkImageDataset(Dataset):
         y: np.ndarray,
         meta: list[dict[str, Any]],
         image_size: int = 96,
+        raw_coords: bool = False,
     ):
         if Image is None:
             raise ImportError("Pillow(PIL)가 필요합니다: uv pip install pillow")
@@ -203,18 +205,26 @@ class LandmarkImageDataset(Dataset):
         self.y          = y.astype(np.int64)
         self.meta       = meta
         self.image_size = image_size
+        self.raw_coords = raw_coords
 
     @staticmethod
     def _norm_to_px(v: np.ndarray, size: int) -> np.ndarray:
-        # 전처리된 좌표 범위를 화면 좌표계로 안정적으로 투영한다.
+        # 전처리된 정규화 좌표 [-1.2, 1.2] → 픽셀 좌표
         clipped = np.clip(v, -1.2, 1.2)
         return ((clipped + 1.2) / 2.4) * (size - 1)
+
+    @staticmethod
+    def _raw_to_px(v: np.ndarray, size: int) -> np.ndarray:
+        # 원시 MediaPipe 좌표 [0, 1] → 픽셀 좌표
+        clipped = np.clip(v, 0.0, 1.0)
+        return clipped * (size - 1)
 
     def _render(self, joint_vec: np.ndarray) -> np.ndarray:
         # 21개 랜드마크를 연결선 + 점으로 그려 CNN이 읽을 입력 텐서를 만든다.
         pts = joint_vec.reshape(21, 3)
-        x = self._norm_to_px(pts[:, 0], self.image_size)
-        y = (self.image_size - 1) - self._norm_to_px(pts[:, 1], self.image_size)
+        to_px = self._raw_to_px if self.raw_coords else self._norm_to_px
+        x = to_px(pts[:, 0], self.image_size)
+        y = (self.image_size - 1) - to_px(pts[:, 1], self.image_size)
 
         img  = Image.new("L", (self.image_size, self.image_size), color=0)
         draw = ImageDraw.Draw(img)

@@ -42,7 +42,10 @@ FINGER_CHAINS = [
 ]
 
 # --- 파라미터 ---
-MARGIN_FRAMES = 5  # 전이 구간 근방의 위험군 프레임 배제 마진
+MARGIN_FRAMES_DROP = 2      # 정수형이면 frame+seq 모드같이 돌림, 
+                            # None이면 seq 모드만 돌림
+MARGIN_FRAMES_COLLECT = 8   # 시퀀스 길이에 맞춤
+# MARGIN_FRAMES = 5           # 전이 구간 근방의 위험군 프레임 배제 마진
 
 # --- MediaPipe 손 랜드마크 구조 매핑 ---
 LANDMARK_IDX = {

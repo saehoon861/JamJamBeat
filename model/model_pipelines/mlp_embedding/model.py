@@ -1,9 +1,9 @@
-# mlp_embedding/model.py - joint+bone+angle(156d) 입력, learnable projection embedding MLP
+# mlp_embedding/model.py - raw joint(63d) 입력, learnable projection embedding MLP
 import torch.nn as nn
 
 
 class MLPEmbedding(nn.Module):
-    """full feature를 먼저 latent embedding으로 투영한 뒤 분류하는 MLP.
+    """raw joint feature를 latent embedding으로 투영한 뒤 분류하는 MLP.
 
     입력 shape: (B, D)
     출력 shape: (B, num_classes)

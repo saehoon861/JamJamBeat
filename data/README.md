@@ -32,16 +32,3 @@ OUTPUT_FILE = Path(__file__).parent / "total_data" / "sample.csv"  # sample.csv 
 cd data
 uv run python integration.py
 ```
-
-## 라벨링 클래스 분포 현황 확인
-
-total_data 폴더 안에 있는 CSV 파일들의 라벨링 클래스에 대한 전체 분포 현황과 파일별 분포 현황을 확인할 수 있습니다.
-
-> 병합본과 원본 CSV 파일의 구분을 잘 하고 작업해주세요.
-
-> 병합본과 원본 csv 파일 두 종류가 전부 total_data 폴더 안에 있으면 전체 분포의 내용이 중복되어 출력됩니다.
-
-```bash
-cd data
-uv run python check_labels.py
-```

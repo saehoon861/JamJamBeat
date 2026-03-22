@@ -2,11 +2,11 @@ import pandas as pd
 from pathlib import Path
 
 TOTAL_DATA_DIR = Path(__file__).parent / "total_data"
-OUTPUT_FILE = Path(__file__).parent / "total_data_0309.csv"  # total_data 밖으로
+OUTPUT_FILE = Path(__file__).parent / "_test_set.csv"  # total_data 밖으로
 
-# 이름 바꾸지 않으면 실행 차단
+# 이름 바꾸지 않으면 실행 차단s
 if OUTPUT_FILE.name == "sample.csv":
-    raise ValueError("OUTPUT_FILE 이름을 지정해주세요. ")
+        raise ValueError("OUTPUT_FILE 이름을 지정해주세요. ")
 
 def main():
     csv_files = sorted(TOTAL_DATA_DIR.glob("*.csv"))

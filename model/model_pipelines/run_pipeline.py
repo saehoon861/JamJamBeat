@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Run one JamJamBeat model-comparison pipeline (v2) end-to-end.
+Run one JamJamBeat model-comparison pipeline end-to-end.
 
-- Input: preprocessed CSV(s) with columns:
-    source_file, frame_idx, timestamp, gesture,
-    nx*, ny*, nz*, bx*, by*, bz*, bl*, flex_*, abd_*
+- Input: explicit role CSVs
+    train / val / test / inference
 - Output: model artifact, prediction CSV, and evaluation metrics/plots.
-
-This script is intended to be called by cron (one model per cron job).
 """
 
 from __future__ import annotations
@@ -15,11 +12,12 @@ from __future__ import annotations
 import argparse
 import copy
 import importlib
+import inspect
 import json
 import random
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +34,7 @@ try:
     from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 except Exception as e:  # pragma: no cover - runtime guard
     raise SystemExit(
-        "[ERROR] PyTorch is required for run_model_pipeline.py\n"
+        "[ERROR] PyTorch is required for run_pipeline.py\n"
         "Please install torch in your virtual environment first.\n"
         f"Original error: {e}"
     )
@@ -55,28 +53,35 @@ if str(MODEL_PIPELINES_DIR) not in sys.path:
     sys.path.insert(0, str(MODEL_PIPELINES_DIR))
 
 from evaluation_runtime import DEFAULT_CLASS_NAMES, EvaluationConfig, evaluate_predictions
-from _shared import JOINT_COLS, BONE_COLS, SplitData, detect_angle_cols
+from _shared import (
+    BONE_COLS,
+    DEFAULT_FOCAL_GAMMA,
+    DEFAULT_LABEL_SMOOTHING,
+    DEFAULT_LOSS_TYPE,
+    DEFAULT_USE_ALPHA,
+    DEFAULT_USE_LABEL_SMOOTHING,
+    DEFAULT_USE_WEIGHTED_SAMPLER,
+    JOINT_COLS,
+    LOSS_TYPE_CHOICES,
+    RAW_JOINT_COLS,
+    SplitData,
+    detect_angle_cols,
+)
+from checkpoint_verification import (
+    fingerprint_state_dict,
+    instantiate_model_from_state_dict,
+    safe_torch_load,
+    strict_load_state_dict,
+)
 
 
 # -----------------------------------------------------------------------------
 # Constants
 # -----------------------------------------------------------------------------
-DEFAULT_INPUTS = [
-    "model/data_fusion/man1_right_for_poc_output.csv",
-    "model/data_fusion/man2_right_for_poc_output.csv",
-    "model/data_fusion/man3_right_for_poc_output.csv",
-    "model/data_fusion/woman1_right_for_poc_output.csv",
-]
-
 MODEL_CHOICES = [
-    "mlp_baseline",
-    "mlp_baseline_full",
-    "mlp_baseline_seq8",
-    "mlp_sequence_joint",
-    "mlp_temporal_pooling",
+    "mlp_original",
     "mlp_sequence_delta",
     "mlp_embedding",
-    "two_stream_mlp",
     "cnn1d_tcn",
     "transformer_embedding",
     "mobilenetv3_small",
@@ -98,14 +103,126 @@ def set_seed(seed: int) -> None:
 
 
 def resolve_paths(csv_paths: list[str]) -> list[Path]:
-    """CLI에서 받은 상대 경로를 프로젝트 루트 기준 절대 경로로 정규화한다."""
+    """CLI에서 받은 상대 경로를 절대 경로로 정규화한다.
+    우선순위: CWD 기준 → PROJECT_ROOT 기준
+    """
     resolved: list[Path] = []
     for path in csv_paths:
         p = Path(path)
         if not p.is_absolute():
-            p = PROJECT_ROOT / p
+            cwd_candidate = Path.cwd() / p
+            p = cwd_candidate if cwd_candidate.exists() else PROJECT_ROOT / p
         resolved.append(p.resolve())
     return resolved
+
+
+def resolve_role_path(path_str: str) -> Path:
+    return resolve_paths([path_str])[0]
+
+
+def normalize_source_groups(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    if "source_file" in normalized.columns and normalized["source_file"].nunique() >= 1:
+        normalized["__source_group"] = normalized["source_file"].astype(str)
+    return normalized
+
+
+def infer_dataset_key(train_csv_path: Path) -> str:
+    stem = train_csv_path.stem
+    suffix = "_train"
+    if not stem.endswith(suffix):
+        raise ValueError(f"Expected *_train.csv naming, got: {train_csv_path.name}")
+    return stem[: -len(suffix)]
+
+
+def infer_normalization_family(dataset_key: str) -> str:
+    for family in ("baseline", "pos_only", "scale_only", "pos_scale"):
+        if dataset_key == family or dataset_key.startswith(f"{family}_"):
+            return family
+    return "unknown"
+
+
+def _source_groups(df: pd.DataFrame, group_col: str = "__source_group") -> list[str]:
+    """summary/evaluation 기록용 source group 목록을 정렬해서 반환한다."""
+    if group_col not in df.columns:
+        return []
+    return sorted(str(v) for v in df[group_col].dropna().unique().tolist())
+
+
+def _rows_by_source_group(df: pd.DataFrame, group_col: str = "__source_group") -> dict[str, int]:
+    """DataFrame 내 source group별 row 수를 JSON-friendly dict로 만든다."""
+    if group_col not in df.columns:
+        return {}
+    counts = df[group_col].value_counts().sort_index()
+    return {str(group): int(count) for group, count in counts.items()}
+
+
+def _source_counts_by_role(
+    split: SplitData,
+    inference_df: pd.DataFrame | None = None,
+    group_col: str = "__source_group",
+) -> dict[str, int]:
+    counts = {
+        "train": len(_source_groups(split.train_df, group_col=group_col)),
+        "val": len(_source_groups(split.val_df, group_col=group_col)),
+        "test": len(_source_groups(split.test_df, group_col=group_col)),
+    }
+    if inference_df is not None:
+        counts["inference"] = len(_source_groups(inference_df, group_col=group_col))
+    return counts
+
+
+def build_dataset_info(
+    input_roles: dict[str, Path],
+    merged_df: pd.DataFrame,
+    split: SplitData,
+    dataset_key: str,
+    normalization_family: str,
+    inference_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    """run/evaluation 폴더에 같이 저장할 데이터셋 메타를 구성한다."""
+    source_counts = _source_counts_by_role(split, inference_df=inference_df)
+    info = {
+        "dataset_key": dataset_key,
+        "normalization_family": normalization_family,
+        "fixed_video_level_split": True,
+        "source_counts": source_counts,
+        "test_kind": "static_images_63d",
+        "test_sequence_policy": "independent_repeat",
+        "inference_sequence_policy": "sliding",
+        "official_ranking_basis": "test_csv_static_images",
+        "temporal_metrics_policy": "disabled_for_static_images",
+        "input_roles": {role: str(path) for role, path in input_roles.items()},
+        "input_csv_paths": [str(p) for p in input_roles.values()],
+        "input_csv_names": [p.name for p in input_roles.values()],
+        "source_groups": _source_groups(merged_df),
+        "total_rows": int(len(merged_df)),
+        "rows_by_source_group": _rows_by_source_group(merged_df),
+        "split": {
+            "train": {
+                "rows": int(len(split.train_df)),
+                "source_groups": _source_groups(split.train_df),
+                "rows_by_source_group": _rows_by_source_group(split.train_df),
+            },
+            "val": {
+                "rows": int(len(split.val_df)),
+                "source_groups": _source_groups(split.val_df),
+                "rows_by_source_group": _rows_by_source_group(split.val_df),
+            },
+            "test": {
+                "rows": int(len(split.test_df)),
+                "source_groups": _source_groups(split.test_df),
+                "rows_by_source_group": _rows_by_source_group(split.test_df),
+            },
+        },
+    }
+    if inference_df is not None:
+        info["split"]["inference"] = {
+            "rows": int(len(inference_df)),
+            "source_groups": _source_groups(inference_df),
+            "rows_by_source_group": _rows_by_source_group(inference_df),
+        }
+    return info
 
 
 def load_preprocessed_data(csv_paths: list[Path]) -> pd.DataFrame:
@@ -137,21 +254,68 @@ def load_preprocessed_data(csv_paths: list[Path]) -> pd.DataFrame:
     merged = merged.dropna(subset=["gesture"]).copy()
     merged["gesture"] = merged["gesture"].astype(int)
 
-    # v2 파이프라인은 joint / bone / angle feature가 모두 계산된 CSV를 전제로 한다.
-    missing_joint = [c for c in JOINT_COLS if c not in merged.columns]
-    missing_bone = [c for c in BONE_COLS if c not in merged.columns]
-    if missing_joint or missing_bone:
+    # 전처리 CSV (nx*/bx* 컬럼) 또는 raw CSV (x*/y*/z* 컬럼) 둘 다 허용한다.
+    has_preprocessed = all(c in merged.columns for c in JOINT_COLS[:3])
+    has_raw = all(c in merged.columns for c in RAW_JOINT_COLS[:3])
+
+    if not has_preprocessed and not has_raw:
         raise ValueError(
-            "Input must be preprocessed *_output.csv with joint/bone features. "
-            f"Missing joint: {missing_joint[:5]}... bone: {missing_bone[:5]}..."
+            "Input CSV에 유효한 landmark 컬럼이 없습니다. "
+            "전처리 CSV (nx0,ny0...) 또는 raw CSV (x0,y0,z0...) 중 하나여야 합니다."
         )
 
     angle_cols = detect_angle_cols(merged)
-    if len(angle_cols) < 4:
-        raise ValueError("Could not detect angle columns (flex_*/abd_*).")
 
-    merged = merged.dropna(subset=JOINT_COLS + BONE_COLS + angle_cols).reset_index(drop=True)
+    # 실제 존재하는 컬럼만 dropna 대상으로 사용한다.
+    feature_cols = [c for c in (JOINT_COLS + BONE_COLS + angle_cols) if c in merged.columns]
+    if not feature_cols:
+        feature_cols = [c for c in RAW_JOINT_COLS if c in merged.columns]
+
+    merged = merged.dropna(subset=feature_cols).reset_index(drop=True)
     return merged
+
+
+def _block_split_single(
+    df: pd.DataFrame,
+    rng: np.random.Generator,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    seq_len: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """단일 source 내에서 seq_len 블록 단위로 train/val/test를 나눈다.
+
+    frame_idx 순으로 정렬 후 seq_len 크기 블록을 셔플해 분배하므로
+    슬라이딩 윈도우가 split 경계를 넘지 않는다.
+    마지막 불완전 블록은 train에 편입한다.
+    """
+    sort_col = "frame_idx" if "frame_idx" in df.columns else None
+    sdf = df.sort_values(sort_col).reset_index(drop=True) if sort_col else df.reset_index(drop=True)
+
+    assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6
+    block_size = max(seq_len, 1)
+    n_rows = len(sdf)
+    n_blocks = n_rows // block_size
+
+    block_idx = np.arange(n_blocks)
+    rng.shuffle(block_idx)
+
+    n_test = max(1, int(round(n_blocks * test_ratio)))
+    n_val  = max(1, int(round(n_blocks * val_ratio)))
+    if n_test + n_val >= n_blocks:
+        n_test, n_val = 1, 1
+
+    test_blocks  = set(block_idx[:n_test])
+    val_blocks   = set(block_idx[n_test:n_test + n_val])
+    train_blocks = set(block_idx[n_test + n_val:])
+
+    row_block = np.arange(n_rows) // block_size
+
+    train_mask = np.array([b in train_blocks or b >= n_blocks for b in row_block])
+    val_mask   = np.array([b in val_blocks   for b in row_block])
+    test_mask  = np.array([b in test_blocks  for b in row_block])
+
+    return sdf[train_mask].copy(), sdf[val_mask].copy(), sdf[test_mask].copy()
 
 
 def split_by_group(
@@ -161,54 +325,67 @@ def split_by_group(
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
     test_ratio: float = 0.1,
+    seq_len: int = 1,
 ) -> SplitData:
     """가능하면 source group 단위로 train / val / test를 나눈다.
 
-    원본 파일 수가 너무 적으면 학습 불능을 피하기 위해 row-level fallback을 사용한다.
+    우선순위:
+    1. __source_group 4개 이상 (기본, 4파일 입력) → group-level split
+    2. source_file 컬럼에 여러 값 존재 (통합 CSV) → source_file 내부 블록 split
+       각 source_file 안에서 seq_len 블록 단위로 나눠 모든 클래스가
+       train/val/test에 고루 포함되도록 보장한다.
+    3. 진짜 단일 source → 전체에 seq_len 블록 단위 split
     """
     assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6
 
     groups = list(df[group_col].dropna().unique())
     rng = np.random.default_rng(seed)
-    rng.shuffle(groups)
 
-    if len(groups) >= 3:
+    if len(groups) >= 4:
+        # 우선순위 1: 4개 이상 파일 → group-level split (기존 동작 유지)
+        rng.shuffle(groups)
         n_groups = len(groups)
         n_test = max(1, int(round(n_groups * test_ratio)))
-        n_val = max(1, int(round(n_groups * val_ratio)))
+        n_val  = max(1, int(round(n_groups * val_ratio)))
 
         if n_test + n_val >= n_groups:
             n_test = 1
-            n_val = 1
+            n_val  = 1
 
-        test_groups = set(groups[:n_test])
-        val_groups = set(groups[n_test:n_test + n_val])
+        test_groups  = set(groups[:n_test])
+        val_groups   = set(groups[n_test:n_test + n_val])
         train_groups = set(groups[n_test + n_val:])
 
         if not train_groups:
-            # guarantee train split non-empty
             spill = list(val_groups)
             train_groups.add(spill[0])
             val_groups.remove(spill[0])
 
         train_df = df[df[group_col].isin(train_groups)].copy()
-        val_df = df[df[group_col].isin(val_groups)].copy()
-        test_df = df[df[group_col].isin(test_groups)].copy()
+        val_df   = df[df[group_col].isin(val_groups)].copy()
+        test_df  = df[df[group_col].isin(test_groups)].copy()
+
+    elif "source_file" in df.columns and df["source_file"].nunique() >= 2:
+        # 우선순위 2: 통합 CSV — source_file별 내부 블록 split
+        # 각 source_file에서 독립적으로 split해 모든 클래스 대표성을 보장한다.
+        train_parts, val_parts, test_parts = [], [], []
+        for _, grp in df.groupby("source_file"):
+            tr, va, te = _block_split_single(
+                grp, rng, train_ratio, val_ratio, test_ratio, seq_len
+            )
+            train_parts.append(tr)
+            val_parts.append(va)
+            test_parts.append(te)
+
+        train_df = pd.concat(train_parts, ignore_index=True)
+        val_df   = pd.concat(val_parts,   ignore_index=True)
+        test_df  = pd.concat(test_parts,  ignore_index=True)
+
     else:
-        # fallback: random row split
-        idx = np.arange(len(df))
-        rng.shuffle(idx)
-
-        n_test = max(1, int(len(idx) * test_ratio))
-        n_val = max(1, int(len(idx) * val_ratio))
-
-        test_idx = idx[:n_test]
-        val_idx = idx[n_test:n_test + n_val]
-        train_idx = idx[n_test + n_val:]
-
-        train_df = df.iloc[train_idx].copy()
-        val_df = df.iloc[val_idx].copy()
-        test_df = df.iloc[test_idx].copy()
+        # 우선순위 3: 진짜 단일 source → seq_len 블록 단위 split
+        train_df, val_df, test_df = _block_split_single(
+            df, rng, train_ratio, val_ratio, test_ratio, seq_len
+        )
 
     return SplitData(
         train_df=train_df.reset_index(drop=True),
@@ -230,17 +407,29 @@ def create_weighted_sampler(labels: np.ndarray) -> WeightedRandomSampler:
 # -----------------------------------------------------------------------------
 class FocalLoss(nn.Module):
     """쉬운 샘플의 기여를 줄이고 희소 클래스에 더 집중시키는 loss."""
-    def __init__(self, alpha: torch.Tensor | None = None, gamma: float = 2.0):
+    def __init__(
+        self,
+        alpha: torch.Tensor | None = None,
+        gamma: float = DEFAULT_FOCAL_GAMMA,
+        label_smoothing: float = 0.0,
+    ):
         super().__init__()
         self.gamma = gamma
+        self.label_smoothing = label_smoothing
         if alpha is not None:
             self.register_buffer("alpha", alpha)
         else:
             self.alpha = None
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = F.cross_entropy(logits, targets, reduction="none")
-        pt = torch.exp(-ce)
+        ce = F.cross_entropy(
+            logits,
+            targets,
+            reduction="none",
+            label_smoothing=self.label_smoothing,
+        )
+        probs = F.softmax(logits, dim=1)
+        pt = probs.gather(1, targets.unsqueeze(1)).squeeze(1).clamp_min(1e-8)
         weight = (1.0 - pt) ** self.gamma
         if self.alpha is not None:
             weight = weight * self.alpha[targets]
@@ -269,16 +458,80 @@ def compute_alpha(labels: np.ndarray, num_classes: int, device: torch.device) ->
     return torch.tensor(alpha, dtype=torch.float32, device=device)
 
 
+def build_training_recipe(
+    *,
+    labels: np.ndarray,
+    num_classes: int,
+    device: torch.device,
+    loss_type: str,
+    use_weighted_sampler: bool,
+    use_alpha: bool,
+    use_label_smoothing: bool,
+    focal_gamma: float,
+) -> tuple[WeightedRandomSampler | None, bool, nn.Module, dict[str, Any]]:
+    """Train sampler / loss 조합을 현재 실험 설정에 맞게 조립한다."""
+    sampler = create_weighted_sampler(labels) if use_weighted_sampler else None
+    shuffle_train = sampler is None
+    alpha = compute_alpha(labels, num_classes=num_classes, device=device) if use_alpha else None
+    label_smoothing = DEFAULT_LABEL_SMOOTHING if use_label_smoothing else 0.0
+
+    if loss_type == "cross_entropy":
+        criterion = nn.CrossEntropyLoss(weight=alpha, label_smoothing=label_smoothing)
+    elif loss_type == "focal":
+        criterion = FocalLoss(
+            alpha=alpha,
+            gamma=focal_gamma,
+            label_smoothing=label_smoothing,
+        )
+    else:
+        raise ValueError(f"Unsupported loss_type: {loss_type}")
+
+    recipe_meta = {
+        "loss_type": loss_type,
+        "sampler_policy": "weighted_sampler" if use_weighted_sampler else "shuffle",
+        "alpha_policy": "enabled" if use_alpha else "disabled",
+        "label_smoothing_enabled": bool(use_label_smoothing),
+        "effective_label_smoothing": float(label_smoothing),
+        "effective_focal_gamma": float(focal_gamma),
+    }
+    return sampler, shuffle_train, criterion, recipe_meta
+
+
+def get_dataset_labels(dataset: Dataset, *, model_id: str, split_name: str = "train") -> np.ndarray:
+    """Dataset이 sampler/loss 계산에 필요한 1차원 label 배열 계약을 만족하는지 검증한다."""
+    dataset_class = dataset.__class__.__name__
+    raw_labels = getattr(dataset, "y", None)
+    if raw_labels is None:
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) must expose `dataset.y` "
+            "as a 1D integer label array."
+        )
+
+    labels = np.asarray(raw_labels)
+    if labels.ndim != 1:
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) has invalid `dataset.y` "
+            f"shape {labels.shape}; expected a 1D label array."
+        )
+    if len(labels) != len(dataset):
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) has len(dataset.y)={len(labels)} "
+            f"but len(dataset)={len(dataset)}."
+        )
+
+    try:
+        return labels.astype(np.int64, copy=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{model_id} {split_name} dataset ({dataset_class}) must provide integer-like labels in `dataset.y`."
+        ) from exc
+
+
 def forward_batch(model: nn.Module, batch: tuple, mode: str, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Dataset마다 다른 batch shape를 공통 (logits, y, idx) 계약으로 맞춘다."""
     if mode == "frame":
         x, y, idx = batch
         logits = model(_to_device(x, device))
-        return logits, _to_device(y, device), idx
-
-    if mode == "two_stream":
-        xj, xb, y, idx = batch
-        logits = model(_to_device(xj, device), _to_device(xb, device))
         return logits, _to_device(y, device), idx
 
     if mode == "sequence":
@@ -410,20 +663,26 @@ def build_experiment(
     seq_stride: int,
     image_size: int,
     num_classes: int,
+    test_sequence_policy: str = "sliding",
 ) -> tuple[nn.Module, str, Dataset, Dataset, Dataset]:
     """
     model_id로 대응되는 builder를 동적 import 해서 dataset / model 조립 책임을 위임한다.
     Returns: model, mode, train_ds, val_ds, test_ds
-    mode in {frame, two_stream, sequence, image}
+    mode in {frame, sequence, image}
     """
     mod = importlib.import_module(f"{model_id}.dataset")
-    return mod.build(
+    kwargs = dict(
         split=split,
         angle_cols=angle_cols,
         seq_len=seq_len,
         seq_stride=seq_stride,
         image_size=image_size,
         num_classes=num_classes,
+    )
+    if "test_sequence_policy" in inspect.signature(mod.build).parameters:
+        kwargs["test_sequence_policy"] = test_sequence_policy
+    return mod.build(
+        **kwargs,
     )
 
 
@@ -440,19 +699,65 @@ def run(args: argparse.Namespace) -> dict:
     else:
         device = torch.device(args.device)
 
-    csv_paths = resolve_paths(args.csv_path)
-    df = load_preprocessed_data(csv_paths)
-    angle_cols = detect_angle_cols(df)
+    input_roles: dict[str, Path] = {
+        "train": resolve_role_path(args.train_csv),
+        "val": resolve_role_path(args.val_csv),
+        "test": resolve_role_path(args.test_csv),
+    }
+    if args.inference_csv:
+        input_roles["inference"] = resolve_role_path(args.inference_csv)
 
-    # 동일 source group이 train / test에 동시에 들어가지 않도록 먼저 split한다.
-    split = split_by_group(df, seed=args.seed)
+    train_df = normalize_source_groups(load_preprocessed_data([input_roles["train"]]))
+    val_df = normalize_source_groups(load_preprocessed_data([input_roles["val"]]))
+    test_df = normalize_source_groups(load_preprocessed_data([input_roles["test"]]))
+    inference_df = None
+    if "inference" in input_roles:
+        inference_df = normalize_source_groups(load_preprocessed_data([input_roles["inference"]]))
+
+    reference_columns = list(train_df.columns)
+    for role_name, frame in (
+        ("val", val_df),
+        ("test", test_df),
+        ("inference", inference_df),
+    ):
+        if frame is None:
+            continue
+        if list(frame.columns) != reference_columns:
+            raise ValueError(
+                f"Column mismatch between train and {role_name}: "
+                f"{input_roles['train'].name} vs {input_roles[role_name].name}"
+            )
+
+    split = SplitData(
+        train_df=train_df.reset_index(drop=True),
+        val_df=val_df.reset_index(drop=True),
+        test_df=test_df.reset_index(drop=True),
+    )
+    merged_frames = [train_df, val_df, test_df]
+    if inference_df is not None:
+        merged_frames.append(inference_df)
+    merged_df = pd.concat(merged_frames, ignore_index=True)
+    angle_cols = detect_angle_cols(merged_df)
+
+    dataset_key = infer_dataset_key(input_roles["train"])
+    normalization_family = infer_normalization_family(dataset_key)
+    dataset_info = build_dataset_info(
+        input_roles=input_roles,
+        merged_df=merged_df,
+        split=split,
+        dataset_key=dataset_key,
+        normalization_family=normalization_family,
+        inference_df=inference_df,
+    )
+    source_counts = dict(dataset_info.get("source_counts") or {})
 
     # 평가 리포트와 checkpoint 저장에 같은 class ordering을 사용한다.
     class_names = args.class_names if args.class_names else DEFAULT_CLASS_NAMES
     num_classes = len(class_names)
 
     # 모델별 / 실행시각별 폴더를 분리해 실험 결과를 누적 저장한다.
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    KST = timezone(timedelta(hours=9))
+    timestamp = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
     out_root = Path(args.output_root)
     if not out_root.is_absolute():
         out_root = PROJECT_ROOT / out_root
@@ -468,18 +773,56 @@ def run(args: argparse.Namespace) -> dict:
         seq_stride=args.seq_stride,
         image_size=args.image_size,
         num_classes=num_classes,
+        test_sequence_policy="independent_repeat",
     )
     model = model.to(device)
+    dataset_info["dataset_sample_counts"] = {
+        "train": int(len(train_ds)),
+        "val": int(len(val_ds)),
+        "test": int(len(test_ds)),
+    }
+    if inference_df is not None:
+        inference_split = SplitData(
+            train_df=split.train_df,
+            val_df=split.val_df,
+            test_df=inference_df.reset_index(drop=True),
+        )
+        _, inference_mode, _, _, inference_ds = build_experiment(
+            model_id=args.model_id,
+            split=inference_split,
+            angle_cols=angle_cols,
+            seq_len=args.seq_len,
+            seq_stride=args.seq_stride,
+            image_size=args.image_size,
+            num_classes=num_classes,
+            test_sequence_policy="sliding",
+        )
+        if inference_mode != mode:
+            raise ValueError(
+                f"Inference mode mismatch for {args.model_id}: {inference_mode} != {mode}"
+            )
+    else:
+        inference_ds = None
+    dataset_info["mode"] = mode
 
-    # train loader만 weighted sampler를 사용하고, val / test는 원본 분포를 유지한다.
-    train_labels = np.array(getattr(train_ds, "y"), dtype=np.int64)
-    sampler = create_weighted_sampler(train_labels)
+    train_labels = get_dataset_labels(train_ds, model_id=args.model_id, split_name="train")
+    sampler, shuffle_train, criterion, recipe_meta = build_training_recipe(
+        labels=train_labels,
+        num_classes=num_classes,
+        device=device,
+        loss_type=args.loss_type,
+        use_weighted_sampler=args.use_weighted_sampler,
+        use_alpha=args.use_alpha,
+        use_label_smoothing=args.use_label_smoothing,
+        focal_gamma=args.focal_gamma,
+    )
 
     pin_memory = device.type == "cuda"
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
         sampler=sampler,
+        shuffle=shuffle_train,
         num_workers=args.num_workers,
         pin_memory=pin_memory,
     )
@@ -497,10 +840,18 @@ def run(args: argparse.Namespace) -> dict:
         num_workers=args.num_workers,
         pin_memory=pin_memory,
     )
+    if inference_ds is not None:
+        inference_loader = DataLoader(
+            inference_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
+        dataset_info["dataset_sample_counts"]["inference"] = int(len(inference_ds))
+    else:
+        inference_loader = None
 
-    # sampler와 focal loss를 함께 써서 클래스 불균형 영향을 줄인다.
-    alpha = compute_alpha(train_labels, num_classes=num_classes, device=device)
-    criterion = FocalLoss(alpha=alpha, gamma=args.focal_gamma)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(args.epochs, 1))
 
@@ -557,6 +908,20 @@ def run(args: argparse.Namespace) -> dict:
     preds_path = run_dir / "preds_test.csv"
     preds_df.to_csv(preds_path, index=False)
 
+    if inference_loader is not None and inference_ds is not None:
+        preds_inference_df = predict_dataset(
+            model,
+            inference_loader,
+            inference_ds,
+            mode=mode,
+            num_classes=num_classes,
+            device=device,
+        )
+        preds_inference_path = run_dir / "preds_inference.csv"
+        preds_inference_df.to_csv(preds_inference_path, index=False)
+    else:
+        preds_inference_path = None
+
     # 후처리 threshold / voting / debounce까지 포함한 지표를 여기서 계산한다.
     eval_dir = run_dir / "evaluation"
     eval_cfg = EvaluationConfig(
@@ -566,47 +931,120 @@ def run(args: argparse.Namespace) -> dict:
         vote_n=args.vote_n,
         debounce_k=args.debounce_k,
         fallback_fps=args.fallback_fps,
+        dataset_info=dataset_info,
     )
     metrics_summary = evaluate_predictions(preds_df, eval_dir, eval_cfg)
 
-    # checkpoint에는 재로딩에 필요한 최소 실행 문맥도 함께 저장한다.
+    # checkpoint에는 재로딩에 필요한 최소 실행 문맥과 fingerprint를 함께 저장한다.
     ckpt_path = run_dir / "model.pt"
-    torch.save(
-        {
+    best_state_verification = fingerprint_state_dict(best_state)
+    checkpoint_payload = {
+        "model_id": args.model_id,
+        "model_state_dict": best_state,
+        "class_names": class_names,
+        "mode": mode,
+        "seed": args.seed,
+        "seq_len": args.seq_len,
+        "seq_stride": args.seq_stride,
+        "image_size": args.image_size,
+        "checkpoint_verification": {
+            **best_state_verification,
             "model_id": args.model_id,
-            "model_state_dict": best_state,
-            "class_names": class_names,
             "mode": mode,
-            "seed": args.seed,
-            "seq_len": args.seq_len,
-            "seq_stride": args.seq_stride,
-            "image_size": args.image_size,
+            "seq_len": int(args.seq_len),
+            "image_size": int(args.image_size),
         },
-        ckpt_path,
+    }
+    torch.save(checkpoint_payload, ckpt_path)
+
+    saved_checkpoint = safe_torch_load(ckpt_path, torch.device("cpu"))
+    saved_state_dict = saved_checkpoint["model_state_dict"]
+    saved_state_verification = fingerprint_state_dict(saved_state_dict)
+    reloaded_model, _, _, _ = instantiate_model_from_state_dict(
+        str(saved_checkpoint.get("model_id") or args.model_id),
+        saved_state_dict,
+        num_classes,
+        seq_len_hint=int(saved_checkpoint.get("seq_len") or args.seq_len),
+        default_seq_len=int(args.seq_len),
     )
+    strict_reload_info = strict_load_state_dict(reloaded_model, saved_state_dict)
+    stored_checkpoint_verification = dict(saved_checkpoint.get("checkpoint_verification") or {})
+    checkpoint_verification = {
+        "checkpoint_path": str(ckpt_path),
+        "model_id": str(saved_checkpoint.get("model_id") or args.model_id),
+        "mode": str(saved_checkpoint.get("mode") or mode),
+        "seq_len": int(saved_checkpoint.get("seq_len") or args.seq_len),
+        "image_size": int(saved_checkpoint.get("image_size") or args.image_size),
+        **saved_state_verification,
+        "saved_matches_best_state": (
+            saved_state_verification["checkpoint_fingerprint"]
+            == best_state_verification["checkpoint_fingerprint"]
+        ),
+        "stored_matches_saved_state": (
+            stored_checkpoint_verification.get("checkpoint_fingerprint")
+            == saved_state_verification["checkpoint_fingerprint"]
+        ),
+        "stored_checkpoint_fingerprint": stored_checkpoint_verification.get("checkpoint_fingerprint"),
+        **strict_reload_info,
+    }
 
     pd.DataFrame(history).to_csv(run_dir / "train_history.csv", index=False)
 
     run_summary = {
         "model_id": args.model_id,
+        "dataset_key": dataset_key,
+        "normalization_family": normalization_family,
         "mode": mode,
         "device": str(device),
-        "inputs": [str(p) for p in csv_paths],
+        "inputs": [str(p) for p in input_roles.values()],
+        "hyperparameters": {
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+            "optimizer": "AdamW",
+            "weight_decay": args.weight_decay,
+            "patience": args.patience,
+            "loss_type": args.loss_type,
+            "use_weighted_sampler": args.use_weighted_sampler,
+            "use_alpha": args.use_alpha,
+            "use_label_smoothing": args.use_label_smoothing,
+            "focal_gamma": args.focal_gamma,
+            "label_smoothing": recipe_meta["effective_label_smoothing"],
+            "sampler_policy": recipe_meta["sampler_policy"],
+            "alpha_policy": recipe_meta["alpha_policy"],
+            "tau": args.tau,
+            "vote_n": args.vote_n,
+            "debounce_k": args.debounce_k,
+            "fallback_fps": args.fallback_fps,
+        },
         "split_sizes": {
             "train": int(len(split.train_df)),
             "val": int(len(split.val_df)),
             "test": int(len(split.test_df)),
         },
+        "dataset_info": dataset_info,
         "dataset_sizes": {
             "train": int(len(train_ds)),
             "val": int(len(val_ds)),
             "test": int(len(test_ds)),
         },
+        "fixed_video_level_split": True,
+        "source_counts": source_counts,
+        "test_kind": "static_images_63d",
+        "test_sequence_policy": "independent_repeat",
+        "inference_sequence_policy": "sliding",
+        "official_ranking_basis": "test_csv_static_images",
+        "inference_used": inference_df is not None,
+        "preds_inference_csv": str(preds_inference_path) if preds_inference_path else None,
         "best_val_loss": float(best_val_loss),
         "epochs_ran": int(len(history)),
         "output_dir": str(run_dir),
+        "checkpoint_verification": checkpoint_verification,
         "metrics": metrics_summary,
     }
+    if inference_df is not None and inference_ds is not None:
+        run_summary["split_sizes"]["inference"] = int(len(inference_df))
+        run_summary["dataset_sizes"]["inference"] = int(len(inference_ds))
 
     with (run_dir / "run_summary.json").open("w", encoding="utf-8") as f:
         json.dump(run_summary, f, ensure_ascii=False, indent=2)
@@ -629,11 +1067,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run one JamJamBeat model-comparison pipeline and evaluation.",
     )
     parser.add_argument("--model-id", type=str, required=True, choices=MODEL_CHOICES)
+    parser.add_argument("--train-csv", type=str, default=None, help="Train role CSV path.")
+    parser.add_argument("--val-csv", type=str, default=None, help="Validation role CSV path.")
+    parser.add_argument("--test-csv", type=str, default=None, help="Test role CSV path.")
+    parser.add_argument("--inference-csv", type=str, default=None, help="Optional inference hold-out CSV path.")
     parser.add_argument(
         "--csv-path",
         action="append",
         default=[],
-        help="Input preprocessed CSV path. Repeat this option to pass multiple files.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--output-root", type=str, default="model/model_evaluation/pipelines")
 
@@ -642,7 +1084,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=6)
-    parser.add_argument("--focal-gamma", type=float, default=2.0)
+    parser.add_argument(
+        "--loss-type",
+        type=str,
+        default=DEFAULT_LOSS_TYPE,
+        choices=LOSS_TYPE_CHOICES,
+        help=f"학습 loss 종류. 기본값: {DEFAULT_LOSS_TYPE}",
+    )
+    parser.add_argument(
+        "--use-weighted-sampler",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_WEIGHTED_SAMPLER,
+        help=f"train loader에 weighted sampler 사용 여부. 기본값: {DEFAULT_USE_WEIGHTED_SAMPLER}",
+    )
+    parser.add_argument(
+        "--use-alpha",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_ALPHA,
+        help=f"class alpha(weight) 사용 여부. 기본값: {DEFAULT_USE_ALPHA}",
+    )
+    parser.add_argument(
+        "--use-label-smoothing",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_USE_LABEL_SMOOTHING,
+        help=(
+            "label smoothing 사용 여부. "
+            f"활성화 시 smoothing={DEFAULT_LABEL_SMOOTHING}"
+        ),
+    )
+    parser.add_argument("--focal-gamma", type=float, default=DEFAULT_FOCAL_GAMMA, help=argparse.SUPPRESS)
 
     parser.add_argument("--seq-len", type=int, default=8)
     parser.add_argument("--seq-stride", type=int, default=2)
@@ -666,8 +1136,21 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.csv_path:
-        args.csv_path = DEFAULT_INPUTS
+    if args.csv_path:
+        raise SystemExit(
+            "--csv-path flow is deprecated. "
+            "Use --train-csv --val-csv --test-csv [--inference-csv]."
+        )
+    missing = [
+        name
+        for name in ("train_csv", "val_csv", "test_csv")
+        if getattr(args, name) in (None, "")
+    ]
+    if missing:
+        raise SystemExit(
+            "Missing required role CSVs: "
+            + ", ".join(f"--{name.replace('_', '-')}" for name in missing)
+        )
 
     run(args)
 

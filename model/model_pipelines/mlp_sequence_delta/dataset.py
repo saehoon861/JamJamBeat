@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from _shared import JOINT_COLS, SequenceDataset, SplitData, sequence_arrays
+from _shared import RAW_JOINT_COLS, SequenceDataset, SplitData, repeated_sequence_arrays, sequence_arrays
 from .model import SequenceDeltaMLP
 
 
@@ -25,6 +25,7 @@ def build(
     seq_stride: int,
     image_size: int,
     num_classes: int,
+    test_sequence_policy: str = "sliding",
 ):
     """
     Returns: (model, mode, train_ds, val_ds, test_ds)
@@ -32,9 +33,14 @@ def build(
     입력: (B, T=seq_len, D=126) where D = joint(63) + delta(63)
     """
     # 라벨은 마지막 프레임 기준이고, 입력 feature만 joint+delta로 확장된다.
-    trX, try_, trm = sequence_arrays(split.train_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
-    vaX, vay, vam = sequence_arrays(split.val_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
-    teX, tey, tem = sequence_arrays(split.test_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    trX, try_, trm = sequence_arrays(split.train_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    vaX, vay, vam = sequence_arrays(split.val_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    if test_sequence_policy == "independent_repeat":
+        teX, tey, tem = repeated_sequence_arrays(split.test_df, RAW_JOINT_COLS, seq_len=seq_len)
+    elif test_sequence_policy == "sliding":
+        teX, tey, tem = sequence_arrays(split.test_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    else:
+        raise ValueError(f"Unsupported test_sequence_policy: {test_sequence_policy}")
 
     trX = add_delta_features(trX)
     vaX = add_delta_features(vaX)

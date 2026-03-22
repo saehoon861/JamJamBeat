@@ -1,13 +1,13 @@
 # JamJamBeat 모델 평가 가이드
 
 > 관련 코드: `model/model_evaluation/evaluation_runtime.py`
-> 평가 실행: `run_model_pipeline.py` → `evaluate_predictions()` 자동 호출
+> 평가 실행: `run_pipeline.py` → `evaluate_predictions()` 자동 호출
 
 ---
 
 ## 1. 평가가 언제 실행되나
 
-`run_model_pipeline.py` 또는 `run_all.py`를 실행하면 학습 완료 후 **자동으로** 평가가 돌아간다.
+`run_pipeline.py` 또는 `run_all.py`를 실행하면 학습 완료 후 **자동으로** 평가가 돌아간다.
 별도 스크립트를 따로 실행할 필요 없다.
 
 ```
@@ -21,28 +21,36 @@
 
 ## 2. 출력 파일 구조
 
-실험 하나가 끝나면 아래 경로에 파일이 생성된다.
+`run_all.py` 배치 실행 시 아래 경로에 파일이 생성된다.
 
 ```
 model/model_evaluation/pipelines/
-└── {model_id}/
-    └── {yyyymmdd_HHMMSS}/
-        ├── preds_test.csv          ← 프레임별 예측 원본
-        ├── model.pt                ← 학습된 모델 가중치
-        ├── train_history.csv       ← epoch별 loss/acc
-        ├── run_summary.json        ← 전체 메트릭 요약
-        └── evaluation/
-            ├── confusion_matrix.csv   ← 혼동 행렬 (수치)
-            ├── confusion_matrix.png   ← 혼동 행렬 (시각화)
-            ├── per_class_report.csv   ← 클래스별 P/R/F1
-            ├── latency_cdf.png        ← 추론 지연 분포
-            └── metrics_summary.json   ← 핵심 지표 JSON
+├── latest_suite.json
+└── {yyyymmdd_HHMMSS}__{dataset_key}/
+    ├── comparison_suite.json      ← dataset key / 입력 역할 CSV / 모델 목록 메타데이터
+    ├── comparison_results.csv     ← 이번 배치 전체 비교표
+    └── {model_id}/
+        └── {yyyymmdd_HHMMSS}/
+            ├── preds_test.csv          ← 프레임별 예측 원본
+            ├── preds_inference.csv     ← hold-out inference 예측 원본
+            ├── model.pt                ← 학습된 모델 가중치
+            ├── train_history.csv       ← epoch별 loss/acc
+            ├── run_summary.json        ← 전체 메트릭 요약
+            └── evaluation/
+                ├── dataset_info.json      ← 입력 역할 CSV / split 정보
+                ├── confusion_matrix.csv   ← 혼동 행렬 (수치)
+                ├── confusion_matrix.png   ← 혼동 행렬 (시각화)
+                ├── per_class_report.csv   ← 클래스별 P/R/F1
+                ├── latency_cdf.png        ← 추론 지연 분포
+                └── metrics_summary.json   ← 핵심 지표 JSON
 ```
 
 전체 실험 비교 결과:
 ```
-model/model_evaluation/pipelines/comparison_results.csv
+model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
 ```
+
+`run_pipeline.py` 단독 실행은 `--output-root/{model_id}/{timestamp}/` 구조에 저장된다.
 
 ---
 
@@ -109,6 +117,13 @@ Class 0 = `neutral` (아무 제스처도 아님)
 
 ### 3.4 FP/min (False Positive per Minute)
 
+이 지표는 **연속 프레임 기반 추론**에서만 의미가 있다.
+
+현재 `학습데이터셋/*_test.csv`는 공식 랭킹용 **독립 정지사진 기반 63d landmark test 세트**이므로,
+공식 `test.csv` 평가에서는 `fp_per_min`을 계산하지 않고 `N/A(null)`로 둔다.
+
+즉 아래 설명은 `inference.csv`나 video runtime처럼 시간축이 있는 평가를 볼 때만 참고하면 된다.
+
 ```
 후처리 파이프라인: threshold(τ) → voting(N프레임) → debounce(K회)
 ```
@@ -167,18 +182,21 @@ PoC 목표: **< 2 FP/min**
 | 컬럼 | 설명 |
 |------|------|
 | `model_id` | 모델 이름 |
-| `mode` | 입력 모드 (frame / two_stream / sequence / image) |
+| `mode` | 입력 모드 (frame / sequence / image) |
 | `accuracy` | 전체 정확도 |
 | `macro_f1` | **주 비교 지표** |
-| `macro_precision` | 클래스별 precision 평균 |
-| `macro_recall` | 클래스별 recall 평균 |
 | `class0_fpr` | 제스처 누락률 |
 | `class0_fnr` | neutral 오발동률 |
-| `fp_per_min` | 분당 오발동 횟수 (후처리 포함) |
 | `latency_p50_ms` | 추론 시간 중간값 |
-| `latency_p95_ms` | 추론 시간 p95 |
-| `best_val_loss` | validation loss 최솟값 |
 | `epochs_ran` | 실제 학습 에폭 수 (early stop 반영) |
+
+추가 메타:
+
+- 공식 랭킹 기준 `test.csv`는 `static_images_63d`
+- sequence 모델의 공식 test 해석은 `independent_repeat`
+  - 한 이미지의 63d 좌표를 `seq_len`만큼 반복해 proxy sequence로 평가
+- `inference.csv`는 기존처럼 연속 시퀀스(sliding) 해석을 유지
+- 따라서 sequence 모델도 공식 랭킹에서는 `preds_test.csv` row 수가 원본 `*_test.csv` row 수와 같아진다
 
 ---
 
@@ -190,29 +208,55 @@ macro_f1     ≥ 0.70   → 개선 필요
 macro_f1     < 0.70   → 재설계 필요
 
 class0_fnr   < 0.10   → neutral 오발동 수용 범위
-fp_per_min   < 2.0    → 실서비스 수용 범위
-
-latency_p95  < 200ms  → 온디바이스 배포 가능
+latency_p50  < 200ms  → 온디바이스 배포 가능
 ```
+
+`fp_per_min`은 공식 static-image test에서는 사용하지 않는다.
+필요하면 video / inference runtime 분석용 보조 지표로만 본다.
 
 ---
 
 ## 6. 실행 방법 요약
 
 ```bash
-# 전체 9개 모델 순차 실행
-cd /home/user/projects/JamJamBeat
-python model/model_pipelines/run_all.py
+# 역할형 dataset 생성
+cd /home/user/projects/JamJamBeat/model
+uv run python data_fusion/build_training_datasets.py
+
+# 기본 active core 5개 모델 순차 실행
+uv run python model_pipelines/run_all.py
+
+# image 모델 3종까지 포함한 8개 실행
+uv run python model_pipelines/run_all.py --include-image-models
 
 # 일부 모델만 실행
-python model/model_pipelines/run_all.py \
-    --models mlp_baseline mlp_embedding two_stream_mlp
+uv run python model_pipelines/run_all.py \
+    --dataset-key baseline_ds_1_none \
+    --models mlp_sequence_delta mlp_embedding transformer_embedding
 
-# 에폭 수 조정
-python model/model_pipelines/run_all.py --epochs 50
+# run_pipeline.py 단독 실행
+uv run python model_pipelines/run_pipeline.py \
+    --model-id mlp_embedding \
+    --train-csv data_fusion/학습데이터셋/baseline_train.csv \
+    --val-csv data_fusion/학습데이터셋/baseline_val.csv \
+    --test-csv data_fusion/학습데이터셋/baseline_test.csv \
+    --inference-csv data_fusion/학습데이터셋/baseline_inference.csv
+
+# 손실함수 조합 예시: CE + smoothing, sampler/alpha 비활성
+uv run python model_pipelines/run_pipeline.py \
+    --model-id mlp_embedding \
+    --train-csv data_fusion/학습데이터셋/baseline_train.csv \
+    --val-csv data_fusion/학습데이터셋/baseline_val.csv \
+    --test-csv data_fusion/학습데이터셋/baseline_test.csv \
+    --inference-csv data_fusion/학습데이터셋/baseline_inference.csv \
+    --loss-type cross_entropy \
+    --no-use-weighted-sampler \
+    --no-use-alpha \
+    --use-label-smoothing
 
 # 결과 확인
-cat model/model_evaluation/pipelines/comparison_results.csv
+cat model/model_evaluation/pipelines/latest_suite.json
+cat model/model_evaluation/pipelines/{suite_name}/comparison_results.csv
 ```
 
 ---
@@ -224,6 +268,10 @@ cat model/model_evaluation/pipelines/comparison_results.csv
 
 **FNR이 높은 경우 (neutral을 제스처로 오판)**
 → `tau` 값 올리거나 `debounce_k` 높이기.
+
+**손실함수 실험을 바꾸고 싶은 경우**
+→ `--loss-type`, `--use-weighted-sampler`, `--use-alpha`, `--use-label-smoothing` 조합을 바꿔 비교한다.  
+기본 수치는 `model/model_pipelines/_shared.py`의 `DEFAULT_FOCAL_GAMMA`, `DEFAULT_LABEL_SMOOTHING` 상수를 수정하면 된다.
 
 **두 모델의 macro_f1이 비슷한 경우**
 → `fp_per_min`과 `latency_p50_ms`로 실서비스 적합성 비교.

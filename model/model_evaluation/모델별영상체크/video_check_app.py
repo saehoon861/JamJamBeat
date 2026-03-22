@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import sys
@@ -31,6 +30,14 @@ MODEL_PIPELINES_ROOT = PROJECT_ROOT / "model" / "model_pipelines"
 if str(MODEL_PIPELINES_ROOT) not in sys.path:
     # 저장된 model_id 문자열로 각 분류기 구현을 동적 import 하기 위한 경로다.
     sys.path.insert(0, str(MODEL_PIPELINES_ROOT))
+
+from checkpoint_verification import (
+    fingerprint_state_dict,
+    infer_num_classes_from_state_dict,
+    instantiate_model_from_state_dict,
+    safe_torch_load,
+    strict_load_state_dict,
+)
 
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
@@ -68,12 +75,6 @@ FINGER_PAIRS = [
 ]
 
 SUPPORTED_VIDEO_EXTS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
-JOINT_ONLY_SEQUENCE_MODELS = {
-    "mlp_sequence_joint",
-    "mlp_temporal_pooling",
-    "mlp_sequence_delta",
-    "mlp_baseline_seq8",
-}
 
 
 @dataclass(slots=True)
@@ -93,7 +94,7 @@ class RunInfo:
 class FeaturePack:
     """런타임 추론에서 재사용할 feature 묶음.
 
-    하나의 raw landmark 세트에서 frame / two-stream / sequence / image 입력을 모두 만든다.
+    하나의 raw landmark 세트에서 frame / sequence / image 입력을 모두 만든다.
     """
 
     raw_landmarks: np.ndarray
@@ -142,6 +143,16 @@ class RuntimeModel:
     neutral_idx: int
     seq_len: int
     image_size: int
+    input_dim: int | None
+    aux_input_dim: int | None
+    checkpoint_verification: dict[str, Any] | None = None
+    input_verification_logged: bool = False
+    input_verification: dict[str, Any] | None = None
+    run_summary: dict[str, Any] | None = None
+    dataset_variant: str = "baseline"
+    dataset_variant_source: str = "default"
+    dataset_variant_warning: str | None = None
+    tau_threshold: float | None = None
 
 
 def format_timestamp(frame_idx: int, fps: float) -> str:
@@ -157,24 +168,34 @@ def discover_runs() -> list[RunInfo]:
     """결과 폴더에서 checkpoint run들을 스캔해 dropdown 후보를 만든다."""
     runs: list[RunInfo] = []
 
-    for checkpoint_path in sorted(RUNS_ROOT.glob("*/*/model.pt"), reverse=True):
+    for checkpoint_path in sorted(RUNS_ROOT.rglob("model.pt"), reverse=True):
         run_dir = checkpoint_path.parent
         summary_path = run_dir / "run_summary.json"
         mode = "unknown"
         macro_f1: float | None = None
+        suite_name: str | None = None
+        model_id = run_dir.parent.name
 
         if summary_path.exists():
             try:
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                model_id = str(summary.get("model_id") or model_id)
                 mode = str(summary.get("mode", "unknown"))
                 macro_f1 = summary.get("metrics", {}).get("macro_avg", {}).get("f1")
             except Exception:
                 pass
 
-        model_id = run_dir.parent.name
+        try:
+            rel = run_dir.relative_to(RUNS_ROOT)
+            if len(rel.parts) >= 3:
+                suite_name = rel.parts[0]
+        except ValueError:
+            suite_name = None
+
         stamp = run_dir.name
         f1_text = f"{macro_f1:.4f}" if isinstance(macro_f1, (int, float)) else "-"
-        display_name = f"{model_id} | {stamp} | mode={mode} | macro_f1={f1_text}"
+        suite_text = f"{suite_name} | " if suite_name else ""
+        display_name = f"{model_id} | {suite_text}{stamp} | mode={mode} | macro_f1={f1_text}"
 
         runs.append(
             RunInfo(
@@ -199,109 +220,12 @@ def discover_videos() -> list[Path]:
     return sorted({p.resolve() for p in videos})
 
 
-def safe_torch_load(path: Path, device: torch.device) -> dict[str, Any]:
-    """PyTorch 버전 차이를 흡수하며 checkpoint dict를 로드한다."""
-    try:
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
-    except TypeError:
-        checkpoint = torch.load(path, map_location=device)
-
-    if not isinstance(checkpoint, dict):
-        raise ValueError(f"Unexpected checkpoint format: {path}")
-    return checkpoint
-
-
 def detect_neutral_idx(class_names: list[str]) -> int:
     """neutral/background 클래스 index를 휴리스틱으로 찾는다."""
     for idx, name in enumerate(class_names):
         if str(name).strip().lower() in {"neutral", "none", "background"}:
             return idx
     return 0
-
-
-def _infer_num_classes(state_dict: dict[str, Any]) -> int:
-    """head weight shape로부터 class 수를 역추론한다."""
-    for key in ("head.2.weight", "head.6.weight", "head.weight", "net.6.weight", "net.4.weight"):
-        tensor = state_dict.get(key)
-        if tensor is not None and hasattr(tensor, "shape") and len(tensor.shape) == 2:
-            return int(tensor.shape[0])
-    raise ValueError("Could not infer num_classes from checkpoint state_dict.")
-
-
-def instantiate_model(
-    model_id: str,
-    state_dict: dict[str, Any],
-    num_classes: int,
-    seq_len_hint: int,
-) -> tuple[torch.nn.Module, int]:
-    """checkpoint state_dict shape를 읽어 정확한 model 클래스를 복원한다."""
-    mod = importlib.import_module(f"{model_id}.model")
-
-    if model_id in {"mlp_baseline", "mediapipe_hand_landmarker", "mlp_baseline_full"}:
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.MLPBaseline(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    if model_id == "mlp_baseline_seq8":
-        flat_dim = int(state_dict["net.0.weight"].shape[1])
-        seq_len = 8
-        input_dim = flat_dim // seq_len
-        model = mod.MLPBaselineSeq(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len
-
-    if model_id == "mlp_sequence_joint":
-        input_dim = int(state_dict["net.1.weight"].shape[1])
-        seq_len = seq_len_hint or max(input_dim // 63, 1)
-        model = mod.SequenceJointMLP(seq_len=seq_len, input_dim=63, num_classes=num_classes)
-        return model, seq_len
-
-    if model_id == "mlp_temporal_pooling":
-        input_dim = int(state_dict["frame_embed.1.weight"].shape[1])
-        model = mod.TemporalPoolingMLP(input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len_hint or DEFAULT_SEQ_LEN
-
-    if model_id == "mlp_sequence_delta":
-        flat_dim = int(state_dict["net.1.weight"].shape[1])
-        seq_len = seq_len_hint or max(flat_dim // 126, 1)
-        input_dim = flat_dim // seq_len
-        model = mod.SequenceDeltaMLP(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len
-
-    if model_id == "mlp_embedding":
-        input_dim = int(state_dict["embed.0.weight"].shape[1])
-        model = mod.MLPEmbedding(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    if model_id == "two_stream_mlp":
-        joint_dim = int(state_dict["joint_stream.net.0.weight"].shape[1])
-        bone_dim = int(state_dict["bone_stream.net.0.weight"].shape[1])
-        model = mod.TwoStreamMLP(joint_dim=joint_dim, bone_dim=bone_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    if model_id == "cnn1d_tcn":
-        input_dim = int(state_dict["net.0.weight"].shape[1])
-        model = mod.TCN1DClassifier(input_dim=input_dim, num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    if model_id == "transformer_embedding":
-        input_dim = int(state_dict["frame_embed.weight"].shape[1])
-        seq_len = int(state_dict["pos_embed"].shape[1])
-        model = mod.TemporalTransformer(seq_len=seq_len, input_dim=input_dim, num_classes=num_classes)
-        return model, seq_len
-
-    if model_id == "mobilenetv3_small":
-        model = mod.MobileNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    if model_id == "shufflenetv2_x0_5":
-        model = mod.ShuffleNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    if model_id == "efficientnet_b0":
-        model = mod.EfficientNetLike(num_classes=num_classes)
-        return model, DEFAULT_SEQ_LEN
-
-    raise ValueError(f"Unsupported model_id: {model_id}")
 
 
 def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
@@ -311,17 +235,44 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
     state_dict = checkpoint["model_state_dict"]
     class_names = list(checkpoint.get("class_names") or [])
     if not class_names:
-        class_names = [str(i) for i in range(_infer_num_classes(state_dict))]
+        class_names = [str(i) for i in range(infer_num_classes_from_state_dict(state_dict))]
 
     num_classes = len(class_names)
     model_id = str(checkpoint.get("model_id") or run_info.model_id)
     mode = str(checkpoint.get("mode") or run_info.mode)
     seq_len_hint = int(checkpoint.get("seq_len") or DEFAULT_SEQ_LEN)
     image_size = int(checkpoint.get("image_size") or DEFAULT_IMAGE_SIZE)
-    model, seq_len = instantiate_model(model_id, state_dict, num_classes, seq_len_hint=seq_len_hint)
-    model.load_state_dict(state_dict)
+    model, seq_len, input_dim, aux_input_dim = instantiate_model_from_state_dict(
+        model_id,
+        state_dict,
+        num_classes,
+        seq_len_hint=seq_len_hint,
+        default_seq_len=DEFAULT_SEQ_LEN,
+    )
+    strict_load_info = strict_load_state_dict(model, state_dict)
+    state_verification = fingerprint_state_dict(state_dict)
+    stored_checkpoint_verification = dict(checkpoint.get("checkpoint_verification") or {})
+    checkpoint_verification = {
+        "checkpoint_path": str(run_info.checkpoint_path),
+        "model_id": model_id,
+        "mode": mode,
+        "seq_len": int(seq_len),
+        "image_size": int(image_size),
+        **state_verification,
+        "stored_checkpoint_fingerprint": stored_checkpoint_verification.get("checkpoint_fingerprint"),
+        "stored_matches_loaded_state": (
+            stored_checkpoint_verification.get("checkpoint_fingerprint")
+            == state_verification["checkpoint_fingerprint"]
+        ),
+        **strict_load_info,
+    }
     model.to(device)
     model.eval()
+
+    print(
+        "[viewer] checkpoint_verification="
+        + json.dumps(checkpoint_verification, ensure_ascii=False, sort_keys=True)
+    )
 
     return RuntimeModel(
         run_info=run_info,
@@ -333,6 +284,9 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
         neutral_idx=detect_neutral_idx(class_names),
         seq_len=seq_len,
         image_size=image_size,
+        input_dim=input_dim,
+        aux_input_dim=aux_input_dim,
+        checkpoint_verification=checkpoint_verification,
     )
 
 
@@ -505,10 +459,29 @@ def neutral_probs(class_count: int, neutral_idx: int) -> list[float]:
     return probs
 
 
+def select_feature_vector(features: FeaturePack, expected_dim: int) -> np.ndarray:
+    """checkpoint의 실제 입력 차원에 맞는 feature 표현을 선택한다."""
+    candidates = {
+        int(features.joint.shape[0]): features.joint,
+        int(features.bone.shape[0]): features.bone,
+        int(features.angle.shape[0]): features.angle,
+        int(features.bone_angle.shape[0]): features.bone_angle,
+        int(features.full.shape[0]): features.full,
+    }
+    vector = candidates.get(int(expected_dim))
+    if vector is None:
+        supported = ", ".join(str(dim) for dim in sorted(candidates))
+        raise ValueError(
+            f"Unsupported runtime feature dim: {expected_dim}. "
+            f"Supported dims from feature pack: {supported}"
+        )
+    return vector
+
+
 def add_runtime_delta_features(seq: np.ndarray) -> np.ndarray:
     """
-    seq: (T, 63)
-    returns: (T, 126) = [joint, delta]
+    seq: (T, D)
+    returns: (T, 2D) = [base_feature, delta]
     """
     # 학습 때와 동일하게 runtime에서도 delta 채널을 즉석에서 합성한다.
     delta = np.zeros_like(seq, dtype=np.float32)
@@ -532,32 +505,36 @@ def predict_from_features(
     class_count = len(runtime.class_names)
 
     if runtime.mode == "frame":
-        # frame 계열은 joint-only 또는 full feature 둘 중 하나를 직접 넣는다.
-        if runtime.model_id in {"mlp_baseline", "mediapipe_hand_landmarker"}:
-            tensor = torch.from_numpy(features.joint).unsqueeze(0).to(runtime.device)
-            logits = runtime.model(tensor)
-        else:
-            tensor = torch.from_numpy(features.full).unsqueeze(0).to(runtime.device)
-            logits = runtime.model(tensor)
-
-    elif runtime.mode == "two_stream":
-        # two-stream은 joint와 bone+angle을 별도 tensor로 유지한다.
-        joint = torch.from_numpy(features.joint).unsqueeze(0).to(runtime.device)
-        bone = torch.from_numpy(features.bone_angle).unsqueeze(0).to(runtime.device)
-        logits = runtime.model(joint, bone)
+        if runtime.input_dim is None:
+            raise ValueError(f"Missing runtime input_dim for frame model: {runtime.model_id}")
+        vector = select_feature_vector(features, runtime.input_dim)
+        tensor = torch.from_numpy(vector).unsqueeze(0).to(runtime.device)
+        logits = runtime.model(tensor)
 
     elif runtime.mode == "sequence":
+        if runtime.input_dim is None:
+            raise ValueError(f"Missing runtime input_dim for sequence model: {runtime.model_id}")
+
         # sequence 계열은 프레임마다 buffer를 채우고 seq_len이 찰 때부터 예측 가능하다.
-        if runtime.model_id in JOINT_ONLY_SEQUENCE_MODELS:
-            seq_buffer.append(features.joint)
+        if runtime.model_id == "mlp_sequence_delta":
+            if runtime.input_dim % 2 != 0:
+                raise ValueError(f"Unexpected delta input_dim for {runtime.model_id}: {runtime.input_dim}")
+            base_vec = select_feature_vector(features, runtime.input_dim // 2)
         else:
-            seq_buffer.append(features.full)
+            base_vec = select_feature_vector(features, runtime.input_dim)
+
+        seq_buffer.append(base_vec)
         if len(seq_buffer) < runtime.seq_len:
             return "warmup", runtime.neutral_idx, 0.0, neutral_probs(class_count, runtime.neutral_idx)
 
         seq = np.stack(list(seq_buffer), axis=0).astype(np.float32)
         if runtime.model_id == "mlp_sequence_delta":
             seq = add_runtime_delta_features(seq)
+            if seq.shape[1] != runtime.input_dim:
+                raise ValueError(
+                    f"Delta feature mismatch for {runtime.model_id}: "
+                    f"got {seq.shape[1]}, expected {runtime.input_dim}"
+                )
         tensor = torch.from_numpy(seq).unsqueeze(0).to(runtime.device)
         logits = runtime.model(tensor)
 
@@ -751,6 +728,7 @@ class VideoCheckApp:
 
         self.status_var = tk.StringVar(value="Ready")
         self.run_var = tk.StringVar()
+        self.run_search_var = tk.StringVar()
         self.video_var = tk.StringVar()
         self.info_var = tk.StringVar(value="Select a trained run and a video.")
 
@@ -762,24 +740,30 @@ class VideoCheckApp:
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Trained Run").grid(row=0, column=0, sticky="w")
-        self.run_combo = ttk.Combobox(frame, textvariable=self.run_var, state="readonly", width=100)
-        self.run_combo.grid(row=1, column=0, sticky="ew", pady=(4, 12))
+        ttk.Label(frame, text="Run Search").grid(row=0, column=0, sticky="w")
+        self.run_search_entry = ttk.Entry(frame, textvariable=self.run_search_var)
+        self.run_search_entry.grid(row=1, column=0, sticky="ew", pady=(4, 8))
+        self.run_search_var.trace_add("write", lambda *_: self.apply_run_filter())
+
+        ttk.Label(frame, text="Trained Run").grid(row=2, column=0, sticky="w")
+        self.run_combo = ttk.Combobox(frame, textvariable=self.run_var, state="readonly", width=100, height=20)
+        self.run_combo.grid(row=3, column=0, sticky="ew", pady=(4, 12))
         self.run_combo.bind("<<ComboboxSelected>>", lambda _: self.update_info())
 
-        ttk.Label(frame, text="Video").grid(row=2, column=0, sticky="w")
+        ttk.Label(frame, text="Video").grid(row=4, column=0, sticky="w")
         self.video_combo = ttk.Combobox(frame, textvariable=self.video_var, state="readonly", width=100)
-        self.video_combo.grid(row=3, column=0, sticky="ew", pady=(4, 12))
+        self.video_combo.grid(row=5, column=0, sticky="ew", pady=(4, 12))
         self.video_combo.bind("<<ComboboxSelected>>", lambda _: self.update_info())
 
         button_row = ttk.Frame(frame)
-        button_row.grid(row=4, column=0, sticky="w", pady=(0, 12))
+        button_row.grid(row=6, column=0, sticky="w", pady=(0, 12))
         ttk.Button(button_row, text="Refresh", command=self.refresh_options).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(button_row, text="Clear Search", command=self.clear_run_search).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(button_row, text="Analyze And Play", command=self.on_play).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(button_row, text="Quit", command=self.root.destroy).pack(side=tk.LEFT)
 
-        ttk.Label(frame, textvariable=self.info_var, justify=tk.LEFT).grid(row=5, column=0, sticky="w")
-        ttk.Label(frame, textvariable=self.status_var, foreground="#005f99").grid(row=6, column=0, sticky="w", pady=(12, 0))
+        ttk.Label(frame, textvariable=self.info_var, justify=tk.LEFT).grid(row=7, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.status_var, foreground="#005f99").grid(row=8, column=0, sticky="w", pady=(12, 0))
 
         frame.columnconfigure(0, weight=1)
 
@@ -787,19 +771,54 @@ class VideoCheckApp:
         """디스크 상태를 다시 읽어 run / video dropdown 후보를 갱신한다."""
         self.runs = discover_runs()
         self.videos = discover_videos()
-        self.run_lookup = {run.display_name: run for run in self.runs}
         self.video_lookup = {video.name: video for video in self.videos}
 
-        self.run_combo["values"] = list(self.run_lookup.keys())
         self.video_combo["values"] = list(self.video_lookup.keys())
-
-        if self.runs and not self.run_var.get():
-            self.run_var.set(self.runs[0].display_name)
         if self.videos and not self.video_var.get():
             self.video_var.set(self.videos[0].name)
 
+        self.apply_run_filter()
         self.update_info()
-        self.status_var.set(f"Runs: {len(self.runs)} | Videos: {len(self.videos)}")
+        self.status_var.set(
+            f"Runs: {len(self.runs)} total / {len(self.run_lookup)} shown | Videos: {len(self.videos)}"
+        )
+
+    def filtered_runs(self) -> list[RunInfo]:
+        query = self.run_search_var.get().strip().lower()
+        if not query:
+            return list(self.runs)
+
+        matched: list[RunInfo] = []
+        for run in self.runs:
+            haystacks = (
+                run.display_name.lower(),
+                run.model_id.lower(),
+                str(run.run_dir).lower(),
+            )
+            if any(query in haystack for haystack in haystacks):
+                matched.append(run)
+        return matched
+
+    def apply_run_filter(self) -> None:
+        previous = self.run_var.get()
+        filtered_runs = self.filtered_runs()
+        self.run_lookup = {run.display_name: run for run in filtered_runs}
+        self.run_combo["values"] = list(self.run_lookup.keys())
+
+        if previous in self.run_lookup:
+            self.run_var.set(previous)
+        elif filtered_runs:
+            self.run_var.set(filtered_runs[0].display_name)
+        else:
+            self.run_var.set("")
+
+        self.status_var.set(
+            f"Runs: {len(self.runs)} total / {len(self.run_lookup)} shown | Videos: {len(self.videos)}"
+        )
+        self.update_info()
+
+    def clear_run_search(self) -> None:
+        self.run_search_var.set("")
 
     def update_info(self) -> None:
         """현재 선택된 run / video의 핵심 정보만 상태 영역에 표시한다."""
@@ -808,6 +827,10 @@ class VideoCheckApp:
 
         if not run and not video:
             self.info_var.set("No trained run or video found.")
+            return
+
+        if not run and self.run_search_var.get().strip():
+            self.info_var.set(f"No trained run matches search: {self.run_search_var.get().strip()}")
             return
 
         lines = []
@@ -877,7 +900,7 @@ class VideoCheckApp:
 
 def run_cli(run_dir: Path, video_path: Path) -> None:
     """GUI 없이 특정 run/video 조합을 바로 재생하는 CLI 진입점."""
-    run_dir = run_dir.resolve()
+    run_dir = resolve_run_dir_arg(run_dir)
     video_path = video_path.resolve()
     checkpoint_path = run_dir / "model.pt"
     if not checkpoint_path.exists():
@@ -906,10 +929,47 @@ def run_cli(run_dir: Path, video_path: Path) -> None:
     playback(runtime, analyzed)
 
 
+def resolve_run_dir_arg(path: Path) -> Path:
+    """CLI의 --run-dir 인자로 run 폴더 또는 model 폴더(latest.json)를 모두 허용한다."""
+    candidate = path.resolve()
+
+    if candidate.is_file() and candidate.name == "latest.json":
+        latest = json.loads(candidate.read_text(encoding="utf-8"))
+        latest_run = Path(str(latest["latest_run"]))
+        return latest_run.resolve()
+
+    if (candidate / "model.pt").exists():
+        return candidate
+
+    latest_json = candidate / "latest.json"
+    if latest_json.exists():
+        latest = json.loads(latest_json.read_text(encoding="utf-8"))
+        latest_run = Path(str(latest["latest_run"]))
+        return latest_run.resolve()
+
+    raise FileNotFoundError(
+        "Run directory not found. Expected either "
+        "`.../{model_id}/{run_id}/model.pt`, "
+        "`.../{suite_name}/{model_id}/{run_id}/model.pt`, "
+        "`.../{model_id}/latest.json`, or "
+        "`.../{suite_name}/{model_id}/latest.json`."
+    )
+
+
 def parse_args() -> argparse.Namespace:
     """GUI 모드와 CLI 모드를 나누는 최소 인자만 받는다."""
     parser = argparse.ArgumentParser(description="JamJamBeat trained-model video viewer")
-    parser.add_argument("--run-dir", type=Path, default=None, help="Run directory containing model.pt")
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Run directory containing model.pt, or a model directory containing latest.json "
+            "(e.g. model/model_evaluation/pipelines/mlp_baseline/20260318_152800, "
+            "model/model_evaluation/pipelines/mlp_baseline, or "
+            "model/model_evaluation/pipelines/{suite_name}/{model_id})"
+        ),
+    )
     parser.add_argument("--video", type=Path, default=None, help="Video path to analyze")
     parser.add_argument(
         "--device",

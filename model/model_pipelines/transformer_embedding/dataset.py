@@ -1,7 +1,7 @@
-# transformer_embedding/dataset.py - 슬라이딩 윈도우 시퀀스(16 x 156d) Dataset 빌더
+# transformer_embedding/dataset.py - 슬라이딩 윈도우 시퀀스(16 x 63d) Dataset 빌더
 from __future__ import annotations
 
-from _shared import SequenceDataset, JOINT_COLS, BONE_COLS, SplitData, sequence_arrays
+from _shared import SequenceDataset, RAW_JOINT_COLS, SplitData, repeated_sequence_arrays, sequence_arrays
 from .model import TemporalTransformer
 
 
@@ -12,22 +12,28 @@ def build(
     seq_stride: int,
     image_size: int,
     num_classes: int,
+    test_sequence_policy: str = "sliding",
 ):
     """
     Returns: (model, mode, train_ds, val_ds, test_ds)
     mode = "sequence"
-    입력: (B, T=seq_len, D=156) sliding window
+    입력: (B, T=seq_len, D=63) sliding window
     """
-    # Transformer는 full feature 시퀀스 전체를 self-attention으로 본다.
-    full_cols = JOINT_COLS + BONE_COLS + angle_cols
+    # Transformer는 raw joint 63차원 시퀀스를 self-attention으로 본다.
+    cols = RAW_JOINT_COLS
 
-    trX, try_, trm = sequence_arrays(split.train_df, full_cols, seq_len=seq_len, stride=seq_stride)
-    vaX, vay,  vam = sequence_arrays(split.val_df,   full_cols, seq_len=seq_len, stride=seq_stride)
-    teX, tey,  tem = sequence_arrays(split.test_df,  full_cols, seq_len=seq_len, stride=seq_stride)
+    trX, try_, trm = sequence_arrays(split.train_df, cols, seq_len=seq_len, stride=seq_stride)
+    vaX, vay,  vam = sequence_arrays(split.val_df,   cols, seq_len=seq_len, stride=seq_stride)
+    if test_sequence_policy == "independent_repeat":
+        teX, tey, tem = repeated_sequence_arrays(split.test_df, cols, seq_len=seq_len)
+    elif test_sequence_policy == "sliding":
+        teX, tey, tem = sequence_arrays(split.test_df, cols, seq_len=seq_len, stride=seq_stride)
+    else:
+        raise ValueError(f"Unsupported test_sequence_policy: {test_sequence_policy}")
 
     model = TemporalTransformer(
         seq_len=seq_len,
-        input_dim=len(full_cols),
+        input_dim=len(cols),
         num_classes=num_classes,
     )
 

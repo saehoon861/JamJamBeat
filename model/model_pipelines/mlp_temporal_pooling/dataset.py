@@ -1,7 +1,7 @@
 # mlp_temporal_pooling/dataset.py - joint(63d) sliding-window dataset builder for temporal pooling MLP
 from __future__ import annotations
 
-from _shared import JOINT_COLS, SequenceDataset, SplitData, sequence_arrays
+from _shared import RAW_JOINT_COLS, SequenceDataset, SplitData, repeated_sequence_arrays, sequence_arrays
 from .model import TemporalPoolingMLP
 
 
@@ -12,6 +12,7 @@ def build(
     seq_stride: int,
     image_size: int,
     num_classes: int,
+    test_sequence_policy: str = "sliding",
 ):
     """
     Returns: (model, mode, train_ds, val_ds, test_ds)
@@ -19,11 +20,16 @@ def build(
     입력: (B, T=seq_len, D=63) sliding window on joint-only features
     """
     # joint-only 시퀀스를 유지하되, 모델 쪽에서 temporal pooling으로 요약한다.
-    trX, try_, trm = sequence_arrays(split.train_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
-    vaX, vay, vam = sequence_arrays(split.val_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
-    teX, tey, tem = sequence_arrays(split.test_df, JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    trX, try_, trm = sequence_arrays(split.train_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    vaX, vay, vam = sequence_arrays(split.val_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    if test_sequence_policy == "independent_repeat":
+        teX, tey, tem = repeated_sequence_arrays(split.test_df, RAW_JOINT_COLS, seq_len=seq_len)
+    elif test_sequence_policy == "sliding":
+        teX, tey, tem = sequence_arrays(split.test_df, RAW_JOINT_COLS, seq_len=seq_len, stride=seq_stride)
+    else:
+        raise ValueError(f"Unsupported test_sequence_policy: {test_sequence_policy}")
 
-    model = TemporalPoolingMLP(input_dim=len(JOINT_COLS), num_classes=num_classes)
+    model = TemporalPoolingMLP(input_dim=len(RAW_JOINT_COLS), num_classes=num_classes)
 
     return (
         model,

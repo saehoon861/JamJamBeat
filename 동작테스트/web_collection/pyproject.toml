@@ -1,0 +1,22 @@
+[project]
+name = "dongjak-web-collection"
+version = "0.1.0"
+description = "Self-contained web video collection pipeline for grab-like hand motion data."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "beautifulsoup4>=4.12.3",
+    "gdown>=5.2.0",
+    "mediapipe>=0.10.21",
+    "opencv-python-headless>=4.10.0.84",
+    "pandas>=2.2.3",
+    "PyYAML>=6.0.2",
+    "requests>=2.32.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = false

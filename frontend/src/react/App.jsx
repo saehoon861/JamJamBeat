@@ -208,9 +208,8 @@ export default function App() {
 
   const skipTutorialAndStart = () => {
     setShowTutorial(false);
-    if (!tutorialPracticeEnabled) {
-      requestStart();
-    }
+    setTutorialPracticeEnabled(false);
+    requestStart();
   };
 
   const openCredits = () => {

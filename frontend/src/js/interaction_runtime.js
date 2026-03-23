@@ -614,17 +614,36 @@ export function createInteractionRuntime({
 
   // 손 커서의 위치와 보이기/숨기기를 담당합니다.
   function setPointer(point, now, landmarks = null) {
-    const baseTransform = "translate(-50%, -86%)";
+    const baseTransform = "translate(-50%, -86%) scaleY(-1)";
     handCursor.style.opacity = 1;
     handCursor.style.left = `${point.x}px`;
     handCursor.style.top = `${point.y}px`;
 
-    // 손목과 검지 끝의 각도를 계산하여 세로 지휘봉 이미지를 회전합니다.
+    // 손목과 검지/중지 끝의 평균 각도를 계산하여 세로 지휘봉 이미지를 회전합니다.
+    if (landmarks && landmarks.length >= 13) {
+      const wrist = landmarks[0];
+      const indexTip = landmarks[8];
+      const middleTip = landmarks[12];
+
+      // 검지와 중지의 평균 위치를 사용하여 더 안정적인 방향 계산
+      const fingerX = (indexTip.x + middleTip.x) / 2;
+      const fingerY = (indexTip.y + middleTip.y) / 2;
+
+      // 손가락에서 손목 방향으로 계산하여 회전 방향 반전
+      const dx = wrist.x - fingerX;
+      const dy = wrist.y - fingerY;
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+      handCursor.style.transform = `${baseTransform} rotate(${angle}deg)`;
+      return;
+    }
+
+    // 랜드마크가 부족한 경우 검지만 사용
     if (landmarks && landmarks.length > 8) {
       const wrist = landmarks[0];
       const indexTip = landmarks[8];
-      const dx = indexTip.x - wrist.x;
-      const dy = indexTip.y - wrist.y;
+      // 손가락에서 손목 방향으로 계산하여 회전 방향 반전
+      const dx = wrist.x - indexTip.x;
+      const dy = wrist.y - indexTip.y;
       const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
       handCursor.style.transform = `${baseTransform} rotate(${angle}deg)`;
       return;

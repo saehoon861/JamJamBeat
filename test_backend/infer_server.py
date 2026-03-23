@@ -1,15 +1,23 @@
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import torch
 
-from mlp_classifier_copy import GestureMLP
+try:
+    from test_backend.mlp_classifier_copy import GestureMLP
+except ModuleNotFoundError:
+    from mlp_classifier_copy import GestureMLP
 
 
-HOST = "127.0.0.1"
-PORT = 8008
-MODEL_PATH = Path(__file__).resolve().parents[1] / "checkpoints" / "best_model.pth"
+DEFAULT_MODEL_PATH = (
+    Path(__file__).resolve().parents[1] / "checkpoints" / "best_model.pth"
+)
+HOST = os.getenv("JAMJAM_HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", os.getenv("JAMJAM_PORT", "8008")))
+MODEL_PATH = Path(os.getenv("JAMJAM_MODEL_PATH", str(DEFAULT_MODEL_PATH)))
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 학습 시 사용한 클래스 인덱스를 사람이 읽는 라벨로 변환한다.
 LABEL_MAP = {
@@ -43,8 +51,7 @@ def landmarks_to_features(landmarks):
 
 
 def load_model():
-    # 테스트 서버는 항상 CPU에서 단일 체크포인트를 로드한다.
-    state = torch.load(MODEL_PATH, map_location="cpu")
+    state = torch.load(MODEL_PATH, map_location=DEVICE)
     model = GestureMLP(
         input_dim=63,
         num_classes=7,
@@ -53,6 +60,7 @@ def load_model():
         use_batchnorm=True,
     )
     model.load_state_dict(state)
+    model.to(DEVICE)
     model.eval()
     return model
 
@@ -112,7 +120,7 @@ class InferenceHandler(BaseHTTPRequestHandler):
             if len(features) != 63:
                 raise ValueError("features length must be 63")
 
-            x = torch.tensor(features, dtype=torch.float32).unsqueeze(0)
+            x = torch.tensor(features, dtype=torch.float32, device=DEVICE).unsqueeze(0)
             with torch.no_grad():
                 logits = MODEL(x)
                 probs = torch.softmax(logits, dim=1).squeeze(0)
@@ -134,6 +142,13 @@ class InferenceHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"[test-backend] loading model: {MODEL_PATH}")
+    print(
+        f"[test-backend] torch: {torch.__version__}, torch.cuda: {torch.version.cuda}"
+    )
+    if DEVICE.type == "cuda":
+        print(f"[test-backend] cuda device: {torch.cuda.get_device_name(0)}")
+    else:
+        print("[test-backend] device: cpu")
     print(f"[test-backend] listening on http://{HOST}:{PORT}")
     server = HTTPServer((HOST, PORT), InferenceHandler)
     server.serve_forever()

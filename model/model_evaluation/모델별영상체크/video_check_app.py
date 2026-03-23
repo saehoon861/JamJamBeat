@@ -14,6 +14,7 @@ from typing import Any
 
 os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", "")
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["GLOG_minloglevel"] = "2"
 
 import cv2
 import mediapipe as mp
@@ -74,8 +75,12 @@ FINGER_PAIRS = [
     ("ring", "pinky"),
 ]
 
-SUPPORTED_VIDEO_EXTS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
+SUPPORTED_VIDEO_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
+
+# [Diagnosis Globals] 진단용 플래그
+_DIAG_USE_SIMPLE_NORM = False
+_DIAG_MIRROR_INPUT = False
 
 @dataclass(slots=True)
 class RunInfo:
@@ -232,10 +237,21 @@ def load_runtime_model(run_info: RunInfo) -> RuntimeModel:
     """run 폴더를 읽어 UI/CLI 공용 RuntimeModel로 변환한다."""
     device = FORCED_DEVICE
     checkpoint = safe_torch_load(run_info.checkpoint_path, device)
-    state_dict = checkpoint["model_state_dict"]
-    class_names = list(checkpoint.get("class_names") or [])
+
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+        class_names = list(checkpoint.get("class_names") or [])
+    else:
+        print(f"[viewer] Warning: Checkpoint missing metadata keys (e.g. 'model_state_dict'). Assuming raw state_dict.")
+        state_dict = checkpoint
+        class_names = []
+
     if not class_names:
-        class_names = [str(i) for i in range(infer_num_classes_from_state_dict(state_dict))]
+        try:
+            class_names = [str(i) for i in range(infer_num_classes_from_state_dict(state_dict))]
+        except ValueError:
+            # 추론 실패 시 기본값 (0~6) 사용
+            class_names = [str(i) for i in range(7)]
 
     num_classes = len(class_names)
     model_id = str(checkpoint.get("model_id") or run_info.model_id)
@@ -307,38 +323,18 @@ def create_landmarker() -> HandLandmarker:
 
 
 def normalize_landmarks(landmarks: np.ndarray) -> np.ndarray:
-    """학습 전처리와 같은 규칙으로 raw landmark를 정규화한다."""
+    """src/dataset/offline_pipeline/runners/run_preprocess.py의 정규화 로직 (pos_scale)을 따릅니다. (회전 없음)"""
     pts = landmarks.astype(np.float32).copy()
 
-    # 중심 이동: 손 위치 차이를 줄인다.
-    knuckles = pts[[5, 9, 17]]
-    center = knuckles.mean(axis=0)
-    pts -= center
+    # 1. Position Normalization (Origin: Wrist 0)
+    origin = pts[0].copy()
+    pts -= origin
 
-    # 스케일 정규화: 손 크기 / 카메라 거리 차이를 줄인다.
-    knuckle_indices = [1, 5, 9, 13, 17]
-    knuckle_pts = pts[knuckle_indices]
-    max_dist = np.linalg.norm(knuckle_pts, axis=1).max()
-    if max_dist > 1e-8:
-        pts /= max_dist
-
-    # xy 평면 회전 정렬: 손 회전 편차를 줄여 모델 입력을 학습 시점과 맞춘다.
-    vec1 = pts[0] - pts[9]
-    vec2 = pts[17] - pts[5]
-    alignment = vec1 + vec2
-    alignment_norm = np.linalg.norm(alignment[:2])
-    if alignment_norm > 1e-8:
-        cos_theta = alignment[1] / alignment_norm
-        sin_theta = alignment[0] / alignment_norm
-        rot_matrix = np.array(
-            [
-                [cos_theta, sin_theta, 0.0],
-                [-sin_theta, cos_theta, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-        pts = pts @ rot_matrix.T
+    # 2. Distance Normalization (Scale: Wrist 0 <-> Middle MCP 9)
+    # run_preprocess.py는 0번과 9번 사이의 거리를 1.0으로 맞춥니다.
+    dist = np.linalg.norm(pts[9])
+    scale = 1.0 / max(dist, 1e-6)
+    pts *= scale
 
     return pts.astype(np.float32)
 
@@ -554,25 +550,24 @@ def predict_from_features(
 
 def analyze_video(runtime: RuntimeModel, video_path: Path) -> AnalyzedVideo:
     """비디오 전 프레임을 분석해 playback용 FrameResult 목록을 만든다."""
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise IOError(f"Could not open video: {video_path}")
-
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     results: list[FrameResult] = []
     seq_buffer: deque[np.ndarray] = deque(maxlen=runtime.seq_len)
+
+    # 이미지는 1프레임 비디오처럼 처리
+    image_frame = cv2.imread(str(video_path))
+    if image_frame is None:
+        raise IOError(f"Could not open image: {video_path}")
+    fps = 0.0
+    total_frames = 1
 
     print(f"[viewer] analyzing {video_path.name} with {runtime.model_id}")
     print(f"[viewer] total_frames={total_frames}, fps={fps:.2f}, device={runtime.device}")
 
     with create_landmarker() as landmarker:
         for frame_idx in range(total_frames):
-            ok, frame = cap.read()
-            if not ok:
-                break
+            frame = image_frame
+            timestamp_ms = 0
 
-            timestamp_ms = int((frame_idx / max(fps, 1e-6)) * 1000)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             mp_result = landmarker.detect_for_video(mp_image, timestamp_ms)
@@ -600,6 +595,18 @@ def analyze_video(runtime: RuntimeModel, video_path: Path) -> AnalyzedVideo:
                     dtype=np.float32,
                 )
                 features = extract_feature_pack(raw_landmarks)
+
+                # [Image Support] 시퀀스 모델에 단일 이미지를 넣을 때, 버퍼를 강제로 채워 예측을 유도한다.
+                if runtime.mode == "sequence" and runtime.input_dim is not None:
+                    if runtime.model_id == "mlp_sequence_delta":
+                        base_vec = select_feature_vector(features, runtime.input_dim // 2)
+                    else:
+                        base_vec = select_feature_vector(features, runtime.input_dim)
+                    
+                    # 현재 피처로 버퍼를 (seq_len - 1)만큼 미리 채움 -> predict 호출 시 꽉 차서 결과 나옴
+                    for _ in range(max(0, runtime.seq_len - 1)):
+                        seq_buffer.append(base_vec)
+
                 status, pred_idx, confidence, probs = predict_from_features(runtime, features, seq_buffer)
                 results.append(
                     FrameResult(
@@ -618,8 +625,36 @@ def analyze_video(runtime: RuntimeModel, video_path: Path) -> AnalyzedVideo:
                 pct = ((frame_idx + 1) / max(total_frames, 1)) * 100.0
                 print(f"[viewer] progress {frame_idx + 1}/{total_frames} ({pct:.1f}%)")
 
-    cap.release()
     return AnalyzedVideo(video_path=video_path, fps=fps, total_frames=len(results), frame_results=results)
+
+
+def draw_input_debug(frame: np.ndarray, raw_landmarks: np.ndarray | None, size: int = 150) -> np.ndarray:
+    """현재 프레임의 랜드마크가 모델에 들어가기 직전(정규화 후) 어떤 모양인지 그린다."""
+    if raw_landmarks is None:
+        return frame
+
+    # 1. 정규화 재수행 (모델 입력과 동일한 로직)
+    norm = normalize_landmarks(raw_landmarks)
+    pts = norm.reshape(21, 3)
+
+    # 2. 우측 하단 캔버스 영역 준비
+    h, w = frame.shape[:2]
+    if h < size or w < size: return frame
+    
+    # 배경을 어둡게 처리하여 잘 보이게 함
+    roi = frame[h-size-10:h-10, w-size-10:w-10]
+    roi[:] = (roi * 0.3).astype(np.uint8)
+
+    # 3. 그리기 (범위 -1.2~1.2 -> 0~size)
+    def to_px(val): return int(((val + 1.2) / 2.4) * (size - 1))
+
+    for u, v in HAND_CONNECTIONS:
+        cv2.line(roi, (to_px(pts[u,0]), size - to_px(pts[u,1])), 
+                 (to_px(pts[v,0]), size - to_px(pts[v,1])), (0, 255, 0), 1, cv2.LINE_AA)
+
+    cv2.putText(frame, "Model Input View", (w-size-10, h-size-15), 
+                cv2.FONT_HERSHEY_PLAIN, 1.0, (200, 200, 200), 1)
+    return frame
 
 
 def overlay_frame(frame: np.ndarray, runtime: RuntimeModel, analyzed: AnalyzedVideo, current_idx: int) -> np.ndarray:
@@ -634,19 +669,22 @@ def overlay_frame(frame: np.ndarray, runtime: RuntimeModel, analyzed: AnalyzedVi
     mode_text = f"Mode: {runtime.mode}  Device: {runtime.device}"
     pred_text = f"Pred: {record.pred_name}  Conf: {record.confidence:.3f}  Status: {record.status}"
     top3 = f"Top3: {topk_text(runtime.class_names, record.probs)}"
-    guide = "Space: pause/resume | A/Left: prev | D/Right: next | R: restart | Q/Esc: quit"
+    guide = "Space: pause | V: debug | M: mirror | N: simple norm | Q: quit"
 
     y = 30
     for text, color in (
-        (title, (255, 255, 255)),
-        (video_text, (220, 220, 220)),
-        (frame_text, (220, 220, 220)),
-        (mode_text, (180, 220, 255)),
         (pred_text, (0, 255, 255) if record.status == "ready" else (0, 165, 255)),
         (top3, (180, 255, 180)),
     ):
         cv2.putText(display, text, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
         y += 30
+
+    # 진단 모드 상태 표시
+    diag_status = []
+    if _DIAG_MIRROR_INPUT: diag_status.append("MIRROR ON")
+    if _DIAG_USE_SIMPLE_NORM: diag_status.append("SIMPLE NORM")
+    if diag_status:
+        cv2.putText(display, " | ".join(diag_status), (w - 200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
     cv2.putText(display, guide, (12, h - 18), cv2.FONT_HERSHEY_PLAIN, 1.2, (200, 200, 200), 1, cv2.LINE_AA)
     return display
@@ -654,14 +692,18 @@ def overlay_frame(frame: np.ndarray, runtime: RuntimeModel, analyzed: AnalyzedVi
 
 def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
     """분석 결과를 키보드 컨트롤이 가능한 OpenCV 창으로 재생한다."""
-    cap = cv2.VideoCapture(str(analyzed.video_path))
-    if not cap.isOpened():
-        raise IOError(f"Could not reopen video: {analyzed.video_path}")
+    
+    image_frame = cv2.imread(str(analyzed.video_path))
+    if image_frame is None:
+        raise IOError(f"Could not reopen image: {analyzed.video_path}")
+
+    global _DIAG_USE_SIMPLE_NORM, _DIAG_MIRROR_INPUT
 
     window_name = f"JamJamBeat Viewer - {runtime.run_info.model_id}"
     delay_ms = max(int(1000 / max(analyzed.fps, 1e-6)), 1)
     paused = False
     current_idx = 0
+    show_debug = False
     window_created = False
 
     while 0 <= current_idx < analyzed.total_frames:
@@ -669,12 +711,13 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
         if window_created and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
             break
 
-        cap.set(cv2.CAP_PROP_POS_FRAMES, current_idx)
-        ok, frame = cap.read()
-        if not ok:
-            break
+        frame = image_frame
 
         display = overlay_frame(frame, runtime, analyzed, current_idx)
+        
+        if show_debug and analyzed.frame_results[current_idx].raw_landmarks is not None:
+            display = draw_input_debug(display, analyzed.frame_results[current_idx].raw_landmarks)
+            
         cv2.imshow(window_name, display)
         window_created = True
 
@@ -693,6 +736,15 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
         if key_low == ord(" "):
             paused = not paused
             continue
+        if key_low == ord("v"):
+            show_debug = not show_debug
+            continue
+        if key_low == ord("m"):  # Mirror toggle
+            _DIAG_MIRROR_INPUT = not _DIAG_MIRROR_INPUT
+            continue
+        if key_low == ord("n"):  # Norm toggle
+            _DIAG_USE_SIMPLE_NORM = not _DIAG_USE_SIMPLE_NORM
+            continue
         if key_low == ord("r"):
             current_idx = 0
             paused = True
@@ -706,7 +758,6 @@ def playback(runtime: RuntimeModel, analyzed: AnalyzedVideo) -> None:
             paused = True
             continue
 
-    cap.release()
     cv2.destroyWindow(window_name)
     cv2.waitKey(1)  # WSL2/Linux에서 destroy 이벤트를 즉시 flush한다.
 

@@ -43,9 +43,12 @@ class TrainingAlignedFeaturePack:
 
 
 _ORIGINAL_LOAD_RUNTIME_MODEL = base.load_runtime_model
-_ACTIVE_DATASET_VARIANT = "baseline"
-VIEWER_DEFAULT_TAU = 0.90
+_ACTIVE_DATASET_VARIANT = "pos_scale"  # Default variant for legacy runs without summary metadata
+VIEWER_DEFAULT_TAU = 0.0
 NOT_RECORDED = "Not recorded"
+
+# [Config] 자동 추론이 틀렸을 때 variant를 강제로 지정합니다. (예: "pos_scale", "pos_only", "baseline")
+FORCED_DATASET_VARIANT = None
 
 
 def load_run_summary(run_info: base.RunInfo) -> tuple[dict[str, Any] | None, str | None]:
@@ -159,17 +162,25 @@ def load_runtime_model_training_aligned(run_info: base.RunInfo) -> base.RuntimeM
     runtime = _ORIGINAL_LOAD_RUNTIME_MODEL(run_info)
     summary, summary_warning = load_run_summary(run_info)
     resolution = infer_dataset_variant(run_info.run_dir, run_info.summary_path)
+
+    # 사용자가 강제로 지정한 variant가 있으면 우선 적용
+    final_variant = resolution.variant
+    final_source = resolution.source
+    if FORCED_DATASET_VARIANT is not None:
+        final_variant = FORCED_DATASET_VARIANT
+        final_source = "forced_by_user_config"
+
     runtime.run_summary = summary
-    runtime.dataset_variant = resolution.variant
-    runtime.dataset_variant_source = resolution.source
+    runtime.dataset_variant = final_variant
+    runtime.dataset_variant_source = final_source
     runtime.dataset_variant_warning = resolution.warning or summary_warning
     runtime.tau_threshold = resolve_tau_threshold(summary)
-    _ACTIVE_DATASET_VARIANT = resolution.variant
+    _ACTIVE_DATASET_VARIANT = final_variant
 
     dataset_key = run_dataset_key(summary) or resolution.dataset_key
     print(
-        f"[viewer] dataset_variant={resolution.variant} "
-        f"(source={resolution.source}, dataset_key={dataset_key or '-'}, "
+        f"[viewer] dataset_variant={final_variant} "
+        f"(source={final_source}, dataset_key={dataset_key or '-'}, "
         f"model={runtime.model_id}, run={run_info.run_dir.name}, tau={runtime.tau_threshold:.2f})"
     )
     if runtime.dataset_variant_warning:
@@ -266,16 +277,33 @@ def predict_from_features_training_aligned(
     if runtime.mode == "frame":
         if runtime.input_dim is None:
             raise ValueError(f"Missing runtime input_dim for frame model: {runtime.model_id}")
-        vector = select_feature_vector_training_aligned(features, runtime.input_dim)
-        maybe_log_input_verification(
-            runtime,
-            raw_landmarks=features.raw_landmarks,
-            train_landmarks=features.train_landmarks,
-            final_input=vector,
-            input_kind="frame_vector",
-        )
-        tensor = torch.from_numpy(vector).unsqueeze(0).to(runtime.device)
-        logits = runtime.model(tensor)
+
+        if runtime.model_id == "Landmark_Spatial_Transformer":
+            # 이 모델은 (B, 21, 3) 형태의 3D 텐서 입력을 기대하므로, 평탄화되지 않은 train_landmarks를 직접 사용합니다.
+            # [Fix] 뷰어의 자동 정규화(apply_dataset_variant)가 모델이 학습한 스케일 분포(예: 0~1)를 
+            # 왜곡하여 Neutral로 수렴하는 문제를 방지하기 위해, 원본(Raw) 랜드마크를 사용합니다.
+            tensor_input = features.raw_landmarks
+            maybe_log_input_verification(
+                runtime,
+                raw_landmarks=features.raw_landmarks,
+                train_landmarks=features.train_landmarks,
+                final_input=tensor_input,
+                input_kind="frame_tensor_3d",
+            )
+            tensor = torch.from_numpy(tensor_input).unsqueeze(0).to(runtime.device)
+            logits = runtime.model(tensor)
+        else:
+            # 다른 MLP 기반 프레임 모델들은 평탄화된 벡터를 사용합니다.
+            vector = select_feature_vector_training_aligned(features, runtime.input_dim)
+            maybe_log_input_verification(
+                runtime,
+                raw_landmarks=features.raw_landmarks,
+                train_landmarks=features.train_landmarks,
+                final_input=vector,
+                input_kind="frame_vector",
+            )
+            tensor = torch.from_numpy(vector).unsqueeze(0).to(runtime.device)
+            logits = runtime.model(tensor)
 
     elif runtime.mode == "sequence":
         if runtime.input_dim is None:

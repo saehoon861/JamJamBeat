@@ -603,6 +603,55 @@ def validate_one_epoch(
     return total_loss / max(total_count, 1), total_correct / max(total_count, 1)
 
 
+# @torch.no_grad()
+# def predict_dataset(
+#     model: nn.Module,
+#     loader: DataLoader,
+#     dataset: Dataset,
+#     mode: str,
+#     num_classes: int,
+#     device: torch.device,
+# ) -> pd.DataFrame:
+#     """test split 전체를 순회하며 평가용 예측 원본 CSV를 만든다."""
+#     model.eval()
+#     records: list[dict[str, Any]] = []
+
+#     for batch in loader:
+#         t0 = time.perf_counter()
+#         logits, y, idx = forward_batch(model, batch, mode, device)
+#         infer_ms = (time.perf_counter() - t0) * 1000.0
+
+#         probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
+#         y_np = y.detach().cpu().numpy().astype(int)
+#         idx_np = idx.detach().cpu().numpy().astype(int)
+
+#         # 배치 단위 wall time을 샘플 수로 나눠 간단한 per-sample latency를 저장한다.
+#         per_sample_ms = infer_ms / max(len(idx_np), 1)
+
+#         for i, sample_idx in enumerate(idx_np):
+#             meta = dataset.meta[sample_idx]
+#             p = probs[i]
+#             pred_cls = int(np.argmax(p))
+
+#             row = {
+#                 "source_file": meta.get("source_file", ""),
+#                 "frame_idx": int(meta.get("frame_idx", sample_idx)),
+#                 "timestamp": meta.get("timestamp", ""),
+#                 "gesture": int(y_np[i]),
+#                 "pred_class": pred_cls,
+#                 "p_max": float(np.max(p)),
+#                 "t_mp_ms": 0.0,
+#                 "t_feat_ms": 0.0,
+#                 "t_mlp_ms": float(per_sample_ms),
+#                 "t_post_ms": 0.0,
+#                 "latency_total_ms": float(per_sample_ms),
+#             }
+#             for c in range(num_classes):
+#                 row[f"p{c}"] = float(p[c])
+#             records.append(row)
+
+#     return pd.DataFrame(records)
+
 @torch.no_grad()
 def predict_dataset(
     model: nn.Module,
@@ -623,35 +672,74 @@ def predict_dataset(
 
         probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
         y_np = y.detach().cpu().numpy().astype(int)
-        idx_np = idx.detach().cpu().numpy().astype(int)
 
         # 배치 단위 wall time을 샘플 수로 나눠 간단한 per-sample latency를 저장한다.
-        per_sample_ms = infer_ms / max(len(idx_np), 1)
+        per_sample_ms = infer_ms / max(len(y_np), 1)
 
-        for i, sample_idx in enumerate(idx_np):
-            meta = dataset.meta[sample_idx]
-            p = probs[i]
-            pred_cls = int(np.argmax(p))
+        # 1) idx가 tensor인 기존 경우
+        if torch.is_tensor(idx):
+            idx_np = idx.detach().cpu().numpy().astype(int)
 
-            row = {
-                "source_file": meta.get("source_file", ""),
-                "frame_idx": int(meta.get("frame_idx", sample_idx)),
-                "timestamp": meta.get("timestamp", ""),
-                "gesture": int(y_np[i]),
-                "pred_class": pred_cls,
-                "p_max": float(np.max(p)),
-                "t_mp_ms": 0.0,
-                "t_feat_ms": 0.0,
-                "t_mlp_ms": float(per_sample_ms),
-                "t_post_ms": 0.0,
-                "latency_total_ms": float(per_sample_ms),
-            }
-            for c in range(num_classes):
-                row[f"p{c}"] = float(p[c])
-            records.append(row)
+            for i, sample_idx in enumerate(idx_np):
+                meta = dataset.meta[sample_idx]
+                p = probs[i]
+                pred_cls = int(np.argmax(p))
+
+                row = {
+                    "source_file": meta.get("source_file", ""),
+                    "frame_idx": int(meta.get("frame_idx", sample_idx)),
+                    "timestamp": meta.get("timestamp", ""),
+                    "gesture": int(y_np[i]),
+                    "pred_class": pred_cls,
+                    "p_max": float(np.max(p)),
+                    "t_mp_ms": 0.0,
+                    "t_feat_ms": 0.0,
+                    "t_mlp_ms": float(per_sample_ms),
+                    "t_post_ms": 0.0,
+                    "latency_total_ms": float(per_sample_ms),
+                }
+                for c in range(num_classes):
+                    row[f"p{c}"] = float(p[c])
+                records.append(row)
+
+        # 2) idx가 dict(meta batch)인 현재 경우
+        elif isinstance(idx, dict):
+            batch_size = len(y_np)
+
+            for i in range(batch_size):
+                meta = {}
+                for k, v in idx.items():
+                    if torch.is_tensor(v):
+                        meta[k] = v[i].item() if v.ndim > 0 else v.item()
+                    elif isinstance(v, (list, tuple)):
+                        meta[k] = v[i]
+                    else:
+                        meta[k] = v
+
+                p = probs[i]
+                pred_cls = int(np.argmax(p))
+
+                row = {
+                    "source_file": meta.get("source_file", ""),
+                    "frame_idx": int(meta.get("frame_idx", i)),
+                    "timestamp": meta.get("timestamp", ""),
+                    "gesture": int(y_np[i]),
+                    "pred_class": pred_cls,
+                    "p_max": float(np.max(p)),
+                    "t_mp_ms": 0.0,
+                    "t_feat_ms": 0.0,
+                    "t_mlp_ms": float(per_sample_ms),
+                    "t_post_ms": 0.0,
+                    "latency_total_ms": float(per_sample_ms),
+                }
+                for c in range(num_classes):
+                    row[f"p{c}"] = float(p[c])
+                records.append(row)
+
+        else:
+            raise TypeError(f"Unsupported idx type in predict_dataset: {type(idx)}")
 
     return pd.DataFrame(records)
-
 
 # -----------------------------------------------------------------------------
 # Experiment assembly (dynamic dispatch)
@@ -853,8 +941,21 @@ def run(args: argparse.Namespace) -> dict:
     else:
         inference_loader = None
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(args.epochs, 1))
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+    )
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",                      # val_loss가 낮아질수록 좋음
+        factor=args.lr_decay_factor,     # LR 감소 비율
+        patience=args.lr_patience,       # 개선 없을 때 몇 epoch 기다릴지
+        threshold=args.lr_threshold,     # 이 정도 이상 개선돼야 개선으로 간주
+        threshold_mode="rel",
+        min_lr=args.min_lr,              # LR 하한선
+    )
 
     # best validation loss 기준으로 early stopping과 checkpoint selection을 수행한다.
     history: list[dict[str, Any]] = []
@@ -863,9 +964,16 @@ def run(args: argparse.Namespace) -> dict:
     stale = 0
 
     for epoch in range(1, args.epochs + 1):
-        tr_loss, tr_acc = train_one_epoch(model, train_loader, optimizer, criterion, mode, device)
-        va_loss, va_acc = validate_one_epoch(model, val_loader, criterion, mode, device)
-        scheduler.step()
+        tr_loss, tr_acc = train_one_epoch(
+            model, train_loader, optimizer, criterion, mode, device
+        )
+        va_loss, va_acc = validate_one_epoch(
+            model, val_loader, criterion, mode, device
+        )
+
+        # val_loss 기준으로 plateau 감지 후 learning rate 감소
+        scheduler.step(va_loss)
+        current_lr = optimizer.param_groups[0]["lr"]
 
         history.append(
             {
@@ -874,14 +982,15 @@ def run(args: argparse.Namespace) -> dict:
                 "train_acc": tr_acc,
                 "val_loss": va_loss,
                 "val_acc": va_acc,
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": current_lr,
             }
         )
 
         print(
             f"[{args.model_id}] epoch {epoch:03d}/{args.epochs} "
             f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f} "
-            f"val_loss={va_loss:.4f} val_acc={va_acc:.4f}"
+            f"val_loss={va_loss:.4f} val_acc={va_acc:.4f} "
+            f"lr={current_lr:.8f}"
         )
 
         if va_loss < best_val_loss:
@@ -893,6 +1002,8 @@ def run(args: argparse.Namespace) -> dict:
             if stale >= args.patience:
                 print(f"[{args.model_id}] early stopping at epoch={epoch}")
                 break
+
+        
 
     model.load_state_dict(best_state)
 
@@ -1017,6 +1128,11 @@ def run(args: argparse.Namespace) -> dict:
             "vote_n": args.vote_n,
             "debounce_k": args.debounce_k,
             "fallback_fps": args.fallback_fps,
+            "lr_scheduler": "ReduceLROnPlateau",
+            "lr_patience": args.lr_patience,
+            "lr_decay_factor": args.lr_decay_factor,
+            "lr_threshold": args.lr_threshold,
+            "min_lr": args.min_lr,
         },
         "split_sizes": {
             "train": int(len(split.train_df)),
@@ -1129,7 +1245,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="cpu", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--class-names", nargs="*", default=[])
-
+    parser.add_argument(
+        "--lr-patience",
+        type=int,
+        default=8,
+        help="val_loss 개선이 없을 때 learning rate를 줄이기 전 기다릴 epoch 수",
+    )
+    parser.add_argument(
+        "--lr-decay-factor",
+        type=float,
+        default=0.5,
+        help="learning rate 감소 비율 (new_lr = old_lr * factor)",
+    )
+    parser.add_argument(
+        "--lr-threshold",
+        type=float,
+        default=1e-3,
+        help="이 값 이상 개선되어야 val_loss 개선으로 간주",
+    )
+    parser.add_argument(
+        "--min-lr",
+        type=float,
+        default=1e-6,
+        help="learning rate 최소값",
+    )
     return parser
 
 

@@ -1,4 +1,4 @@
-# build_training_datasets.py - 12개 학습원천을 source 단위로 40/9/7 분할해 역할형 CSV를 생성한다.
+# build_training_datasets.py - source 단위로 train/val만 분할해 역할형 CSV를 생성한다.
 from __future__ import annotations
 
 import csv
@@ -16,11 +16,17 @@ TEST_SOURCE_DIR = ROOT / "테스트데이터셋"
 OUTPUT_DIR = ROOT / "학습데이터셋"
 
 SEED = 42
-TRAIN_SOURCE_COUNT = 40
-VAL_SOURCE_COUNT = 9
-INFERENCE_SOURCE_COUNT = 7
-EXPECTED_SOURCE_COUNT = TRAIN_SOURCE_COUNT + VAL_SOURCE_COUNT + INFERENCE_SOURCE_COUNT
+TRAIN_SOURCE_COUNT = 49
+VAL_SOURCE_COUNT = 7
+EXPECTED_SOURCE_COUNT = TRAIN_SOURCE_COUNT + VAL_SOURCE_COUNT
 EXPECTED_GESTURE_KEYS = tuple(str(i) for i in range(7))
+
+# 추가: 증강 관련 컬럼 기본값
+AUGMENTATION_DEFAULTS = {
+    "aug_mirror": False,
+    "aug_blp": False,
+    "aug_noise_sigma": 0.0,
+}
 
 
 @dataclass(frozen=True)
@@ -32,78 +38,12 @@ class DatasetSpec:
 
 
 SPECS = (
-    # DatasetSpec(
-    #     dataset_key="baseline",
-    #     normalization_family="baseline",
-    #     train_source=TRAIN_SOURCE_DIR / "baseline.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_baseline.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="baseline_ds_1_none",
-    #     normalization_family="baseline",
-    #     train_source=TRAIN_SOURCE_DIR / "baseline_ds_1_none.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_baseline.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="baseline_ds_4_none",
-    #     normalization_family="baseline",
-    #     train_source=TRAIN_SOURCE_DIR / "baseline_ds_4_none.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_baseline.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="pos_only",
-    #     normalization_family="pos_only",
-    #     train_source=TRAIN_SOURCE_DIR / "pos_only.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="pos_only_ds_1_pos",
-    #     normalization_family="pos_only",
-    #     train_source=TRAIN_SOURCE_DIR / "pos_only_ds_1_pos.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="pos_only_ds_4_pos",
-    #     normalization_family="pos_only",
-    #     train_source=TRAIN_SOURCE_DIR / "pos_only_ds_4_pos.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_only.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="scale_only",
-    #     normalization_family="scale_only",
-    #     train_source=TRAIN_SOURCE_DIR / "scale_only.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="scale_only_ds_1_scale",
-    #     normalization_family="scale_only",
-    #     train_source=TRAIN_SOURCE_DIR / "scale_only_ds_1_scale.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="scale_only_ds_4_scale",
-    #     normalization_family="scale_only",
-    #     train_source=TRAIN_SOURCE_DIR / "scale_only_ds_4_scale.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_scale_only.csv",
-    # ),
     DatasetSpec(
         dataset_key="pos_scale",
         normalization_family="pos_scale",
-        train_source=TRAIN_SOURCE_DIR / "pos_scale.csv",
+        train_source=TRAIN_SOURCE_DIR / "pos_scale_aug.csv",
         test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
     ),
-    # DatasetSpec(
-    #     dataset_key="pos_scale_ds_1_pos_scale",
-    #     normalization_family="pos_scale",
-    #     train_source=TRAIN_SOURCE_DIR / "pos_scale_ds_1_pos_scale.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
-    # ),
-    # DatasetSpec(
-    #     dataset_key="pos_scale_ds_4_pos_scale",
-    #     normalization_family="pos_scale",
-    #     train_source=TRAIN_SOURCE_DIR / "pos_scale_ds_4_pos_scale.csv",
-    #     test_source=TEST_SOURCE_DIR / "total_data_test_pos_scale.csv",
-    # ),
 )
 
 
@@ -138,7 +78,6 @@ def _canonical_source_split(specs: tuple[DatasetSpec, ...]) -> dict[str, object]
             f"got {len(canonical_sources)} from {specs[0].train_source.name}"
         )
 
-    canonical_set = set(canonical_sources)
     for spec in specs[1:]:
         current_sources = _source_list(spec.train_source)
         if current_sources != canonical_sources:
@@ -162,20 +101,12 @@ def _canonical_source_split(specs: tuple[DatasetSpec, ...]) -> dict[str, object]
             )
 
     rng = np.random.default_rng(SEED)
-    inference_source_map = {
-        gesture_key: str(rng.choice(gesture_groups[gesture_key]))
-        for gesture_key in EXPECTED_GESTURE_KEYS
-    }
-    inference_sources = sorted(inference_source_map.values())
+    shuffled_sources = canonical_sources.copy()
+    rng.shuffle(shuffled_sources)
 
-    remaining_sources = [
-        source_name for source_name in canonical_sources if source_name not in inference_source_map.values()
-    ]
-    rng.shuffle(remaining_sources)
-
-    train_sources = sorted(remaining_sources[:TRAIN_SOURCE_COUNT])
+    train_sources = sorted(shuffled_sources[:TRAIN_SOURCE_COUNT])
     val_sources = sorted(
-        remaining_sources[TRAIN_SOURCE_COUNT:TRAIN_SOURCE_COUNT + VAL_SOURCE_COUNT]
+        shuffled_sources[TRAIN_SOURCE_COUNT:TRAIN_SOURCE_COUNT + VAL_SOURCE_COUNT]
     )
 
     if len(train_sources) != TRAIN_SOURCE_COUNT:
@@ -183,15 +114,13 @@ def _canonical_source_split(specs: tuple[DatasetSpec, ...]) -> dict[str, object]
     if len(val_sources) != VAL_SOURCE_COUNT:
         raise ValueError(f"Expected {VAL_SOURCE_COUNT} val sources, got {len(val_sources)}")
 
-    combined_sources = set(train_sources) | set(val_sources) | set(inference_sources)
-    if len(combined_sources) != len(canonical_set):
+    combined_sources = set(train_sources) | set(val_sources)
+    if len(combined_sources) != len(canonical_sources):
         raise ValueError("Source split does not cover the full canonical source set")
 
     return {
         "train": train_sources,
         "val": val_sources,
-        "inference": inference_sources,
-        "inference_source_map": inference_source_map,
         "gesture_groups": gesture_groups,
     }
 
@@ -199,6 +128,40 @@ def _canonical_source_split(specs: tuple[DatasetSpec, ...]) -> dict[str, object]
 def _filter_by_sources(frame: pd.DataFrame, sources: list[str]) -> pd.DataFrame:
     source_set = set(sources)
     return frame[frame["source_file"].astype(str).isin(source_set)].copy()
+
+
+def _align_columns_with_augmentation_defaults(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    train/test 간 컬럼 불일치를 줄이기 위해,
+    증강 메타 컬럼이 없는 쪽에는 기본값을 채워 넣고
+    최종적으로 test 컬럼 순서를 train 기준으로 맞춘다.
+    """
+
+    # 1) 증강 컬럼 기본값 채우기
+    for col, default_value in AUGMENTATION_DEFAULTS.items():
+        if col not in train_df.columns:
+            train_df[col] = default_value
+        if col not in test_df.columns:
+            test_df[col] = default_value
+
+    # 2) 아직도 서로 다른 컬럼이 있으면 확인
+    train_only_cols = [c for c in train_df.columns if c not in test_df.columns]
+    test_only_cols = [c for c in test_df.columns if c not in train_df.columns]
+
+    if train_only_cols or test_only_cols:
+        raise ValueError(
+            "Column mismatch remains after augmentation alignment.\n"
+            f"train_only_cols={train_only_cols}\n"
+            f"test_only_cols={test_only_cols}"
+        )
+
+    # 3) test 컬럼 순서를 train 기준으로 맞춤
+    test_df = test_df[train_df.columns.tolist()]
+
+    return train_df, test_df
 
 
 def build() -> pd.DataFrame:
@@ -210,13 +173,19 @@ def build() -> pd.DataFrame:
         train_source_df = _load_csv(spec.train_source)
         test_source_df = _load_csv(spec.test_source)
 
+        # 추가: train/test 컬럼 정렬 및 증강 컬럼 보정
+        train_source_df, test_source_df = _align_columns_with_augmentation_defaults(
+            train_source_df,
+            test_source_df,
+        )
+
         if list(train_source_df.columns) != list(test_source_df.columns):
             raise ValueError(
                 f"Column mismatch for {spec.dataset_key}: "
                 f"{spec.train_source.name} vs {spec.test_source.name}"
             )
 
-        for split_name in ("train", "val", "inference"):
+        for split_name in ("train", "val"):
             split_df = _filter_by_sources(train_source_df, source_split[split_name])
             output_path = OUTPUT_DIR / f"{spec.dataset_key}_{split_name}.csv"
             _write_csv(split_df, output_path)
@@ -254,20 +223,19 @@ def build() -> pd.DataFrame:
 
     summary = pd.DataFrame(summary_rows)
     summary.to_csv(OUTPUT_DIR / "dataset_manifest.csv", index=False)
+
     split_manifest = {
         "seed": SEED,
         "source_counts": {
             "train": TRAIN_SOURCE_COUNT,
             "val": VAL_SOURCE_COUNT,
-            "inference": INFERENCE_SOURCE_COUNT,
         },
         "train_sources": source_split["train"],
         "val_sources": source_split["val"],
-        "inference_sources": source_split["inference"],
-        "inference_source_map": source_split["inference_source_map"],
     }
     with (OUTPUT_DIR / "source_split_manifest.json").open("w", encoding="utf-8") as f:
         json.dump(split_manifest, f, ensure_ascii=False, indent=2)
+
     return summary
 
 

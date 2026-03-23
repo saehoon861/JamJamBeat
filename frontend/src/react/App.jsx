@@ -123,7 +123,42 @@ export default function App() {
   const [showCredits, setShowCredits] = React.useState(false);
   const [tutorialPracticeEnabled, setTutorialPracticeEnabled] = React.useState(false);
 
+  const landingBgmRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const audio = new Audio("/assets/sounds/봄을 부르는 피아노 음악 🌷 싱그러운 선율 들어요 [bExNhDN12HI].mp3");
+    audio.loop = true;
+    audio.volume = 0.22; // 배경음악 사운드 줄임
+    landingBgmRef.current = audio;
+
+    const tryPlay = () => {
+      if (!landingBgmRef.current) return;
+      audio.play().catch(() => {
+        window.addEventListener('click', tryPlay, { once: true });
+        window.addEventListener('keydown', tryPlay, { once: true });
+      });
+    };
+    tryPlay();
+
+    return () => {
+      window.removeEventListener('click', tryPlay);
+      window.removeEventListener('keydown', tryPlay);
+      if (landingBgmRef.current) {
+        landingBgmRef.current.pause();
+        landingBgmRef.current.removeAttribute('src');
+        landingBgmRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopLandingBgm = () => {
+    if (landingBgmRef.current) {
+      landingBgmRef.current.pause();
+    }
+  };
+
   const handleStartClick = () => {
+    stopLandingBgm();
     setTutorialPracticeEnabled(false);
     setShowTutorial(true);
   };

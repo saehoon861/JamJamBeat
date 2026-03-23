@@ -1726,6 +1726,10 @@ video.object-thumbnail::-webkit-media-controls {
     grid-template-columns: 1fr;
   }
 
+  .tutorial-vision-grid {
+    grid-template-columns: 1fr;
+  }
+
   .tutorial-practice-button,
   .tutorial-skip-button,
   .tutorial-close-button {
@@ -2505,9 +2509,41 @@ video.object-thumbnail::-webkit-media-controls {
   align-items: center;
 }
 
+.tutorial-vision-head {
+  width: 100%;
+  text-align: center;
+}
+
+.tutorial-vision-summary {
+  margin: 6px 0 0;
+  color: var(--color-text-sub);
+  font-size: var(--font-size-sm);
+}
+
+.tutorial-vision-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.tutorial-vision-card {
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tutorial-vision-card h3 {
+  margin: 0 0 10px;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+}
+
 .tutorial-mirror-zone {
   position: relative;
-  width: min(100%, 480px);
+  width: 100%;
   aspect-ratio: 4/3;
   border-radius: 20px;
   overflow: hidden;
@@ -2557,6 +2593,11 @@ video.object-thumbnail::-webkit-media-controls {
 .tutorial-hand-canvas {
   z-index: 2;
   pointer-events: none;
+}
+
+.tutorial-normalized-canvas {
+  height: 100%;
+  min-height: 280px;
 }
 
 .tutorial-image-container {

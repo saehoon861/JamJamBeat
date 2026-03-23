@@ -298,31 +298,9 @@ export function createInteractionRuntime({
   // 여러 손가락 끝 좌표를 받아서 악기와 충돌했는지 한 번에 검사합니다.
   // 터치 모드일 때만 사용됩니다.
   function processInstrumentCollision(points, now) {
-    if (!isSessionStarted()) return;
-    if (isAdminEditMode()) return;
-    if (interactionMode === "gesture") return;
-    if (!hasRecognizedGesture()) return;
-    const triggeredElements = new Set();
-
-    for (const instrument of instruments) {
-      if (triggeredElements.has(instrument.el)) continue;
-      const hit = points.some((point) => isInsideElement(point, instrument.el));
-      if (!hit) continue;
-      if (now - instrument.lastHitAt < instrument.cooldownMs) continue;
-      markInstrumentTriggered(instrument, now, "touch");
-      audioApi.setPlaybackContext({
-        instrumentId: instrument.id,
-        gestureLabel: "Touch",
-        gestureSource: "touch",
-        triggerTs: now,
-        handKey: "touch"
-      });
-      const playedTag = instrument.onHit();
-      activateInstrumentElement(instrument);
-      registerHit(now);
-      triggeredElements.add(instrument.el);
-      setStatusText(`${instrument.name} - ${playedTag || instrument.soundTag}`);
-    }
+    // 소리는 제스처 인식으로만 나가게 하고, 터치 충돌은 사운드 트리거로 사용하지 않습니다.
+    void points;
+    void now;
   }
 
   // 영어 제스처 이름을 사용자에게 보여줄 한국어 이름으로 바꿉니다.
@@ -508,11 +486,8 @@ export function createInteractionRuntime({
 
   // 모든 터치 포인트(손가락 끝)에 대해 비눗방울 충돌을 검사합니다.
   function processBubbleCollisions(points) {
-    if (!hasRecognizedGesture()) return;
-    if (checkBubbleCollision(points)) {
-      // 터질 때 효과음 (성능을 위해 짧고 가볍게)
-      Audio.playKids_Triangle(68 + Math.random() * 8);
-    }
+    // 버블 충돌은 시각 효과만 유지하고 사운드는 내지 않습니다.
+    checkBubbleCollision(points);
   }
 
   // 손이 사라졌을 때 커서를 숨기고, 시작 전이라면 상태 문구도 초기화합니다.

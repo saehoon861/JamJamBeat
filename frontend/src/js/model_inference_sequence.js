@@ -3,8 +3,8 @@
 
 import * as ort from "onnxruntime-web";
 
-const DEFAULT_TAU = 0.85;
-const DEFAULT_REQUEST_INTERVAL_MS = 150;
+const DEFAULT_TAU = 0.75;
+const DEFAULT_REQUEST_INTERVAL_MS = 60;
 const SEQUENCE_LENGTH = 8; // 모델이 요구하는 시퀀스 길이
 const FEATURE_DIM = 126; // 관절63 + 델타63
 const EPS = 1e-8; // pos_scale 정규화 시 0으로 나누기 방지

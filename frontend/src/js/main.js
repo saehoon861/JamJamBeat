@@ -221,7 +221,7 @@ function parseInteractionMode() { // 터치로 할지 손동작으로 할지 플
 function parseNumHands() {
   const params = new URLSearchParams(window.location.search);
   const raw = Number(params.get("numHands"));
-  if (!Number.isFinite(raw)) return 2;
+  if (!Number.isFinite(raw)) return 1;
   return clamp(Math.round(raw), 1, 2);
 }
 
@@ -374,34 +374,24 @@ function drawNormalizedPreviewGuide(ctx, width, height) {
   ctx.restore();
 }
 
-function renderTestModeVision(debugSnapshot, handKeys) {
-  if (!testModeEnabled) return;
-  if (!testModeRawCanvas || !testModeNormalizedCanvas || !testModeRawCtx || !testModeNormalizedCtx) return;
+function getModelInputPreviewSummary() {
+  return USE_SEQUENCE_MODEL
+    ? "wrist 원점 + scale 정규화된 모델 입력"
+    : "미러링을 반영한 모델 입력 좌표";
+}
 
-  const rawWidth = testModeRawCanvas.width;
-  const rawHeight = testModeRawCanvas.height;
-  const normalizedWidth = testModeNormalizedCanvas.width;
-  const normalizedHeight = testModeNormalizedCanvas.height;
+function renderNormalizedVisionCanvas(ctx, canvas, debugSnapshot, handKeys) {
+  if (!ctx || !canvas) return;
 
-  testModeRawCtx.clearRect(0, 0, rawWidth, rawHeight);
-  testModeNormalizedCtx.clearRect(0, 0, normalizedWidth, normalizedHeight);
-  drawNormalizedPreviewGuide(testModeNormalizedCtx, normalizedWidth, normalizedHeight);
-
-  const summary = USE_SEQUENCE_MODEL
-    ? "좌: 원본 손 / 우: wrist 원점 + scale 정규화"
-    : "좌: 원본 손 / 우: 모델 입력 좌표(미러링 포함)";
-  setPanelValue(testModeVisionSummary, summary);
+  const normalizedWidth = canvas.width;
+  const normalizedHeight = canvas.height;
+  ctx.clearRect(0, 0, normalizedWidth, normalizedHeight);
+  drawNormalizedPreviewGuide(ctx, normalizedWidth, normalizedHeight);
 
   handKeys.forEach((handKey) => {
     const hand = debugSnapshot[handKey];
     const landmarks = hand?.lastLandmarks;
     if (!Array.isArray(landmarks) || landmarks.length < 21) return;
-
-    const rawPoints = landmarks.map((point) => ({
-      x: (1 - point.x) * rawWidth,
-      y: point.y * rawHeight
-    }));
-    drawHandGraph(testModeRawCtx, rawPoints, handKey, { pointRadius: 3.4, lineWidth: 2 });
 
     const sanitized = sanitizePreviewLandmarks(landmarks, handKey);
     const modelInput = USE_SEQUENCE_MODEL ? normalizeSequencePreviewFrame(sanitized) : sanitized;
@@ -428,8 +418,47 @@ function renderTestModeVision(debugSnapshot, handKeys) {
         });
       }
     }
-    drawHandGraph(testModeNormalizedCtx, normalizedPoints, handKey, { pointRadius: 3.8, lineWidth: 2.1 });
+    drawHandGraph(ctx, normalizedPoints, handKey, { pointRadius: 3.8, lineWidth: 2.1 });
   });
+}
+
+function renderTestModeVision(debugSnapshot, handKeys) {
+  if (!testModeEnabled) return;
+  if (!testModeRawCanvas || !testModeNormalizedCanvas || !testModeRawCtx || !testModeNormalizedCtx) return;
+
+  const rawWidth = testModeRawCanvas.width;
+  const rawHeight = testModeRawCanvas.height;
+
+  testModeRawCtx.clearRect(0, 0, rawWidth, rawHeight);
+  const summary = USE_SEQUENCE_MODEL
+    ? "좌: 원본 손 / 우: wrist 원점 + scale 정규화"
+    : "좌: 원본 손 / 우: 모델 입력 좌표(미러링 포함)";
+  setPanelValue(testModeVisionSummary, summary);
+
+  handKeys.forEach((handKey) => {
+    const hand = debugSnapshot[handKey];
+    const landmarks = hand?.lastLandmarks;
+    if (!Array.isArray(landmarks) || landmarks.length < 21) return;
+
+    const rawPoints = landmarks.map((point) => ({
+      x: (1 - point.x) * rawWidth,
+      y: point.y * rawHeight
+    }));
+    drawHandGraph(testModeRawCtx, rawPoints, handKey, { pointRadius: 3.4, lineWidth: 2 });
+  });
+
+  renderNormalizedVisionCanvas(testModeNormalizedCtx, testModeNormalizedCanvas, debugSnapshot, handKeys);
+}
+
+function renderTutorialModelVision(debugSnapshot, handKeys) {
+  const tutorialCanvas = document.getElementById("tutorialNormalizedCanvas");
+  if (!(tutorialCanvas instanceof HTMLCanvasElement)) return;
+  const tutorialCtx = tutorialCanvas.getContext("2d");
+  if (!tutorialCtx) return;
+
+  const tutorialSummary = document.getElementById("tutorialVisionSummary");
+  setPanelValue(tutorialSummary, `왼쪽은 원본 손, 오른쪽은 ${getModelInputPreviewSummary()}입니다.`);
+  renderNormalizedVisionCanvas(tutorialCtx, tutorialCanvas, debugSnapshot, handKeys);
 }
 
 function syncTestModeUI() {
@@ -446,14 +475,17 @@ function syncTestModeUI() {
 }
 
 function renderTestModePanel() {
-  if (!testModeEnabled) return;
-
   const debugSnapshot = interactionRuntime.getDebugSnapshot?.() || {};
-  const modelStatus = getModelInferenceStatus(performance.now());
   const handKeys = Object.keys(debugSnapshot).filter((handKey) => {
     const hand = debugSnapshot[handKey];
     return Boolean(hand?.lastUpdatedAt);
   });
+
+  renderTutorialModelVision(debugSnapshot, handKeys);
+
+  if (!testModeEnabled) return;
+
+  const modelStatus = getModelInferenceStatus(performance.now());
 
   setPanelValue(testModeSummary, "Raw와 Final을 동시에 보며 추론/후처리를 구분합니다.");
   setPanelValue(testModeSession, sessionStarted ? "시작됨" : "대기");
@@ -952,9 +984,9 @@ async function initMediaPipe() {
       },
       runningMode: "VIDEO", // 실시간 스트림 분석 모드입니다.
       numHands: HAND_DETECTION_TARGET,
-      minHandDetectionConfidence: 0.25,
-      minHandPresenceConfidence: 0.25,
-      minTrackingConfidence: 0.25
+      minHandDetectionConfidence: 0.50,
+      minHandPresenceConfidence: 0.50,
+      minTrackingConfidence: 0.50
     });
     console.info("[MediaPipe] init:createFromOptions primary success", {
       constructor: handLandmarker?.constructor?.name,
@@ -975,9 +1007,9 @@ async function initMediaPipe() {
       },
       runningMode: "VIDEO", // 모드는 동일합니다.
       numHands: HAND_DETECTION_TARGET,
-      minHandDetectionConfidence: 0.25,
-      minHandPresenceConfidence: 0.25,
-      minTrackingConfidence: 0.25
+      minHandDetectionConfidence: 0.50,
+      minHandPresenceConfidence: 0.50,
+      minTrackingConfidence: 0.50
     });
     console.info("[MediaPipe] init:createFromOptions fallback success", {
       constructor: handLandmarker?.constructor?.name,

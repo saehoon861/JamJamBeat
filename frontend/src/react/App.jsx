@@ -216,20 +216,37 @@ export default function App() {
                   className="tutorial-image" 
                 />
               </div>
-              
-              <div className="tutorial-mirror-zone">
-                {tutorialPracticeEnabled ? (
-                  <>
-                    <div className="camera-shell tutorial-camera-shell" aria-hidden="true">
-                      <video id="webcam" autoPlay playsInline muted />
-                    </div>
-                    <canvas id="handCanvas" className="tutorial-hand-canvas" />
-                  </>
-                ) : (
-                  <div className="tutorial-camera-placeholder">
-                    <p>연습하기를 누르면 카메라가 여기서 바로 켜집니다.</p>
+
+              <div className="tutorial-vision-head">
+                <p className="test-mode-eyebrow">연습 미리보기</p>
+                <p id="tutorialVisionSummary" className="tutorial-vision-summary">왼쪽은 원본 손, 오른쪽은 모델 입력 좌표입니다.</p>
+              </div>
+              <div className="tutorial-vision-grid">
+                <article className="tutorial-vision-card">
+                  <h3>원본 손</h3>
+                  <div className="tutorial-mirror-zone">
+                    {tutorialPracticeEnabled ? (
+                      <>
+                        <div className="camera-shell tutorial-camera-shell" aria-hidden="true">
+                          <video id="webcam" autoPlay playsInline muted />
+                        </div>
+                        <canvas id="handCanvas" className="tutorial-hand-canvas" />
+                      </>
+                    ) : (
+                      <div className="tutorial-camera-placeholder" aria-hidden="true" />
+                    )}
                   </div>
-                )}
+                </article>
+                <article className="tutorial-vision-card">
+                  <h3>모델 입력</h3>
+                  <canvas
+                    id="tutorialNormalizedCanvas"
+                    className="test-mode-normalized-canvas tutorial-normalized-canvas"
+                    width="220"
+                    height="220"
+                    aria-hidden="true"
+                  />
+                </article>
               </div>
             </div>
 

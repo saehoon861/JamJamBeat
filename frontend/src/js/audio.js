@@ -10,6 +10,10 @@ let delayNode = null;
 let delayFeedbackGain = null;
 let delayToneFilter = null;
 let delayWetGain = null;
+let ambientNoiseSource = null;
+let ambientToneOscillator = null;
+let ambientToneGain = null;
+let ambientLfoOscillator = null;
 let soundEnabled = true;
 let unlocked = false;
 let playbackContext = null;
@@ -85,7 +89,9 @@ const melodyPalettes = {
   guitar: [196.0, 220.0, 246.94, 293.66, 329.63, 392.0],
   flute: [523.25, 587.33, 659.25, 698.46, 783.99, 880.0],
   violin: [392.0, 440.0, 493.88, 523.25, 587.33, 659.25],
-  bell: [783.99, 987.77, 1174.66, 1318.51, 1567.98]
+  bell: [783.99, 987.77, 1174.66, 1318.51, 1567.98],
+  musicbox: [659.25, 783.99, 987.77, 1174.66, 1318.51, 1567.98],
+  softpad: [220.0, 261.63, 329.63, 392.0, 440.0, 523.25]
 };
 
 const melodyPhrases = {
@@ -125,6 +131,16 @@ const melodyPhrases = {
     [987.77, 1174.66, 1318.51, 1174.66, 1567.98, 1318.51, 1174.66, 987.77, 1174.66, 1318.51, 1567.98, 1760.0, 1567.98, 1318.51, 1174.66, 987.77],
     [783.99, 1174.66, 1318.51, 1567.98, 1318.51, 1174.66, 987.77, 783.99, 987.77, 1174.66, 1318.51, 1567.98, 1760.0, 1567.98, 1318.51, 1174.66],
     [987.77, 1318.51, 1567.98, 1318.51, 1760.0, 1567.98, 1318.51, 1174.66, 987.77, 1174.66, 1318.51, 1567.98, 1975.53, 1760.0, 1567.98, 1318.51]
+  ],
+  musicbox: [
+    [783.99, 987.77, 1174.66, 987.77, 1318.51, 1174.66, 987.77, 783.99, 987.77, 1174.66, 1318.51, 1567.98, 1318.51, 1174.66, 987.77, 783.99],
+    [659.25, 783.99, 987.77, 1174.66, 987.77, 783.99, 659.25, 783.99, 987.77, 1174.66, 1318.51, 1174.66, 987.77, 783.99, 659.25, 783.99],
+    [783.99, 987.77, 1318.51, 1174.66, 987.77, 783.99, 659.25, 783.99, 987.77, 1174.66, 1318.51, 1567.98, 1318.51, 1174.66, 987.77, 783.99]
+  ],
+  softpad: [
+    [220.0, 329.63, 392.0, 329.63, 261.63, 329.63, 440.0, 392.0, 329.63, 261.63, 220.0, 261.63, 329.63, 392.0, 329.63, 261.63],
+    [261.63, 329.63, 392.0, 440.0, 392.0, 329.63, 261.63, 329.63, 523.25, 440.0, 392.0, 329.63, 261.63, 220.0, 261.63, 329.63],
+    [220.0, 261.63, 329.63, 392.0, 440.0, 392.0, 329.63, 261.63, 220.0, 261.63, 329.63, 392.0, 523.25, 440.0, 329.63, 261.63]
   ]
 };
 
@@ -134,7 +150,9 @@ const melodyTranspositions = {
   guitar: [0, 2, -3, 4],
   flute: [0, 2, 4, -2],
   violin: [0, 2, -2, 5],
-  bell: [0, 2, 5]
+  bell: [0, 2, 5],
+  musicbox: [0, 2, 5],
+  softpad: [0, -2, 2]
 };
 
 const globalSequencer = {
@@ -384,6 +402,67 @@ function createNoiseBuffer(duration = 0.12) {
     data[i] = (Math.random() * 2 - 1) * (1 - i / length);
   }
   return buffer;
+}
+
+function createAmbientNoiseBedBuffer(duration = 3.2) {
+  const length = Math.max(1, Math.floor(audioCtx.sampleRate * duration));
+  const buffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i += 1) {
+    data[i] = (Math.random() * 2 - 1) * 0.38;
+  }
+  return buffer;
+}
+
+function ensureAmbientBed() {
+  if (!audioCtx || !ambientGain) return;
+  if (ambientNoiseSource && ambientToneOscillator) return;
+
+  const noiseSource = audioCtx.createBufferSource();
+  noiseSource.buffer = createAmbientNoiseBedBuffer(3.2);
+  noiseSource.loop = true;
+
+  const noiseLowpass = audioCtx.createBiquadFilter();
+  noiseLowpass.type = "lowpass";
+  noiseLowpass.frequency.value = 420;
+  noiseLowpass.Q.value = 0.7;
+
+  const noiseHighpass = audioCtx.createBiquadFilter();
+  noiseHighpass.type = "highpass";
+  noiseHighpass.frequency.value = 90;
+  noiseHighpass.Q.value = 0.7;
+
+  const toneOsc = audioCtx.createOscillator();
+  toneOsc.type = "sine";
+  toneOsc.frequency.value = 96;
+
+  const toneGainNode = audioCtx.createGain();
+  toneGainNode.gain.value = 0.012;
+
+  const lfoOsc = audioCtx.createOscillator();
+  const lfoGain = audioCtx.createGain();
+  lfoOsc.type = "sine";
+  lfoOsc.frequency.value = 0.075;
+  lfoGain.gain.value = 24;
+  lfoOsc.connect(lfoGain);
+  lfoGain.connect(noiseLowpass.frequency);
+
+  noiseSource.connect(noiseLowpass);
+  noiseLowpass.connect(noiseHighpass);
+  noiseHighpass.connect(ambientGain);
+
+  toneOsc.connect(toneGainNode);
+  toneGainNode.connect(ambientGain);
+
+  const t = nowTime();
+  noiseSource.start(t);
+  toneOsc.start(t);
+  lfoOsc.start(t);
+
+  ambientNoiseSource = noiseSource;
+  ambientToneOscillator = toneOsc;
+  ambientToneGain = toneGainNode;
+  ambientLfoOscillator = lfoOsc;
 }
 
 function createImpulseResponse(duration = 1.2, decay = 2.4) {
@@ -671,6 +750,7 @@ export function ensureAudioContext() {
   delayWetGain.gain.value = 0.1;
 
   ambientGain.connect(masterGain);
+  ensureAmbientBed();
 
   reverbInputGain.connect(reverbNode);
   reverbNode.connect(reverbWetGain);
@@ -768,9 +848,23 @@ export function getPanDebugMode() {
 export function startAmbientLoop() {
   const ctx = ensureAudioContext();
   if (!ctx || !soundEnabled) return;
-  if (ambientGain) {
-    ambientGain.gain.setTargetAtTime(0.028, nowTime(), 0.6);
+
+  const applyAmbientGain = () => {
+    ensureAmbientBed();
+    if (ambientGain) {
+      ambientGain.gain.setTargetAtTime(0.028, nowTime(), 0.6);
+    }
+  };
+
+  if (ctx.state === "running") {
+    applyAmbientGain();
+    return;
   }
+
+  void unlockAudioContext().then((ok) => {
+    if (!ok || !soundEnabled) return;
+    applyAmbientGain();
+  });
 }
 
 export function stopAmbientLoop() {
@@ -916,6 +1010,66 @@ export function playKids_Bell(note) {
     delaySend: 0.16
   });
   if (ok) emitSoundPlayed("kids-bell", "synth");
+}
+
+export function playKids_MusicBox(note) {
+  const freq = frequencyFromNote(chooseFromPalette("musicbox", note), 987.77);
+
+  const ok = playTone(freq, {
+    type: "triangle",
+    attack: 0.004,
+    decay: 0.18,
+    release: 0.24,
+    gain: 0.04,
+    filterType: "highpass",
+    filterFrequency: 2600,
+    reverbSend: 0.32,
+    delaySend: 0.16
+  });
+  playTone(freq * 2, {
+    type: "sine",
+    attack: 0.002,
+    decay: 0.14,
+    release: 0.18,
+    gain: 0.016,
+    filterType: "highpass",
+    filterFrequency: 3400,
+    reverbSend: 0.34,
+    delaySend: 0.18,
+    detuneCents: 4
+  });
+  if (ok) emitSoundPlayed("kids-musicbox", "synth");
+}
+
+export function playKids_SoftPad(note) {
+  const freq = frequencyFromNote(chooseFromPalette("softpad", note), 261.63);
+  const chord = [freq, freq * 1.25, freq * 1.5].map((value) => Math.min(value, 1320));
+
+  playChord(chord, {
+    type: "sine",
+    attack: 0.08,
+    decay: 0.4,
+    sustain: 0.02,
+    release: 0.46,
+    gain: 0.13,
+    filterType: "lowpass",
+    filterFrequency: 1600,
+    reverbSend: 0.36,
+    delaySend: 0.12
+  });
+  playTone(freq * 0.5, {
+    type: "triangle",
+    attack: 0.05,
+    decay: 0.36,
+    sustain: 0.012,
+    release: 0.42,
+    gain: 0.045,
+    filterType: "lowpass",
+    filterFrequency: 900,
+    reverbSend: 0.22,
+    delaySend: 0.06
+  });
+  emitSoundPlayed("kids-softpad", "synth");
 }
 
 export function playKids_Triangle(note) {

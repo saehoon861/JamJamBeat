@@ -2,9 +2,9 @@
 
 // 오브젝트별 기본 사운드 프로필 연결표입니다.
 export const DEFAULT_SOUND_MAPPING = {
-  drum: "drum",
-  xylophone: "piano",
-  tambourine: "djembe",
+  drum: "softpad",
+  xylophone: "musicbox",
+  tambourine: "piano",
   a: "bell",
   cat: "flute",
   penguin: "violin"

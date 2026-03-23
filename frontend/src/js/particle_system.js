@@ -7,6 +7,15 @@ export function createParticleSystem(effectCtx, effectCanvas) {
   const MAX_BUBBLES = 10; // 동시에 존재할 수 있는 최대 비눗방울 개수
   const MAX_PARTICLES = 90; // 전체 파티클 개수 제한
 
+  function getCenterPointFromTarget(target) {
+    if (!target || typeof target.getBoundingClientRect !== "function") return null;
+    const rect = target.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width * 0.5,
+      y: rect.top + rect.height * 0.5
+    };
+  }
+
   function drawSparkParticle(particle, alpha) {
     effectCtx.save();
     effectCtx.globalAlpha = alpha;
@@ -32,10 +41,10 @@ export function createParticleSystem(effectCtx, effectCanvas) {
 
   // 특정 악기나 제스처 타입에 맞는 색과 양으로 파티클을 생성합니다.
   function spawnBurst(type, element) {
-    if (!element) return;
-    const rect = element.getBoundingClientRect();
-    const cx = rect.left + rect.width * 0.5;
-    const cy = rect.top + rect.height * 0.5;
+    const center = getCenterPointFromTarget(element);
+    if (!center) return;
+    const cx = center.x;
+    const cy = center.y;
     const baseColors =
       type === "drum"
         ? ["#ffd88b", "#ff9f68", "#fff0b0"]
@@ -75,6 +84,37 @@ export function createParticleSystem(effectCtx, effectCanvas) {
         color: baseColors[Math.floor(Math.random() * baseColors.length)]
       });
     }
+  }
+
+  function spawnPointerTrail(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const baseColors = ["#f4e4b7", "#c2d6c0", "#d8c7ef", "#f0c8c8"];
+    const count = 4;
+
+    for (let i = 0; i < count; i += 1) {
+      particles.push({
+        x: x + (Math.random() - 0.5) * 8,
+        y: y + (Math.random() - 0.5) * 8,
+        vx: (Math.random() - 0.5) * 0.9,
+        vy: -0.55 - Math.random() * 0.9,
+        gravity: 0.01,
+        life: 20 + Math.random() * 12,
+        maxLife: 32,
+        size: 1.8 + Math.random() * 2.2,
+        color: baseColors[Math.floor(Math.random() * baseColors.length)]
+      });
+    }
+  }
+
+  function spawnPointerBurst(x, y) {
+    spawnBurst("xylophone", {
+      getBoundingClientRect: () => ({
+        left: x - 10,
+        top: y - 10,
+        width: 20,
+        height: 20
+      })
+    });
   }
 
   // 비눗방울은 화면 아래쪽에서 생성되어 위로 서서히 올라갑니다.
@@ -175,6 +215,8 @@ export function createParticleSystem(effectCtx, effectCanvas) {
 
   return {
     spawnBurst,
+    spawnPointerTrail,
+    spawnPointerBurst,
     spawnBubble,
     updateParticles,
     checkBubbleCollision

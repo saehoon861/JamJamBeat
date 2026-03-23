@@ -140,6 +140,8 @@ export function createHandTrackingRuntime({
   let lastHandRenderAt = 0;
   let lastCachedBubbleCollisionAt = 0;
   const HAND_RENDER_INTERVAL_MS = 33;
+  const LANDMARK_TRAIL_MIN_DISTANCE = 12;
+  const LANDMARK_TRAIL_MIN_INTERVAL_MS = 30;
   const fullInferenceCanvas = document.createElement("canvas");
   const fullInferenceCtx = fullInferenceCanvas.getContext("2d", { willReadFrequently: true });
   const CACHED_BUBBLE_COLLISION_INTERVAL_MS = 48;
@@ -149,6 +151,7 @@ export function createHandTrackingRuntime({
   let lastFrameSignalAt = 0;
   let rvfcProbeArmed = false;
   let latestVideoFrameSignal = null;
+  const lastTrailByHand = new Map();
 
   const resolveVideo = () => getVideo?.() || video;
   const resolveHandCanvas = () => getHandCanvas?.() || handCanvas;
@@ -193,6 +196,23 @@ export function createHandTrackingRuntime({
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(activeVideo, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
     return canvas;
+  }
+
+  function emitLandmarkTrail(point, now, handKey = "default") {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    if (typeof particleSystem?.spawnPointerTrail !== "function") return;
+
+    const last = lastTrailByHand.get(handKey);
+    const dx = last ? point.x - last.x : Infinity;
+    const dy = last ? point.y - last.y : Infinity;
+    const distance = Math.hypot(dx, dy);
+
+    if (last && now - last.at < LANDMARK_TRAIL_MIN_INTERVAL_MS && distance < LANDMARK_TRAIL_MIN_DISTANCE) {
+      return;
+    }
+
+    particleSystem.spawnPointerTrail(point.x, point.y);
+    lastTrailByHand.set(handKey, { x: point.x, y: point.y, at: now });
   }
 
   function buildHandsWithKeys(result) {
@@ -243,6 +263,7 @@ export function createHandTrackingRuntime({
         const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], activeHandCanvas);
         // 커서를 실제 화면 위치로 옮깁니다.
         interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
+        emitLandmarkTrail(pointer, now, primaryHand.handKey);
       }
       recordPerf("renderCacheTotalMs", "renderCacheMaxMs", performance.now() - renderStartedAt);
       return;
@@ -343,6 +364,7 @@ export function createHandTrackingRuntime({
       cachedHands = [];
       cachedLandmarksAt = 0;
       lastHandRenderAt = 0;
+      lastTrailByHand.clear();
       renderer.setHandAnimationActive?.(false);
       interactionRuntime.resetTrackingState();
       return;
@@ -377,6 +399,7 @@ export function createHandTrackingRuntime({
     if (primaryHand && primaryHand.landmarks) {
       const pointer = interactionRuntime.createInstrumentPoint(primaryHand.landmarks[8], activeHandCanvas);
       interactionRuntime.setPointer(pointer, now, primaryHand.landmarks);
+      emitLandmarkTrail(pointer, now, primaryHand.handKey);
 
       hands.forEach((hand) => {
         if (hand.landmarks) {

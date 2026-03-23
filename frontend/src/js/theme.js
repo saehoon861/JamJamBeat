@@ -4,14 +4,18 @@
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import * as Renderer from "./renderer.js";
 import { getConfiguredHandLandmarkerTaskPath, getConfiguredMediaPipeWasmRoot } from "./env_config.js";
+import { createParticleSystem } from "./particle_system.js";
 
 const video = document.getElementById("webcam");
 const canvas = document.getElementById("handCanvas");
 const ctx = canvas.getContext("2d");
+const effectCanvas = document.getElementById("effectCanvas");
+const effectCtx = effectCanvas.getContext("2d");
 const handCursor = document.getElementById("handCursor");
 const statusText = document.getElementById("themeStatus");
 const backButton = document.getElementById("themeBackButton");
 const cards = Array.from(document.querySelectorAll(".theme-mode-card"));
+const particleSystem = createParticleSystem(effectCtx, effectCanvas);
 
 const HOVER_MS = 520;
 const HOVER_PADDING = 28;
@@ -20,6 +24,10 @@ const DEFAULT_INFER_FPS = 15;
 const MIN_INFER_FPS = 8;
 const MAX_INFER_FPS = 60;
 const LANDMARK_STALE_MS = 300;
+const POINTER_TRAIL_MIN_DISTANCE = 14;
+const POINTER_TRAIL_MIN_INTERVAL_MS = 28;
+const LANDMARK_TRAIL_MIN_DISTANCE = 12;
+const LANDMARK_TRAIL_MIN_INTERVAL_MS = 30;
 
 let handLandmarker;
 let lastVideoTime = -1;
@@ -29,6 +37,9 @@ let cameraStream = null;
 let lastInferenceAt = 0;
 let cachedLandmarks = null;
 let cachedLandmarksAt = 0;
+let lastPointerTrailAt = 0;
+let lastPointerTrailPoint = null;
+let lastLandmarkTrail = null;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -52,6 +63,8 @@ function parsePreferredDelegate() {
 function setCanvasSize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  effectCanvas.width = window.innerWidth;
+  effectCanvas.height = window.innerHeight;
 }
 
 // 배경 동영상이 끊기지 않고 자연스럽게 계속 반복되도록 해주는 기능입니다.
@@ -161,6 +174,58 @@ function activateTarget(target) {
   window.location.href = nav;
 }
 
+function emitPointerTrail(x, y, now = performance.now()) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const dx = lastPointerTrailPoint ? x - lastPointerTrailPoint.x : Infinity;
+  const dy = lastPointerTrailPoint ? y - lastPointerTrailPoint.y : Infinity;
+  const distance = Math.hypot(dx, dy);
+
+  if (now - lastPointerTrailAt < POINTER_TRAIL_MIN_INTERVAL_MS && distance < POINTER_TRAIL_MIN_DISTANCE) {
+    return;
+  }
+
+  particleSystem.spawnPointerTrail(x, y);
+  lastPointerTrailAt = now;
+  lastPointerTrailPoint = { x, y };
+}
+
+function emitLandmarkTrail(x, y, now = performance.now()) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const dx = lastLandmarkTrail ? x - lastLandmarkTrail.x : Infinity;
+  const dy = lastLandmarkTrail ? y - lastLandmarkTrail.y : Infinity;
+  const distance = Math.hypot(dx, dy);
+
+  if (lastLandmarkTrail && now - lastLandmarkTrail.at < LANDMARK_TRAIL_MIN_INTERVAL_MS && distance < LANDMARK_TRAIL_MIN_DISTANCE) {
+    return;
+  }
+
+  particleSystem.spawnPointerTrail(x, y);
+  lastLandmarkTrail = { x, y, at: now };
+}
+
+function setupPointerEffects() {
+  const isFinePointerDevice = window.matchMedia?.("(pointer: fine)").matches ?? true;
+  if (!isFinePointerDevice) return;
+
+  window.addEventListener("pointermove", (event) => {
+    if (event.pointerType && event.pointerType !== "mouse") return;
+    emitPointerTrail(event.clientX, event.clientY);
+  }, { passive: true });
+
+  window.addEventListener("pointerdown", (event) => {
+    if (event.pointerType && event.pointerType !== "mouse") return;
+    particleSystem.spawnPointerBurst(event.clientX, event.clientY);
+  }, { passive: true });
+}
+
+function startEffectLoop() {
+  const tick = () => {
+    particleSystem.updateParticles();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 // 손 커서가 특정 카드 위에 올라가 있는지 확인하고, 일정 시간 유지되면 선택하는 기능입니다.
 function updateHover(x, y, now) {
   const target = findHoverTarget(x, y);
@@ -208,8 +273,10 @@ function predict() {
     handCursor.style.opacity = "1";
     handCursor.style.left = `${x}px`;
     handCursor.style.top = `${y}px`;
+    emitLandmarkTrail(x, y, now);
   } else if (cachedLandmarks) {
     cachedLandmarks = null;
+    lastLandmarkTrail = null;
     handCursor.style.opacity = "0";
   }
 
@@ -230,10 +297,12 @@ function predict() {
 
         const x = (1 - landmarks[8].x) * canvas.width;
         const y = landmarks[8].y * canvas.height;
+        emitLandmarkTrail(x, y, now);
         updateHover(x, y, now);
       } else {
         cachedLandmarks = null;
         cachedLandmarksAt = 0;
+        lastLandmarkTrail = null;
         handCursor.style.opacity = "0";
         clearHoverStyles();
         hoverTarget = null;
@@ -333,6 +402,8 @@ function bindClickFallback() {
 async function init() {
   setupSeamlessBackgroundLoop();
   setCanvasSize();
+  setupPointerEffects();
+  startEffectLoop();
   window.addEventListener("resize", setCanvasSize);
   window.addEventListener("beforeunload", () => {
     if (!cameraStream) return;

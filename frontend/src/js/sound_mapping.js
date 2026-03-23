@@ -4,7 +4,7 @@
 export const DEFAULT_SOUND_MAPPING = {
   drum: "drum",
   xylophone: "piano",
-  tambourine: "guitar",
+  tambourine: "djembe",
   a: "bell",
   cat: "flute",
   penguin: "violin"
@@ -15,9 +15,9 @@ export const DEFAULT_GESTURE_MAPPING = {
   Fist: "penguin",
   OpenPalm: "drum",
   V: "tambourine",
-  Pinky: "a",
-  Animal: "cat",
-  KHeart: "xylophone"
+  Pinky: "cat",        // Cat Heart
+  Animal: "a",         // Squirrel Cymbal
+  KHeart: "xylophone"  // Fox Xylophone
 };
 
 export function loadCustomSounds() {

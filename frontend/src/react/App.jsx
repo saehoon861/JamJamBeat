@@ -8,7 +8,7 @@ import logoWebp from "../../assets/로고-removebg-preview.webp";
 const logoPng = logoWebp; 
 import batonImage from "../../assets/objects/지휘봉.png";
 import backgroundVideo from "../../assets/objects/움직이는_동화_영상_만들기.mp4?url";
-import handGesturesGuide from "../../assets/hand_gestures_guide_v2.png";
+import handGesturesGuide from "../../assets/objects/Change_the_cats_hand_gesture_to_make_a_pinky_fing-1774251764915.png";
 import hedgehogCreditVideo from "../../assets/objects/고슴도치1.mov?url";
 import penguinCreditVideo from "../../assets/objects/팽귄1.mov?url";
 

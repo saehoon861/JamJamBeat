@@ -151,6 +151,12 @@ export function createControlRuntime({
       } else {
         const unlocked = await measureAudioUnlock("sound-button");
         if (!unlocked) return;
+        
+        // 오디오 컨텍스트가 켜졌으나 soundEnabled가 false라서 여전히 running이 false라면 토글하여 명시적으로 켜줍니다.
+        if (!audioApi.getAudioState().running) {
+          audioApi.toggleSound();
+        }
+
         if (getSessionStarted() && ambientAudioEnabled) audioApi.startAmbientLoop();
         else audioApi.stopAmbientLoop();
         statusText.textContent = interactionMode === "gesture"

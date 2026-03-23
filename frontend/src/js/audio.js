@@ -20,8 +20,6 @@ let lastOutputRouteMeta = {
   pan: 0,
   gainMode: "profile"
 };
-const sampleBufferByKey = new Map();
-const sampleLoadPromiseByKey = new Map();
 const SOUND_DEBUG = (() => {
   const raw = new URLSearchParams(window.location.search).get("soundDebug");
   return raw === "1" || raw === "true";
@@ -60,62 +58,6 @@ const MAX_ACTIVE_VOICES = 24;
 const COMPANION_VOICE_THRESHOLD = 14;
 const ADAPTIVE_MELODY_SLOWDOWN_THRESHOLD = 16;
 
-const SAMPLE_LIBRARY = {
-  drum: {
-    paths: ["/assets/sounds/드럼.wav", "/assets/sounds/드럼.mp3"],
-    baseFrequency: 110,
-    gainValue: 0.9,
-    reverbSend: 0.05,
-    delaySend: 0,
-    minRate: 0.78,
-    maxRate: 1.28
-  },
-  piano: {
-    paths: ["/assets/sounds/피아노.mp3"],
-    baseFrequency: 261.63,
-    gainValue: 0.72,
-    reverbSend: 0.16,
-    delaySend: 0.05,
-    minRate: 0.72,
-    maxRate: 1.75
-  },
-  guitar: {
-    paths: ["/assets/sounds/기타.wav"],
-    baseFrequency: 196,
-    gainValue: 0.8,
-    reverbSend: 0.1,
-    delaySend: 0.05,
-    minRate: 0.72,
-    maxRate: 1.5
-  },
-  flute: {
-    paths: ["/assets/sounds/피리.mp3"],
-    baseFrequency: 523.25,
-    gainValue: 0.68,
-    reverbSend: 0.24,
-    delaySend: 0.08,
-    minRate: 0.78,
-    maxRate: 1.7
-  },
-  violin: {
-    paths: ["/assets/sounds/고양이.mp3"],
-    baseFrequency: 392,
-    gainValue: 0.78,
-    reverbSend: 0.22,
-    delaySend: 0.08,
-    minRate: 0.82,
-    maxRate: 1.4
-  },
-  bell: {
-    paths: ["/assets/sounds/심벌즈.mp3"],
-    baseFrequency: 987.77,
-    gainValue: 0.62,
-    reverbSend: 0.24,
-    delaySend: 0.1,
-    minRate: 0.84,
-    maxRate: 1.65
-  }
-};
 
 const NOTE_INDEX = {
   C: 0,
@@ -332,137 +274,6 @@ function clamp(value, min, max) {
 
 function nowTime() {
   return audioCtx ? audioCtx.currentTime : 0;
-}
-
-async function loadSampleBuffer(sampleKey) {
-  if (sampleBufferByKey.has(sampleKey)) return sampleBufferByKey.get(sampleKey);
-  if (!audioCtx) return null;
-
-  const existingPromise = sampleLoadPromiseByKey.get(sampleKey);
-  if (existingPromise) return existingPromise;
-
-  const sampleConfig = SAMPLE_LIBRARY[sampleKey];
-  if (!sampleConfig) return null;
-
-  const loadPromise = (async () => {
-    let lastError = null;
-    for (const path of sampleConfig.paths) {
-      try {
-        const response = await fetch(path);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const arrayBuffer = await response.arrayBuffer();
-        const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-        sampleBufferByKey.set(sampleKey, decoded);
-        return decoded;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    console.error(`[Audio] failed to load sample: ${sampleKey}`, lastError);
-    return null;
-  })();
-
-  sampleLoadPromiseByKey.set(sampleKey, loadPromise);
-  try {
-    return await loadPromise;
-  } finally {
-    sampleLoadPromiseByKey.delete(sampleKey);
-  }
-}
-
-function primeInstrumentSamples() {
-  Object.keys(SAMPLE_LIBRARY).forEach((sampleKey) => {
-    void loadSampleBuffer(sampleKey);
-  });
-}
-
-async function ensureInstrumentSamplesReady() {
-  await Promise.allSettled(
-    Object.keys(SAMPLE_LIBRARY).map((sampleKey) => loadSampleBuffer(sampleKey))
-  );
-}
-
-function finishSamplePlayback(source) {
-  activeVoiceCount = Math.max(0, activeVoiceCount - 1);
-  source.onended = null;
-}
-
-function playSample(sampleKey, {
-  targetFrequency = null,
-  gainValue,
-  reverbSend,
-  delaySend,
-  detuneCents = 0
-} = {}) {
-  const ctx = ensureAudioContext();
-  if (!ctx || !soundEnabled) {
-    pushSoundDebug("audio.playSample.skip", {
-      sampleKey,
-      reason: !ctx ? "no_audio_context" : "sound_disabled"
-    });
-    return false;
-  }
-  if (ctx.state !== "running") {
-    void unlockAudioContext();
-    if (ctx.state !== "running") {
-      pushSoundDebug("audio.playSample.skip", {
-        sampleKey,
-        reason: "context_not_running_after_unlock",
-        state: ctx.state
-      });
-      return false;
-    }
-  }
-  if (activeVoiceCount >= MAX_ACTIVE_VOICES) {
-    pushSoundDebug("audio.playSample.skip", {
-      sampleKey,
-      reason: "max_active_voices",
-      activeVoiceCount
-    });
-    return false;
-  }
-
-  const buffer = sampleBufferByKey.get(sampleKey);
-  const sampleConfig = SAMPLE_LIBRARY[sampleKey];
-  if (!buffer || !sampleConfig) {
-    void loadSampleBuffer(sampleKey);
-    pushSoundDebug("audio.playSample.skip", {
-      sampleKey,
-      reason: !sampleConfig ? "missing_sample_config" : "sample_buffer_not_ready"
-    });
-    return false;
-  }
-
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.playbackRate.value = Number.isFinite(targetFrequency)
-    ? clamp(
-      targetFrequency / sampleConfig.baseFrequency,
-      sampleConfig.minRate,
-      sampleConfig.maxRate
-    )
-    : 1;
-  source.detune.value = detuneCents;
-
-  connectNode(source, {
-    gainValue: gainValue ?? sampleConfig.gainValue,
-    reverbSend: reverbSend ?? sampleConfig.reverbSend,
-    delaySend: delaySend ?? sampleConfig.delaySend
-  });
-
-  activeVoiceCount += 1;
-  source.onended = () => finishSamplePlayback(source);
-  source.start(nowTime());
-  pushSoundDebug("audio.playSample.ok", {
-    sampleKey,
-    playbackRate: Number(source.playbackRate.value.toFixed(3)),
-    activeVoiceCount,
-    instrumentId: playbackContext?.instrumentId || null,
-    handKey: playbackContext?.handKey || null,
-    gestureLabel: playbackContext?.gestureLabel || null
-  });
-  return true;
 }
 
 function stopGlobalSequencer() {
@@ -875,8 +686,6 @@ export function ensureAudioContext() {
   masterGain.connect(masterLimiter);
   masterLimiter.connect(audioCtx.destination);
 
-  // 첫 입력 전에 샘플을 올려두어 합성음 fallback이 먼저 들리지 않게 합니다.
-  primeInstrumentSamples();
 
   return audioCtx;
 }
@@ -903,9 +712,6 @@ export async function unlockAudioContext() {
     } catch {
       // ignore and report final state below
     }
-  }
-  if (ctx.state === "running") {
-    await ensureInstrumentSamplesReady();
   }
   unlocked = ctx.state === "running";
   pushSoundDebug("audio.unlock.result", {
@@ -976,13 +782,9 @@ export function stopAmbientLoop() {
 export function playKids_Drum(note) {
   const target = chooseFromPalette("drum", note);
   const freq = frequencyFromNote(target);
-  const ok = playSample("drum", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-drum", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "triangle",
     attack: 0.004,
     decay: 0.16,
@@ -994,18 +796,14 @@ export function playKids_Drum(note) {
     delaySend: 0.01
   });
   playDrumHit("kick");
-  if (fallback) emitSoundPlayed("kids-drum", "synth");
+  if (ok) emitSoundPlayed("kids-drum", "synth");
 }
 
 export function playKids_Piano(note) {
   const freq = frequencyFromNote(chooseFromPalette("piano", note), 261.63);
-  const ok = playSample("piano", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-piano", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "triangle",
     attack: 0.006,
     decay: 0.26,
@@ -1027,17 +825,13 @@ export function playKids_Piano(note) {
     reverbSend: 0.2,
     delaySend: 0.05
   });
-  if (fallback) emitSoundPlayed("kids-piano", "synth");
+  if (ok) emitSoundPlayed("kids-piano", "synth");
 }
 
 export function playKids_Guitar(note) {
   const freq = frequencyFromNote(chooseFromPalette("guitar", note), 196);
-  const ok = playSample("guitar", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-guitar", "sample");
-    return;
-  }
 
+  // MP3 샘플 대신 Web Audio API로 직접 생성
   const chord = [freq, freq * 1.25, freq * 1.5].map((value) => Math.min(value, 1760));
   playChord(chord, {
     type: "triangle",
@@ -1056,13 +850,9 @@ export function playKids_Guitar(note) {
 
 export function playKids_Flute(note) {
   const freq = frequencyFromNote(chooseFromPalette("flute", note), 523.25);
-  const ok = playSample("flute", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-flute", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "sine",
     attack: 0.02,
     decay: 0.34,
@@ -1074,18 +864,14 @@ export function playKids_Flute(note) {
     reverbSend: 0.3,
     delaySend: 0.12
   });
-  if (fallback) emitSoundPlayed("kids-flute", "synth");
+  if (ok) emitSoundPlayed("kids-flute", "synth");
 }
 
 export function playKids_Violin(note) {
   const freq = frequencyFromNote(chooseFromPalette("violin", note), 392);
-  const ok = playSample("violin", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-violin", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "sawtooth",
     attack: 0.02,
     decay: 0.3,
@@ -1097,7 +883,7 @@ export function playKids_Violin(note) {
     reverbSend: 0.26,
     delaySend: 0.1
   });
-  if (fallback) {
+  if (ok) {
     playFairyCompanion(freq, 0.024);
     emitSoundPlayed("kids-violin", "synth");
   }
@@ -1105,13 +891,9 @@ export function playKids_Violin(note) {
 
 export function playKids_Bell(note) {
   const freq = frequencyFromNote(chooseFromPalette("bell", note), 987.77);
-  const ok = playSample("bell", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-bell", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "triangle",
     attack: 0.004,
     decay: 0.2,
@@ -1133,11 +915,62 @@ export function playKids_Bell(note) {
     reverbSend: 0.3,
     delaySend: 0.16
   });
-  if (fallback) emitSoundPlayed("kids-bell", "synth");
+  if (ok) emitSoundPlayed("kids-bell", "synth");
 }
 
 export function playKids_Triangle(note) {
   playKids_Bell(note);
+}
+
+export function playKids_Djembe(note) {
+  const target = chooseFromPalette("drum", note);
+  const freq = frequencyFromNote(target) * 0.85;
+
+  const ctx = ensureAudioContext();
+  if (!ctx || !soundEnabled) return;
+  if (ctx.state !== "running") {
+    void unlockAudioContext();
+    if (ctx.state !== "running") return;
+  }
+  const t = nowTime();
+  
+  const osc = ctx.createOscillator();
+  const amp = ctx.createGain();
+  
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(freq * 1.5, t);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.35, t + 0.12);
+  
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(0.45, t + 0.015);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+  
+  osc.connect(amp);
+  connectNode(amp, { gainValue: 1, reverbSend: 0.1, delaySend: 0 });
+  
+  osc.start(t);
+  osc.stop(t + 0.35);
+
+  const noiseSrc = ctx.createBufferSource();
+  const noiseFilter = ctx.createBiquadFilter();
+  const noiseAmp = ctx.createGain();
+  noiseSrc.buffer = createNoiseBuffer(0.08);
+
+  noiseFilter.type = "bandpass";
+  noiseFilter.frequency.value = 1300;
+  noiseFilter.Q.value = 1.4;
+  
+  noiseAmp.gain.setValueAtTime(0.0001, t);
+  noiseAmp.gain.exponentialRampToValueAtTime(0.18, t + 0.004);
+  noiseAmp.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+
+  noiseSrc.connect(noiseFilter);
+  noiseFilter.connect(noiseAmp);
+  connectNode(noiseAmp, { gainValue: 1, reverbSend: 0.05, delaySend: 0 });
+  noiseSrc.start(t);
+  noiseSrc.stop(t + 0.1);
+
+  emitSoundPlayed("kids-djembe", "synth");
 }
 
 export function playDebugBeep({

@@ -206,6 +206,7 @@ const PERF_LOG_LIMIT = 200;
 
 const SOUND_PROFILES = {
   drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
+  djembe: { soundTag: "젬베 타격", burstType: "tambourine", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Djembe(note) },
   piano: { soundTag: "피아노 선율", burstType: "xylophone", playbackMode: "oneshot", melodyType: "piano", play: (note) => Audio.playKids_Piano(note) },
   guitar: { soundTag: "기타 스트럼", burstType: "tambourine", playbackMode: "oneshot", melodyType: "guitar", play: (note) => Audio.playKids_Guitar(note) },
   flute: { soundTag: "플룻 멜로디", burstType: "heart", playbackMode: "oneshot", melodyType: "flute", play: (note) => Audio.playKids_Flute(note) },

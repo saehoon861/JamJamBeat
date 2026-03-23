@@ -25,13 +25,39 @@ def detect_suite_name(path: Path) -> str:
 def upload_model_run(summary_path: Path) -> None:
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     model_id = summary["model_id"]
-    metrics = summary["metrics"]
-    latency = metrics.get("latency", {})
-    class0 = metrics.get("class0_metrics", {})
-    fp_per_min = metrics.get("fp_per_min_metrics", {}).get("fp_per_min", 0.0)
-    hyperparams = summary.get("hyperparameters", {})
+    metrics = summary.get("metrics", {}) or {}
+    latency = metrics.get("latency", {}) or {}
+    class0 = metrics.get("class0_metrics", {}) or {}
+    fp_metrics = metrics.get("fp_per_min_metrics", {}) or {}
+    hyperparams = summary.get("hyperparameters", {}) or {}
+
+    fp_per_min = fp_metrics.get("fp_per_min")
+    if fp_per_min is None:
+        fp_per_min = 0.0
+
+    latency_p50 = latency.get("p50_ms")
+    if latency_p50 is None:
+        latency_p50 = 0.0
+
+    latency_p95 = latency.get("p95_ms")
+    if latency_p95 is None:
+        latency_p95 = 999.0
+
+    latency_mean = latency.get("mean_ms")
+    if latency_mean is None:
+        latency_mean = 0.0
+
+    class0_fpr = class0.get("false_positive_rate")
+    if class0_fpr is None:
+        class0_fpr = 0.0
+
+    class0_fnr = class0.get("false_negative_rate")
+    if class0_fnr is None:
+        class0_fnr = 1.0
+
     suite_name = detect_suite_name(summary_path)
-    run_name = f"{suite_name}__{model_id}" if suite_name != "legacy-flat" else model_id
+    run_timestamp = summary_path.parent.name
+    run_name = f"{suite_name}__{model_id}_{run_timestamp}" if suite_name != "legacy-flat" else f"{model_id}_{run_timestamp}"
 
     run = wandb.init(
         entity=ENTITY,
@@ -71,29 +97,34 @@ def upload_model_run(summary_path: Path) -> None:
     # 2. 최종 평가 지표 업로드
     run.log({
         # 주요 지표
-        "accuracy": metrics["accuracy"],
-        "macro_f1": metrics["macro_avg"]["f1"],
-        "macro_precision": metrics["macro_avg"]["precision"],
-        "macro_recall": metrics["macro_avg"]["recall"],
+        "accuracy": metrics.get("accuracy", 0.0),
+        "macro_f1": metrics.get("macro_avg", {}).get("f1", 0.0),
+        "macro_precision": metrics.get("macro_avg", {}).get("precision", 0.0),
+        "macro_recall": metrics.get("macro_avg", {}).get("recall", 0.0),
+
         # neutral 클래스 오류율
-        "class0_fpr": class0.get("false_positive_rate", 0.0),
-        "class0_fnr": class0.get("false_negative_rate", 0.0),
+        "class0_fpr": class0_fpr,
+        "class0_fnr": class0_fnr,
+
         # 실서비스 기준
         "fp_per_min": fp_per_min,
-        # 레이턴시
-        "latency_p50_ms": latency.get("p50_ms", 0.0),
-        "latency_p95_ms": latency.get("p95_ms", 0.0),
-        "latency_mean_ms": latency.get("mean_ms", 0.0),
-        # 학습 정보
-        "best_val_loss": summary["best_val_loss"],
-        "epochs_ran": summary["epochs_ran"],
-        # PoC 기준 달성 여부
-        "poc_macro_f1_pass": int(metrics["macro_avg"]["f1"] >= 0.80),
-        "poc_class0_fnr_pass": int(class0.get("false_negative_rate", 1.0) < 0.10),
-        "poc_fp_per_min_pass": int(fp_per_min < 2.0),
-        "poc_latency_pass": int(latency.get("p95_ms", 999.0) < 200.0),
-    })
 
+        # 레이턴시
+        "latency_p50_ms": latency_p50,
+        "latency_p95_ms": latency_p95,
+        "latency_mean_ms": latency_mean,
+
+        # 학습 정보
+        "best_val_loss": summary.get("best_val_loss", None),
+        "epochs_ran": summary.get("epochs_ran", 0),
+
+        # PoC 기준 달성 여부
+        "poc_macro_f1_pass": int(metrics.get("macro_avg", {}).get("f1", 0.0) >= 0.80),
+        "poc_class0_fnr_pass": int(class0_fnr < 0.10),
+        "poc_fp_per_min_pass": int(fp_per_min < 2.0),
+        "poc_latency_pass": int(latency_p95 < 200.0),
+        })
+    
     run.finish()
     print(f"  ✅ {run_name}")
 

@@ -12,6 +12,20 @@ export function createControlRuntime({
   onActivateStart
 }) {
   let perfLogBound = false;
+  const SOUND_DEBUG = (() => {
+    const raw = new URLSearchParams(window.location.search).get("soundDebug");
+    return raw === "1" || raw === "true";
+  })();
+
+  function logSoundDebug(stage, payload = {}) {
+    if (!SOUND_DEBUG) return;
+    console.info("[SoundDebug]", {
+      at: Date.now(),
+      perfNow: Number(performance.now().toFixed(2)),
+      stage,
+      ...payload
+    });
+  }
 
   function readPerfLogs() {
     try {
@@ -49,6 +63,10 @@ export function createControlRuntime({
   async function measureAudioUnlock(reason) {
     const startedAt = performance.now();
     let unlocked = false;
+    logSoundDebug("control.measureAudioUnlock.start", {
+      reason,
+      audioState: audioApi.getAudioState()
+    });
     try {
       unlocked = await audioApi.unlockAudioContext();
     } catch (error) {
@@ -69,6 +87,12 @@ export function createControlRuntime({
     } catch {
       // 로그 저장 실패는 무시하고 오디오 언락 결과만 반환합니다.
     }
+    logSoundDebug("control.measureAudioUnlock.result", {
+      reason,
+      unlocked,
+      elapsedMs: Number(elapsed.toFixed(2)),
+      audioState: audioApi.getAudioState()
+    });
     return unlocked;
   }
 
@@ -120,12 +144,19 @@ export function createControlRuntime({
 
     window.addEventListener("jamjam:sound-toggle-request", async () => {
       const state = audioApi.getAudioState();
+      logSoundDebug("control.soundToggleRequest", { state });
       if (state.running) {
         audioApi.toggleSound();
         audioApi.stopAmbientLoop();
       } else {
         const unlocked = await measureAudioUnlock("sound-button");
         if (!unlocked) return;
+        
+        // 오디오 컨텍스트가 켜졌으나 soundEnabled가 false라서 여전히 running이 false라면 토글하여 명시적으로 켜줍니다.
+        if (!audioApi.getAudioState().running) {
+          audioApi.toggleSound();
+        }
+
         if (getSessionStarted() && ambientAudioEnabled) audioApi.startAmbientLoop();
         else audioApi.stopAmbientLoop();
         statusText.textContent = interactionMode === "gesture"

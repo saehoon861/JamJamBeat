@@ -35,11 +35,24 @@ export function createInteractionRuntime({
   checkBubbleCollision
 }) {
   const handStateByKey = new Map();
-  const gestureHoldStartByKey = new Map();
   const activeGestureHands = new Set();
   const rectCache = new WeakMap();
   let lastStatusText = "";
   const HELD_ONESHOT_INTERVAL_MS = Math.max(gestureCooldownMs, 220);
+  const SOUND_DEBUG = (() => {
+    const raw = new URLSearchParams(window.location.search).get("soundDebug");
+    return raw === "1" || raw === "true";
+  })();
+
+  function logSoundDebug(stage, payload = {}) {
+    if (!SOUND_DEBUG) return;
+    console.info("[SoundDebug]", {
+      at: Date.now(),
+      perfNow: Number(performance.now().toFixed(2)),
+      stage,
+      ...payload
+    });
+  }
 
   function isGestureEnabledForHand(handKey = "default") {
     return String(handKey || "default").trim().toLowerCase() !== "left";
@@ -91,7 +104,15 @@ export function createInteractionRuntime({
       instrument.lastHitAtBySource = new Map();
     }
     const lastHitAt = instrument.lastHitAtBySource.get(sourceKey) || 0;
-    if (now - lastHitAt < instrument.cooldownMs) return false;
+    if (now - lastHitAt < instrument.cooldownMs) {
+      logSoundDebug("interaction.canTriggerInstrument.blocked", {
+        instrumentId: instrument.id,
+        sourceKey,
+        elapsedMs: Number((now - lastHitAt).toFixed(2)),
+        cooldownMs: instrument.cooldownMs
+      });
+      return false;
+    }
     markInstrumentTriggered(instrument, now, sourceKey);
     return true;
   }
@@ -168,7 +189,6 @@ export function createInteractionRuntime({
       handState.lastRawModelPrediction = { ...disabledResult };
       handState.lastGestureLabel = "None";
       handState.lastGestureTriggerAt = 0;
-      gestureHoldStartByKey.delete(handKey);
       resetGestureState?.(handKey);
       activeGestureHands.delete(handKey);
       setGestureObjectVariant?.(activeGestureHands.size > 0);
@@ -264,6 +284,13 @@ export function createInteractionRuntime({
   function triggerGesturePlaybackById(id, playback, now, meta = {}) {
     const instrument = instruments.find((item) => item.id === id);
     if (!instrument || !instrument.el || !playback) return;
+    logSoundDebug("interaction.triggerGesturePlaybackById", {
+      instrumentId: id,
+      handKey: meta.handKey || null,
+      gestureLabel: meta.gestureLabel || null,
+      playbackMode: playback.playbackMode || null,
+      soundTag: playback.soundTag || instrument.soundTag
+    });
     const sourceKey = meta.handKey || meta.gestureSource || "default";
     if (!canTriggerInstrument(instrument, now, sourceKey)) return;
     audioApi.setPlaybackContext({
@@ -298,31 +325,9 @@ export function createInteractionRuntime({
   // 여러 손가락 끝 좌표를 받아서 악기와 충돌했는지 한 번에 검사합니다.
   // 터치 모드일 때만 사용됩니다.
   function processInstrumentCollision(points, now) {
-    if (!isSessionStarted()) return;
-    if (isAdminEditMode()) return;
-    if (interactionMode === "gesture") return;
-    if (!hasRecognizedGesture()) return;
-    const triggeredElements = new Set();
-
-    for (const instrument of instruments) {
-      if (triggeredElements.has(instrument.el)) continue;
-      const hit = points.some((point) => isInsideElement(point, instrument.el));
-      if (!hit) continue;
-      if (now - instrument.lastHitAt < instrument.cooldownMs) continue;
-      markInstrumentTriggered(instrument, now, "touch");
-      audioApi.setPlaybackContext({
-        instrumentId: instrument.id,
-        gestureLabel: "Touch",
-        gestureSource: "touch",
-        triggerTs: now,
-        handKey: "touch"
-      });
-      const playedTag = instrument.onHit();
-      activateInstrumentElement(instrument);
-      registerHit(now);
-      triggeredElements.add(instrument.el);
-      setStatusText(`${instrument.name} - ${playedTag || instrument.soundTag}`);
-    }
+    // 소리는 제스처 인식으로만 나가게 하고, 터치 충돌은 사운드 트리거로 사용하지 않습니다.
+    void points;
+    void now;
   }
 
   // 영어 제스처 이름을 사용자에게 보여줄 한국어 이름으로 바꿉니다.
@@ -339,10 +344,32 @@ export function createInteractionRuntime({
   // 특정 제스처가 인식되었을 때 어떤 악기나 효과를 낼지 연결하는 함수입니다.
   function runGestureReaction(label, now, handKey = "default") {
     const instrumentId = getGestureInstrumentId?.(label);
-    if (!instrumentId) return;
+    if (!instrumentId) {
+      logSoundDebug("interaction.runGestureReaction.skip", {
+        handKey,
+        gestureLabel: label,
+        reason: "no_instrument_mapping"
+      });
+      return;
+    }
     const playback = getGesturePlayback?.(label, instrumentId) || getInstrumentPlayback(instrumentId);
-    if (!playback) return;
+    if (!playback) {
+      logSoundDebug("interaction.runGestureReaction.skip", {
+        handKey,
+        gestureLabel: label,
+        instrumentId,
+        reason: "no_playback_profile"
+      });
+      return;
+    }
     const handState = getHandState(handKey);
+    logSoundDebug("interaction.runGestureReaction.start", {
+      handKey,
+      gestureLabel: label,
+      instrumentId,
+      playbackMode: playback.playbackMode || null,
+      audioState: audioApi.getAudioState()
+    });
 
     if (playback.playbackMode === "oneshot") {
       if (handState.currentMelodyType) {
@@ -422,6 +449,14 @@ export function createInteractionRuntime({
                              (gesture.confidence < getGestureStartConfidenceFloor(gesture.label) && gesture.label !== handState.lastGestureLabel);
 
     if (shouldStopMelody) {
+      logSoundDebug("interaction.processGestureTriggers.skip", {
+        handKey,
+        reason: !gesture ? "no_gesture" : (gesture.label === "None" ? "gesture_none" : "confidence_below_threshold"),
+        gestureLabel: gesture?.label || null,
+        confidence: Number.isFinite(gesture?.confidence) ? Number(gesture.confidence.toFixed(3)) : null,
+        lastGestureLabel: handState.lastGestureLabel,
+        rawModelLabel: rawModel?.label || null
+      });
       activeGestureHands.delete(handKey);
       setGestureObjectVariant?.(activeGestureHands.size > 0);
       const hasOtherRecognizedGesture = hasRecognizedGestureExcept(handKey);
@@ -450,13 +485,24 @@ export function createInteractionRuntime({
 
     // 제스처가 바뀌었을 때만 새 멜로디 시작
     if (gesture.label !== handState.lastGestureLabel) {
+      logSoundDebug("interaction.processGestureTriggers.trigger", {
+        handKey,
+        gestureLabel: gesture.label,
+        confidence: Number((gesture.confidence * 100).toFixed(1)),
+        previousGestureLabel: handState.lastGestureLabel
+      });
       if (gesture.label === "Fist") activeGestureHands.add(handKey);
       else activeGestureHands.delete(handKey);
       setGestureObjectVariant?.(activeGestureHands.size > 0);
 
       if (!audioApi.getAudioState().running) {
+        logSoundDebug("interaction.processGestureTriggers.blocked", {
+          handKey,
+          gestureLabel: gesture.label,
+          reason: "audio_not_running",
+          audioState: audioApi.getAudioState()
+        });
         setStatusText("소리가 꺼져 있어요. '소리 켜기' 버튼을 눌러주세요.");
-        handState.lastGestureLabel = gesture.label;
         return;
       }
 
@@ -464,7 +510,6 @@ export function createInteractionRuntime({
       showSquirrelEffect();
 
       handState.lastGestureLabel = gesture.label;
-      gestureHoldStartByKey.set(handKey, now); // 새로운 제스처면 홀드 시작 시각을 기록합니다.
 
       const displayName = getGestureDisplayName(gesture.label);
       setStatusText(`${handKey}손 ${displayName} 인식! (신뢰도: ${(gesture.confidence * 100).toFixed(0)}%)`);
@@ -476,6 +521,12 @@ export function createInteractionRuntime({
       const playback = getGesturePlayback?.(gesture.label, instrumentId) || getInstrumentPlayback(instrumentId);
       if (playback?.playbackMode === "oneshot" && audioApi.getAudioState().running) {
         if (now - handState.lastGestureTriggerAt >= HELD_ONESHOT_INTERVAL_MS) {
+          logSoundDebug("interaction.processGestureTriggers.retrigger", {
+            handKey,
+            gestureLabel: gesture.label,
+            elapsedMs: Number((now - handState.lastGestureTriggerAt).toFixed(2)),
+            retriggerMs: HELD_ONESHOT_INTERVAL_MS
+          });
           runGestureReaction(gesture.label, now, handKey);
           handState.lastGestureTriggerAt = now;
         }
@@ -508,11 +559,8 @@ export function createInteractionRuntime({
 
   // 모든 터치 포인트(손가락 끝)에 대해 비눗방울 충돌을 검사합니다.
   function processBubbleCollisions(points) {
-    if (!hasRecognizedGesture()) return;
-    if (checkBubbleCollision(points)) {
-      // 터질 때 효과음 (성능을 위해 짧고 가볍게)
-      Audio.playKids_Triangle(68 + Math.random() * 8);
-    }
+    // 버블 충돌은 시각 효과만 유지하고 사운드는 내지 않습니다.
+    checkBubbleCollision(points);
   }
 
   // 손이 사라졌을 때 커서를 숨기고, 시작 전이라면 상태 문구도 초기화합니다.
@@ -535,7 +583,6 @@ export function createInteractionRuntime({
       handState.lastRawModelPrediction = null;
       handState.lastLandmarks = null;
       handState.lastUpdatedAt = 0;
-      gestureHoldStartByKey.delete(handKey);
       resetGestureState?.(handKey);
       if (isGestureEnabledForHand(handKey)) {
         getModelPrediction?.(null, resetAt, handKey);

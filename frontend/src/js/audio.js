@@ -14,8 +14,39 @@ let soundEnabled = true;
 let unlocked = false;
 let playbackContext = null;
 let activeVoiceCount = 0;
-const sampleBufferByKey = new Map();
-const sampleLoadPromiseByKey = new Map();
+let panDebugMode = "context";
+let lastPlaybackMeta = null;
+let lastOutputRouteMeta = {
+  pan: 0,
+  gainMode: "profile"
+};
+const SOUND_DEBUG = (() => {
+  const raw = new URLSearchParams(window.location.search).get("soundDebug");
+  return raw === "1" || raw === "true";
+})();
+const SOUND_DEBUG_LOG_LIMIT = 200;
+
+function pushSoundDebug(stage, payload = {}) {
+  if (!SOUND_DEBUG) return;
+  const entry = {
+    at: Date.now(),
+    perfNow: Number(performance.now().toFixed(2)),
+    stage,
+    ...payload
+  };
+  try {
+    if (!Array.isArray(window.__jamjamSoundDebugLog)) {
+      window.__jamjamSoundDebugLog = [];
+    }
+    window.__jamjamSoundDebugLog.push(entry);
+    if (window.__jamjamSoundDebugLog.length > SOUND_DEBUG_LOG_LIMIT) {
+      window.__jamjamSoundDebugLog.splice(0, window.__jamjamSoundDebugLog.length - SOUND_DEBUG_LOG_LIMIT);
+    }
+  } catch {
+    // ignore debug buffer failures
+  }
+  console.info("[SoundDebug]", entry);
+}
 
 const activeMelodies = new Map();
 const melodyTickMs = 300;
@@ -27,62 +58,6 @@ const MAX_ACTIVE_VOICES = 24;
 const COMPANION_VOICE_THRESHOLD = 14;
 const ADAPTIVE_MELODY_SLOWDOWN_THRESHOLD = 16;
 
-const SAMPLE_LIBRARY = {
-  drum: {
-    paths: ["/assets/sounds/드럼.wav", "/assets/sounds/드럼.mp3"],
-    baseFrequency: 110,
-    gainValue: 0.9,
-    reverbSend: 0.05,
-    delaySend: 0,
-    minRate: 0.78,
-    maxRate: 1.28
-  },
-  piano: {
-    paths: ["/assets/sounds/피아노.mp3"],
-    baseFrequency: 261.63,
-    gainValue: 0.72,
-    reverbSend: 0.16,
-    delaySend: 0.05,
-    minRate: 0.72,
-    maxRate: 1.75
-  },
-  guitar: {
-    paths: ["/assets/sounds/기타.wav"],
-    baseFrequency: 196,
-    gainValue: 0.8,
-    reverbSend: 0.1,
-    delaySend: 0.05,
-    minRate: 0.72,
-    maxRate: 1.5
-  },
-  flute: {
-    paths: ["/assets/sounds/피리.mp3"],
-    baseFrequency: 523.25,
-    gainValue: 0.68,
-    reverbSend: 0.24,
-    delaySend: 0.08,
-    minRate: 0.78,
-    maxRate: 1.7
-  },
-  violin: {
-    paths: ["/assets/sounds/고양이.mp3"],
-    baseFrequency: 392,
-    gainValue: 0.78,
-    reverbSend: 0.22,
-    delaySend: 0.08,
-    minRate: 0.82,
-    maxRate: 1.4
-  },
-  bell: {
-    paths: ["/assets/sounds/심벌즈.mp3"],
-    baseFrequency: 987.77,
-    gainValue: 0.62,
-    reverbSend: 0.24,
-    delaySend: 0.1,
-    minRate: 0.84,
-    maxRate: 1.65
-  }
-};
 
 const NOTE_INDEX = {
   C: 0,
@@ -301,105 +276,6 @@ function nowTime() {
   return audioCtx ? audioCtx.currentTime : 0;
 }
 
-async function loadSampleBuffer(sampleKey) {
-  if (sampleBufferByKey.has(sampleKey)) return sampleBufferByKey.get(sampleKey);
-  if (!audioCtx) return null;
-
-  const existingPromise = sampleLoadPromiseByKey.get(sampleKey);
-  if (existingPromise) return existingPromise;
-
-  const sampleConfig = SAMPLE_LIBRARY[sampleKey];
-  if (!sampleConfig) return null;
-
-  const loadPromise = (async () => {
-    let lastError = null;
-    for (const path of sampleConfig.paths) {
-      try {
-        const response = await fetch(path);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const arrayBuffer = await response.arrayBuffer();
-        const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-        sampleBufferByKey.set(sampleKey, decoded);
-        return decoded;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    console.error(`[Audio] failed to load sample: ${sampleKey}`, lastError);
-    return null;
-  })();
-
-  sampleLoadPromiseByKey.set(sampleKey, loadPromise);
-  try {
-    return await loadPromise;
-  } finally {
-    sampleLoadPromiseByKey.delete(sampleKey);
-  }
-}
-
-function primeInstrumentSamples() {
-  Object.keys(SAMPLE_LIBRARY).forEach((sampleKey) => {
-    void loadSampleBuffer(sampleKey);
-  });
-}
-
-async function ensureInstrumentSamplesReady() {
-  await Promise.allSettled(
-    Object.keys(SAMPLE_LIBRARY).map((sampleKey) => loadSampleBuffer(sampleKey))
-  );
-}
-
-function finishSamplePlayback(source) {
-  activeVoiceCount = Math.max(0, activeVoiceCount - 1);
-  source.onended = null;
-}
-
-function playSample(sampleKey, {
-  targetFrequency = null,
-  gainValue,
-  reverbSend,
-  delaySend,
-  detuneCents = 0
-} = {}) {
-  const ctx = ensureAudioContext();
-  if (!ctx || !soundEnabled) return false;
-  if (ctx.state !== "running") {
-    void unlockAudioContext();
-    if (ctx.state !== "running") return false;
-  }
-  if (activeVoiceCount >= MAX_ACTIVE_VOICES) return false;
-
-  const buffer = sampleBufferByKey.get(sampleKey);
-  const sampleConfig = SAMPLE_LIBRARY[sampleKey];
-  if (!buffer || !sampleConfig) {
-    void loadSampleBuffer(sampleKey);
-    return false;
-  }
-
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.playbackRate.value = Number.isFinite(targetFrequency)
-    ? clamp(
-      targetFrequency / sampleConfig.baseFrequency,
-      sampleConfig.minRate,
-      sampleConfig.maxRate
-    )
-    : 1;
-  source.detune.value = detuneCents;
-
-  connectNode(source, {
-    gainValue: gainValue ?? sampleConfig.gainValue,
-    reverbSend: reverbSend ?? sampleConfig.reverbSend,
-    delaySend: delaySend ?? sampleConfig.delaySend
-  });
-
-  activeVoiceCount += 1;
-  source.onended = () => finishSamplePlayback(source);
-  source.start(nowTime());
-  return true;
-}
-
 function stopGlobalSequencer() {
   if (Number.isFinite(globalSequencer.timer)) {
     window.clearInterval(globalSequencer.timer);
@@ -442,20 +318,26 @@ function ensureGlobalSequencer() {
   return true;
 }
 
-function getPlaybackPan() {
+function getPlaybackPan(panOverride = null) {
+  if (panDebugMode === "center") return 0;
+  if (Number.isFinite(panOverride)) {
+    return clamp(panOverride, -1, 1);
+  }
   if (Number.isFinite(playbackContext?.pan)) {
     return clamp(playbackContext.pan, -1, 1);
   }
   const handKey = String(playbackContext?.handKey || "").toLowerCase();
-  if (handKey === "left") return -0.72;
-  if (handKey === "right") return 0.72;
+  if (handKey === "left") return -0.28;
+  if (handKey === "right") return 0.28;
   return 0;
 }
 
 function connectNode(node, {
   gainValue = 1,
   reverbSend = REVERB_SEND_DEFAULT,
-  delaySend = DELAY_SEND_DEFAULT
+  delaySend = DELAY_SEND_DEFAULT,
+  pan = null,
+  gainMode = "profile"
 } = {}) {
   if (!masterGain) return null;
   const gainNode = audioCtx.createGain();
@@ -463,12 +345,17 @@ function connectNode(node, {
   node.connect(gainNode);
 
   let outputNode = gainNode;
+  const resolvedPan = getPlaybackPan(pan);
   if (typeof audioCtx.createStereoPanner === "function") {
     const panner = audioCtx.createStereoPanner();
-    panner.pan.value = getPlaybackPan();
+    panner.pan.value = resolvedPan;
     gainNode.connect(panner);
     outputNode = panner;
   }
+  lastOutputRouteMeta = {
+    pan: Number(resolvedPan.toFixed(3)),
+    gainMode
+  };
 
   outputNode.connect(masterGain);
 
@@ -528,7 +415,9 @@ function playTone(frequency, {
   filterFrequency = 1200,
   detuneCents = 0,
   reverbSend = REVERB_SEND_DEFAULT,
-  delaySend = DELAY_SEND_DEFAULT
+  delaySend = DELAY_SEND_DEFAULT,
+  pan = null,
+  gainMode = "profile"
 } = {}) {
   const ctx = ensureAudioContext();
   if (!ctx || !soundEnabled) return false;
@@ -574,9 +463,9 @@ function playTone(frequency, {
     outTarget.type = filterType;
     outTarget.frequency.value = filterFrequency;
     amp.connect(outTarget);
-    connectNode(outTarget, { reverbSend, delaySend });
+    connectNode(outTarget, { reverbSend, delaySend, pan, gainMode });
   } else {
-    connectNode(amp, { reverbSend, delaySend });
+    connectNode(amp, { reverbSend, delaySend, pan, gainMode });
   }
 
   activeVoiceCount += 1;
@@ -664,7 +553,7 @@ function playDrumHit(pattern = "kick") {
     amp.gain.exponentialRampToValueAtTime(0.42, t + 0.01);
     amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
     osc.connect(amp);
-    connectNode(amp, { gainValue: 1, reverbSend: 0.02, delaySend: 0 });
+    connectNode(amp, { gainValue: 1, reverbSend: 0.02, delaySend: 0, gainMode: "profile" });
     osc.start(t);
     osc.stop(t + 0.2);
     return true;
@@ -681,7 +570,7 @@ function playDrumHit(pattern = "kick") {
   amp.gain.exponentialRampToValueAtTime(0.0001, t + (pattern === "snare" ? 0.12 : 0.06));
   src.connect(filter);
   filter.connect(amp);
-  connectNode(amp, { gainValue: 1, reverbSend: 0.03, delaySend: 0 });
+  connectNode(amp, { gainValue: 1, reverbSend: 0.03, delaySend: 0, gainMode: "profile" });
   src.start(t);
   src.stop(t + (pattern === "snare" ? 0.12 : 0.06));
   return true;
@@ -689,26 +578,56 @@ function playDrumHit(pattern = "kick") {
 
 export function setPlaybackContext(context) {
   playbackContext = context && typeof context === "object" ? { ...context } : null;
+  pushSoundDebug("audio.setPlaybackContext", playbackContext || { context: null });
 }
 
-function emitSoundPlayed(soundKey, playMode) {
+function captureLastPlaybackMeta(soundKey, playMode, detail = {}) {
+  lastPlaybackMeta = {
+    soundKey,
+    playMode,
+    instrumentId: detail.instrumentId ?? playbackContext?.instrumentId ?? null,
+    gestureLabel: detail.gestureLabel ?? playbackContext?.gestureLabel ?? null,
+    gestureSource: detail.gestureSource ?? playbackContext?.gestureSource ?? null,
+    handKey: detail.handKey ?? playbackContext?.handKey ?? null,
+    pan: Number.isFinite(detail.pan) ? Number(detail.pan.toFixed(3)) : lastOutputRouteMeta.pan,
+    gainMode: detail.gainMode || lastOutputRouteMeta.gainMode || "profile"
+  };
+  return lastPlaybackMeta;
+}
+
+function emitSoundPlayed(soundKey, playMode, detail = {}) {
   const now = performance.now();
   const triggerTs = Number.isFinite(playbackContext?.triggerTs) ? playbackContext.triggerTs : null;
   const inferenceTs = Number.isFinite(playbackContext?.inferenceTs) ? playbackContext.inferenceTs : null;
+  const lastPlayback = captureLastPlaybackMeta(soundKey, playMode, detail);
+  const eventDetail = {
+    at: Date.now(),
+    soundKey,
+    playMode,
+    instrumentId: lastPlayback.instrumentId,
+    gestureLabel: lastPlayback.gestureLabel,
+    gestureSource: lastPlayback.gestureSource,
+    handKey: lastPlayback.handKey,
+    latencyMs: triggerTs == null ? null : (now - triggerTs),
+    inferenceLatencyMs: inferenceTs == null ? null : (now - inferenceTs),
+    pan: lastPlayback.pan,
+    gainMode: lastPlayback.gainMode
+  };
 
   window.dispatchEvent(new CustomEvent("jamjam:sound-played", {
-    detail: {
-      at: Date.now(),
-      soundKey,
-      playMode,
-      instrumentId: playbackContext?.instrumentId || null,
-      gestureLabel: playbackContext?.gestureLabel || null,
-      gestureSource: playbackContext?.gestureSource || null,
-      handKey: playbackContext?.handKey || null,
-      latencyMs: triggerTs == null ? null : (now - triggerTs),
-      inferenceLatencyMs: inferenceTs == null ? null : (now - inferenceTs)
-    }
+    detail: eventDetail
   }));
+  pushSoundDebug("audio.emitSoundPlayed", {
+    soundKey,
+    playMode,
+    instrumentId: lastPlayback.instrumentId,
+    handKey: lastPlayback.handKey,
+    gestureLabel: lastPlayback.gestureLabel,
+    pan: lastPlayback.pan,
+    gainMode: lastPlayback.gainMode,
+    triggerLatencyMs: triggerTs == null ? null : Number((now - triggerTs).toFixed(2)),
+    inferenceLatencyMs: inferenceTs == null ? null : Number((now - inferenceTs).toFixed(2))
+  });
 }
 
 export function ensureAudioContext() {
@@ -767,15 +686,23 @@ export function ensureAudioContext() {
   masterGain.connect(masterLimiter);
   masterLimiter.connect(audioCtx.destination);
 
-  // 첫 입력 전에 샘플을 올려두어 합성음 fallback이 먼저 들리지 않게 합니다.
-  primeInstrumentSamples();
 
   return audioCtx;
 }
 
 export async function unlockAudioContext() {
   const ctx = ensureAudioContext();
-  if (!ctx) return false;
+  if (!ctx) {
+    pushSoundDebug("audio.unlock.result", {
+      unlocked: false,
+      reason: "no_audio_context"
+    });
+    return false;
+  }
+  pushSoundDebug("audio.unlock.start", {
+    state: ctx.state,
+    soundEnabled
+  });
   if (ctx.state === "suspended") {
     await ctx.resume();
   }
@@ -786,10 +713,12 @@ export async function unlockAudioContext() {
       // ignore and report final state below
     }
   }
-  if (ctx.state === "running") {
-    await ensureInstrumentSamplesReady();
-  }
   unlocked = ctx.state === "running";
+  pushSoundDebug("audio.unlock.result", {
+    unlocked,
+    state: ctx.state,
+    soundEnabled
+  });
   return unlocked;
 }
 
@@ -799,6 +728,11 @@ export function toggleSound() {
     masterGain.gain.setTargetAtTime(soundEnabled ? MASTER_TARGET_GAIN : 0, nowTime(), 0.03);
   }
   if (!soundEnabled) stopAllMelodies();
+  pushSoundDebug("audio.toggleSound", {
+    soundEnabled,
+    hasContext: Boolean(audioCtx),
+    state: audioCtx?.state || "none"
+  });
   return getAudioState();
 }
 
@@ -808,6 +742,27 @@ export function getAudioState() {
     unlocked,
     running: Boolean(soundEnabled && audioCtx && audioCtx.state === "running")
   };
+}
+
+export function getAudioDebugState() {
+  return {
+    ready: Boolean(audioCtx),
+    unlocked,
+    running: Boolean(soundEnabled && audioCtx && audioCtx.state === "running"),
+    contextState: audioCtx?.state || "none",
+    soundEnabled,
+    activeVoiceCount,
+    panDebugMode,
+    lastPlayback: lastPlaybackMeta ? { ...lastPlaybackMeta } : null
+  };
+}
+
+export function setPanDebugMode(mode) {
+  panDebugMode = mode === "center" ? "center" : "context";
+}
+
+export function getPanDebugMode() {
+  return panDebugMode;
 }
 
 export function startAmbientLoop() {
@@ -827,13 +782,9 @@ export function stopAmbientLoop() {
 export function playKids_Drum(note) {
   const target = chooseFromPalette("drum", note);
   const freq = frequencyFromNote(target);
-  const ok = playSample("drum", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-drum", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "triangle",
     attack: 0.004,
     decay: 0.16,
@@ -845,18 +796,14 @@ export function playKids_Drum(note) {
     delaySend: 0.01
   });
   playDrumHit("kick");
-  if (fallback) emitSoundPlayed("kids-drum", "synth");
+  if (ok) emitSoundPlayed("kids-drum", "synth");
 }
 
 export function playKids_Piano(note) {
   const freq = frequencyFromNote(chooseFromPalette("piano", note), 261.63);
-  const ok = playSample("piano", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-piano", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "triangle",
     attack: 0.006,
     decay: 0.26,
@@ -878,17 +825,13 @@ export function playKids_Piano(note) {
     reverbSend: 0.2,
     delaySend: 0.05
   });
-  if (fallback) emitSoundPlayed("kids-piano", "synth");
+  if (ok) emitSoundPlayed("kids-piano", "synth");
 }
 
 export function playKids_Guitar(note) {
   const freq = frequencyFromNote(chooseFromPalette("guitar", note), 196);
-  const ok = playSample("guitar", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-guitar", "sample");
-    return;
-  }
 
+  // MP3 샘플 대신 Web Audio API로 직접 생성
   const chord = [freq, freq * 1.25, freq * 1.5].map((value) => Math.min(value, 1760));
   playChord(chord, {
     type: "triangle",
@@ -907,13 +850,9 @@ export function playKids_Guitar(note) {
 
 export function playKids_Flute(note) {
   const freq = frequencyFromNote(chooseFromPalette("flute", note), 523.25);
-  const ok = playSample("flute", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-flute", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "sine",
     attack: 0.02,
     decay: 0.34,
@@ -925,18 +864,14 @@ export function playKids_Flute(note) {
     reverbSend: 0.3,
     delaySend: 0.12
   });
-  if (fallback) emitSoundPlayed("kids-flute", "synth");
+  if (ok) emitSoundPlayed("kids-flute", "synth");
 }
 
 export function playKids_Violin(note) {
   const freq = frequencyFromNote(chooseFromPalette("violin", note), 392);
-  const ok = playSample("violin", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-violin", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "sawtooth",
     attack: 0.02,
     decay: 0.3,
@@ -948,7 +883,7 @@ export function playKids_Violin(note) {
     reverbSend: 0.26,
     delaySend: 0.1
   });
-  if (fallback) {
+  if (ok) {
     playFairyCompanion(freq, 0.024);
     emitSoundPlayed("kids-violin", "synth");
   }
@@ -956,13 +891,9 @@ export function playKids_Violin(note) {
 
 export function playKids_Bell(note) {
   const freq = frequencyFromNote(chooseFromPalette("bell", note), 987.77);
-  const ok = playSample("bell", { targetFrequency: freq });
-  if (ok) {
-    emitSoundPlayed("kids-bell", "sample");
-    return;
-  }
 
-  const fallback = playTone(freq, {
+  // MP3 샘플 대신 Web Audio API로 직접 생성
+  const ok = playTone(freq, {
     type: "triangle",
     attack: 0.004,
     decay: 0.2,
@@ -984,11 +915,103 @@ export function playKids_Bell(note) {
     reverbSend: 0.3,
     delaySend: 0.16
   });
-  if (fallback) emitSoundPlayed("kids-bell", "synth");
+  if (ok) emitSoundPlayed("kids-bell", "synth");
 }
 
 export function playKids_Triangle(note) {
   playKids_Bell(note);
+}
+
+export function playKids_Djembe(note) {
+  const target = chooseFromPalette("drum", note);
+  const freq = frequencyFromNote(target) * 0.85;
+
+  const ctx = ensureAudioContext();
+  if (!ctx || !soundEnabled) return;
+  if (ctx.state !== "running") {
+    void unlockAudioContext();
+    if (ctx.state !== "running") return;
+  }
+  const t = nowTime();
+  
+  const osc = ctx.createOscillator();
+  const amp = ctx.createGain();
+  
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(freq * 1.5, t);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.35, t + 0.12);
+  
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(0.45, t + 0.015);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+  
+  osc.connect(amp);
+  connectNode(amp, { gainValue: 1, reverbSend: 0.1, delaySend: 0 });
+  
+  osc.start(t);
+  osc.stop(t + 0.35);
+
+  const noiseSrc = ctx.createBufferSource();
+  const noiseFilter = ctx.createBiquadFilter();
+  const noiseAmp = ctx.createGain();
+  noiseSrc.buffer = createNoiseBuffer(0.08);
+
+  noiseFilter.type = "bandpass";
+  noiseFilter.frequency.value = 1300;
+  noiseFilter.Q.value = 1.4;
+  
+  noiseAmp.gain.setValueAtTime(0.0001, t);
+  noiseAmp.gain.exponentialRampToValueAtTime(0.18, t + 0.004);
+  noiseAmp.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+
+  noiseSrc.connect(noiseFilter);
+  noiseFilter.connect(noiseAmp);
+  connectNode(noiseAmp, { gainValue: 1, reverbSend: 0.05, delaySend: 0 });
+  noiseSrc.start(t);
+  noiseSrc.stop(t + 0.1);
+
+  emitSoundPlayed("kids-djembe", "synth");
+}
+
+export function playDebugBeep({
+  frequency = 880,
+  gain = 0.16,
+  pan = 0,
+  durationMs = 180
+} = {}) {
+  const durationSec = Math.max(0.05, durationMs / 1000);
+  const ok = playTone(frequency, {
+    type: "sine",
+    attack: 0.004,
+    decay: Math.max(0.04, durationSec * 0.5),
+    sustain: 0.0001,
+    release: Math.max(0.05, durationSec * 0.6),
+    gain,
+    filterType: "lowpass",
+    filterFrequency: 2600,
+    reverbSend: 0.02,
+    delaySend: 0,
+    pan,
+    gainMode: "debug-fixed"
+  });
+  if (!ok) return false;
+
+  emitSoundPlayed("debug-beep", "debug", {
+    instrumentId: "debug",
+    gestureLabel: "DebugBeep",
+    gestureSource: "debug",
+    handKey: "debug",
+    pan,
+    gainMode: "debug-fixed"
+  });
+  window.dispatchEvent(new CustomEvent("jamjam:audio-debug-played", {
+    detail: {
+      ...getAudioDebugState().lastPlayback,
+      frequency,
+      durationMs
+    }
+  }));
+  return true;
 }
 
 export function startMelodySequence(instrumentType, playFunction) {

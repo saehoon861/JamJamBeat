@@ -37,8 +37,8 @@ export function createHandTrackingRuntime({
   const SLOW_FRAME_WARN_INTERVAL_MS = 1000;
   const INFERENCE_MAX_WIDTH = (() => {
     const raw = Number(new URLSearchParams(window.location.search).get("inferWidth"));
-    if (!Number.isFinite(raw)) return 96;
-    return Math.max(96, Math.min(640, Math.round(raw)));
+    if (!Number.isFinite(raw)) return 0;
+    return Math.max(0, Math.min(640, Math.round(raw)));
   })();
   const ADAPTIVE_INTERVAL_MAX_MS = (() => {
     const raw = Number(new URLSearchParams(window.location.search).get("inferIntervalMaxMs"));
@@ -176,7 +176,7 @@ export function createHandTrackingRuntime({
   }
 
   function resizeCanvasForSource(canvas, sourceWidth, sourceHeight, maxWidth = INFERENCE_MAX_WIDTH) {
-    const scale = sourceWidth > maxWidth ? (maxWidth / sourceWidth) : 1;
+    const scale = (maxWidth > 0 && sourceWidth > maxWidth) ? (maxWidth / sourceWidth) : 1;
     const width = Math.max(1, Math.round(sourceWidth * scale));
     const height = Math.max(1, Math.round(sourceHeight * scale));
     if (canvas.width !== width || canvas.height !== height) {

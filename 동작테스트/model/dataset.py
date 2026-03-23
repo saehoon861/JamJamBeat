@@ -1,6 +1,8 @@
-# dataset.py - grab 제스처 학습용 Dataset 스텁
-# TODO: build() 함수 본문을 구현하세요.
+# dataset.py - grab 제스처 학습용 sequence dataset 빌더
 from __future__ import annotations
+
+import csv
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -38,6 +40,68 @@ class SequenceDataset(Dataset):
         return self.x[idx], self.y[idx], idx
 
 
+def _value_to_float(value: str | None) -> float:
+    if value is None or value == "":
+        return 0.0
+    return float(value)
+
+
+def _load_rows(csv_path: str | Path) -> list[dict[str, str]]:
+    path = Path(csv_path)
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _build_single_dataset(
+    csv_path: str | Path,
+    seq_len: int,
+    seq_stride: int,
+) -> SequenceDataset:
+    rows = _load_rows(csv_path)
+    if not rows:
+        raise ValueError(f"{csv_path}: no rows found")
+
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        source_file = row.get("source_file") or "__single_source__"
+        grouped.setdefault(source_file, []).append(row)
+
+    windows: list[np.ndarray] = []
+    labels: list[int] = []
+
+    for source_file, source_rows in grouped.items():
+        if len(source_rows) < seq_len:
+            continue
+
+        joint_rows = np.asarray(
+            [
+                [_value_to_float(row.get(col)) for col in RAW_JOINT_COLS]
+                for row in source_rows
+            ],
+            dtype=np.float32,
+        )
+        gesture_rows = np.asarray(
+            [int(float(row["gesture"])) if row.get("gesture", "") != "" else 0 for row in source_rows],
+            dtype=np.int64,
+        )
+
+        for start in range(0, len(source_rows) - seq_len + 1, seq_stride):
+            end = start + seq_len
+            windows.append(joint_rows[start:end])
+            labels.append(int(gesture_rows[end - 1]))
+
+    if not windows:
+        raise ValueError(
+            f"{csv_path}: no sequence windows generated "
+            f"(seq_len={seq_len}, seq_stride={seq_stride})"
+        )
+
+    x63 = np.stack(windows, axis=0).astype(np.float32)
+    x126 = add_delta_features(x63)
+    y = np.asarray(labels, dtype=np.int64)
+    return SequenceDataset(x126, y)
+
+
 def build(
     train_csv: str,
     val_csv: str | None,
@@ -45,22 +109,16 @@ def build(
     seq_len: int = 8,
     seq_stride: int = 2,
 ) -> tuple[SequenceDataset, SequenceDataset | None, SequenceDataset | None]:
-    """TODO: 이 함수를 구현하세요.
-
-    입력 CSV 스키마 (landmark_extractor 출력):
-        frame_idx, timestamp, gesture, x0, y0, z0, ..., x20, y20, z20
-
-    구현 흐름:
-        1. 각 CSV를 pandas로 읽어 RAW_JOINT_COLS(63d) 추출
-        2. sliding window로 (N, T=seq_len, 63) 시퀀스 배열 생성
-        3. add_delta_features()로 (N, T, 126)으로 확장
-        4. 레이블은 각 윈도우의 마지막 프레임 gesture 값 사용
-        5. SequenceDataset(x, y) 반환
-           val_csv / test_csv 가 None 이면 해당 반환값도 None으로 처리
-
-    반환값: (train_ds, val_ds | None, test_ds | None)
-    """
-    raise NotImplementedError(
-        "dataset.py의 build()를 구현해야 합니다.\n"
-        "landmark_queue/ 또는 landmark_data/ CSV를 읽어 SequenceDataset을 반환하세요."
+    """CSV를 읽어 sliding-window sequence dataset을 생성한다."""
+    train_ds = _build_single_dataset(train_csv, seq_len=seq_len, seq_stride=seq_stride)
+    val_ds = (
+        _build_single_dataset(val_csv, seq_len=seq_len, seq_stride=seq_stride)
+        if val_csv is not None
+        else None
     )
+    test_ds = (
+        _build_single_dataset(test_csv, seq_len=seq_len, seq_stride=seq_stride)
+        if test_csv is not None
+        else None
+    )
+    return train_ds, val_ds, test_ds

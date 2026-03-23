@@ -19,6 +19,7 @@ from model import SequenceDeltaMLP
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUT = ROOT / "runs"
+DEFAULT_TRAIN_CSV = ROOT / "pos_scale_train.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="mlp_sequence_delta 학습 (동작테스트 전용)")
 
     # 데이터
-    parser.add_argument("--train-csv",   type=str, required=True, help="학습 CSV 경로")
+    parser.add_argument("--train-csv",   type=str, default=str(DEFAULT_TRAIN_CSV), help="학습 CSV 경로")
     parser.add_argument("--val-csv",     type=str, default=None,  help="검증 CSV 경로 (없으면 early stopping 비활성화)")
     parser.add_argument("--test-csv",    type=str, default=None,  help="테스트 CSV 경로 (없으면 test 평가 생략)")
     parser.add_argument("--num-classes", type=int, default=8,

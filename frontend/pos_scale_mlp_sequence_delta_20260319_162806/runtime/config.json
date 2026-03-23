@@ -1,0 +1,27 @@
+{
+  "bundle_id": "pos_scale_mlp_sequence_delta_20260319_162806",
+  "model_id": "mlp_sequence_delta",
+  "mode": "sequence",
+  "dataset_key": "pos_scale",
+  "normalization_family": "pos_scale",
+  "input_type": "model_feature_sequence_joint63_delta63",
+  "caller_input_type": "raw_mediapipe_landmark_frame_stream",
+  "input_dim": 126,
+  "seq_len": 8,
+  "num_classes": 7,
+  "neutral_index": 0,
+  "default_tau": 0.85,
+  "supported_backends": ["onnx-web"],
+  "streaming_supported": true,
+  "no_hand_resets_buffer": true,
+  "preprocess": {
+    "normalization": "pos_scale",
+    "delta": true,
+    "delta_order": "first",
+    "seq_len": 8,
+    "allowed_frame_shapes": [[63], [21, 3]],
+    "formula": "(pts - pts[0]) / ||pts[9] - pts[0]||",
+    "eps": 1e-8
+  },
+  "checkpoint_fingerprint": "2f9e81b7a142a0cd92707eb903fe4880f55cbcf920676f6433104ddf8c006d09"
+}

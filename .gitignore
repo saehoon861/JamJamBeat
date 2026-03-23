@@ -60,6 +60,10 @@ model/.vscode/*
 *.pth
 *.onnx
 *.onnx.data
+!frontend/**/*.pt
+!frontend/**/*.pth
+!frontend/**/*.onnx
+!frontend/**/*.onnx.data
 checkpoints/
 model/model_evaluation/pipelines/
 model/model_evaluation/runs/

@@ -1,0 +1,35 @@
+{
+  "name": "raw_mediapipe_landmark_frame_stream",
+  "shape": [
+    63
+  ],
+  "dtype": "float32",
+  "layout": "streaming_frame",
+  "caller_input_shapes": [
+    [
+      63
+    ],
+    [
+      21,
+      3
+    ]
+  ],
+  "model_input_shape": [
+    8,
+    126
+  ],
+  "streaming_seq_len": 8,
+  "default_tau": 0.85,
+  "feature_order_path": "runtime/feature_order.json",
+  "description": "Caller provides raw MediaPipe landmark frames one by one. The frontend-only helper keeps an 8-frame rolling buffer, internally applies pos_scale normalization per frame, builds first-order temporal deltas, and produces the final [8,126] ONNX input.",
+  "notes": [
+    "Official caller contract is a single raw frame only: shape [63] or [21,3].",
+    "The helper performs warmup until 8 valid frames are collected.",
+    "pushNoHand() clears the buffer and returns no_hand immediately.",
+    "Internal normalization is pos_scale with viewer-aligned zero-distance fallback: shifted frame only when ||pts[9]-pts[0]|| is too small.",
+    "Internal model features are x0..z20 (63d joint) + d_x0..d_z20 (63d delta).",
+    "Delta = current_frame - previous_frame and the first frame delta is all zeros.",
+    "pred != neutral and confidence < 0.85 results in tau_neutralized.",
+    "feature_order.json describes the internal 126d model feature order, not the caller raw input order."
+  ]
+}

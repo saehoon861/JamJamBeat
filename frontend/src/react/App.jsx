@@ -3,6 +3,11 @@ import { DEFAULT_LAYOUT } from "../js/instrument_layout.js";
 import { useInstrumentLayout } from "./hooks/useInstrumentLayout.js";
 import { useMainControls } from "./hooks/useMainControls.js";
 import { useLegacyMainRuntime } from "./hooks/useLegacyMainRuntime.js";
+import {
+  getAllModelConfigs,
+  getCurrentModelId,
+  switchModel
+} from "../js/model_manager.js";
 
 const logoWebp = "/assets/로고-removebg-preview.webp";
 const logoPng = logoWebp;
@@ -124,8 +129,11 @@ export default function App() {
   const [tutorialPracticeEnabled, setTutorialPracticeEnabled] = React.useState(false);
   const [bgmEnabled, setBgmEnabled] = React.useState(true);
   const [bgmVolume, setBgmVolume] = React.useState(0.22);
+  const [selectedModelId, setSelectedModelId] = React.useState(() => getCurrentModelId());
+  const [modelLoading, setModelLoading] = React.useState(false);
 
   const landingBgmRef = React.useRef(null);
+  const modelConfigs = getAllModelConfigs();
 
   React.useEffect(() => {
     const audio = new Audio("/assets/sounds/봄을 부르는 피아노 음악 🌷 싱그러운 선율 들어요 [bExNhDN12HI].mp3");
@@ -227,6 +235,36 @@ export default function App() {
       window.dispatchEvent(new CustomEvent("jamjam:refresh-camera-target"));
     }
   }, [showTutorial, tutorialPracticeEnabled]);
+
+  // 모델 로딩 이벤트 리스너
+  React.useEffect(() => {
+    const handleModelLoading = () => setModelLoading(true);
+    const handleModelLoaded = (event) => {
+      setModelLoading(false);
+      setSelectedModelId(event.detail.modelId);
+    };
+    const handleModelError = () => setModelLoading(false);
+
+    window.addEventListener("jamjam:model-loading", handleModelLoading);
+    window.addEventListener("jamjam:model-loaded", handleModelLoaded);
+    window.addEventListener("jamjam:model-load-error", handleModelError);
+
+    return () => {
+      window.removeEventListener("jamjam:model-loading", handleModelLoading);
+      window.removeEventListener("jamjam:model-loaded", handleModelLoaded);
+      window.removeEventListener("jamjam:model-load-error", handleModelError);
+    };
+  }, []);
+
+  const handleModelChange = async (event) => {
+    const newModelId = event.target.value;
+    if (newModelId === selectedModelId) return;
+
+    const success = await switchModel(newModelId);
+    if (!success) {
+      alert("모델 로딩에 실패했습니다. 콘솔을 확인해주세요.");
+    }
+  };
 
   return (
     <>
@@ -392,6 +430,59 @@ export default function App() {
             <div className="landing-logo-container">
               <img className="landing-logo" src={logoPng} srcSet={logoWebp} alt="JamJam Beat Logo" loading="eager" />
             </div>
+
+            <div style={{
+              margin: '16px 0',
+              padding: '12px',
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: '8px',
+              backdropFilter: 'blur(10px)'
+            }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                color: '#fff',
+                fontSize: '0.95rem',
+                fontWeight: '600',
+                textShadow: '0 2px 4px rgba(0,0,0,0.5)'
+              }}>
+                🤖 AI 모델 선택
+              </label>
+              <select
+                value={selectedModelId}
+                onChange={handleModelChange}
+                disabled={modelLoading}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  background: 'rgba(255,255,255,0.9)',
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  borderRadius: '6px',
+                  color: '#333',
+                  fontSize: '0.9rem',
+                  cursor: modelLoading ? 'wait' : 'pointer',
+                  fontWeight: '500'
+                }}
+              >
+                {modelConfigs.map((config) => (
+                  <option key={config.id} value={config.id}>
+                    {config.name} - {config.description}
+                  </option>
+                ))}
+              </select>
+              {modelLoading && (
+                <p style={{
+                  marginTop: '8px',
+                  fontSize: '0.85rem',
+                  color: '#fff',
+                  textAlign: 'center',
+                  textShadow: '0 2px 4px rgba(0,0,0,0.5)'
+                }}>
+                  모델 로딩 중...
+                </p>
+              )}
+            </div>
+
             <button id="landingStartButton" type="button" onClick={handleStartClick}>시작하기</button>
             <button className="landing-credits-button" type="button" onClick={openCredits}>만든 사람들</button>
             <button className="landing-exit-button" type="button" onClick={handleExitClick}>종료하기</button>

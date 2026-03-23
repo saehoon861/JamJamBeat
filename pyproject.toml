@@ -14,6 +14,7 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "dash>=2.18.0",
     "plotly>=6.0.0",
+    "onnxscript>=0.6.2",
 ]
 
 [tool.uv.workspace]

@@ -14,8 +14,41 @@ let soundEnabled = true;
 let unlocked = false;
 let playbackContext = null;
 let activeVoiceCount = 0;
+let panDebugMode = "context";
+let lastPlaybackMeta = null;
+let lastOutputRouteMeta = {
+  pan: 0,
+  gainMode: "profile"
+};
 const sampleBufferByKey = new Map();
 const sampleLoadPromiseByKey = new Map();
+const SOUND_DEBUG = (() => {
+  const raw = new URLSearchParams(window.location.search).get("soundDebug");
+  return raw === "1" || raw === "true";
+})();
+const SOUND_DEBUG_LOG_LIMIT = 200;
+
+function pushSoundDebug(stage, payload = {}) {
+  if (!SOUND_DEBUG) return;
+  const entry = {
+    at: Date.now(),
+    perfNow: Number(performance.now().toFixed(2)),
+    stage,
+    ...payload
+  };
+  try {
+    if (!Array.isArray(window.__jamjamSoundDebugLog)) {
+      window.__jamjamSoundDebugLog = [];
+    }
+    window.__jamjamSoundDebugLog.push(entry);
+    if (window.__jamjamSoundDebugLog.length > SOUND_DEBUG_LOG_LIMIT) {
+      window.__jamjamSoundDebugLog.splice(0, window.__jamjamSoundDebugLog.length - SOUND_DEBUG_LOG_LIMIT);
+    }
+  } catch {
+    // ignore debug buffer failures
+  }
+  console.info("[SoundDebug]", entry);
+}
 
 const activeMelodies = new Map();
 const melodyTickMs = 300;
@@ -363,17 +396,41 @@ function playSample(sampleKey, {
   detuneCents = 0
 } = {}) {
   const ctx = ensureAudioContext();
-  if (!ctx || !soundEnabled) return false;
+  if (!ctx || !soundEnabled) {
+    pushSoundDebug("audio.playSample.skip", {
+      sampleKey,
+      reason: !ctx ? "no_audio_context" : "sound_disabled"
+    });
+    return false;
+  }
   if (ctx.state !== "running") {
     void unlockAudioContext();
-    if (ctx.state !== "running") return false;
+    if (ctx.state !== "running") {
+      pushSoundDebug("audio.playSample.skip", {
+        sampleKey,
+        reason: "context_not_running_after_unlock",
+        state: ctx.state
+      });
+      return false;
+    }
   }
-  if (activeVoiceCount >= MAX_ACTIVE_VOICES) return false;
+  if (activeVoiceCount >= MAX_ACTIVE_VOICES) {
+    pushSoundDebug("audio.playSample.skip", {
+      sampleKey,
+      reason: "max_active_voices",
+      activeVoiceCount
+    });
+    return false;
+  }
 
   const buffer = sampleBufferByKey.get(sampleKey);
   const sampleConfig = SAMPLE_LIBRARY[sampleKey];
   if (!buffer || !sampleConfig) {
     void loadSampleBuffer(sampleKey);
+    pushSoundDebug("audio.playSample.skip", {
+      sampleKey,
+      reason: !sampleConfig ? "missing_sample_config" : "sample_buffer_not_ready"
+    });
     return false;
   }
 
@@ -397,6 +454,14 @@ function playSample(sampleKey, {
   activeVoiceCount += 1;
   source.onended = () => finishSamplePlayback(source);
   source.start(nowTime());
+  pushSoundDebug("audio.playSample.ok", {
+    sampleKey,
+    playbackRate: Number(source.playbackRate.value.toFixed(3)),
+    activeVoiceCount,
+    instrumentId: playbackContext?.instrumentId || null,
+    handKey: playbackContext?.handKey || null,
+    gestureLabel: playbackContext?.gestureLabel || null
+  });
   return true;
 }
 
@@ -442,20 +507,26 @@ function ensureGlobalSequencer() {
   return true;
 }
 
-function getPlaybackPan() {
+function getPlaybackPan(panOverride = null) {
+  if (panDebugMode === "center") return 0;
+  if (Number.isFinite(panOverride)) {
+    return clamp(panOverride, -1, 1);
+  }
   if (Number.isFinite(playbackContext?.pan)) {
     return clamp(playbackContext.pan, -1, 1);
   }
   const handKey = String(playbackContext?.handKey || "").toLowerCase();
-  if (handKey === "left") return -0.72;
-  if (handKey === "right") return 0.72;
+  if (handKey === "left") return -0.28;
+  if (handKey === "right") return 0.28;
   return 0;
 }
 
 function connectNode(node, {
   gainValue = 1,
   reverbSend = REVERB_SEND_DEFAULT,
-  delaySend = DELAY_SEND_DEFAULT
+  delaySend = DELAY_SEND_DEFAULT,
+  pan = null,
+  gainMode = "profile"
 } = {}) {
   if (!masterGain) return null;
   const gainNode = audioCtx.createGain();
@@ -463,12 +534,17 @@ function connectNode(node, {
   node.connect(gainNode);
 
   let outputNode = gainNode;
+  const resolvedPan = getPlaybackPan(pan);
   if (typeof audioCtx.createStereoPanner === "function") {
     const panner = audioCtx.createStereoPanner();
-    panner.pan.value = getPlaybackPan();
+    panner.pan.value = resolvedPan;
     gainNode.connect(panner);
     outputNode = panner;
   }
+  lastOutputRouteMeta = {
+    pan: Number(resolvedPan.toFixed(3)),
+    gainMode
+  };
 
   outputNode.connect(masterGain);
 
@@ -528,7 +604,9 @@ function playTone(frequency, {
   filterFrequency = 1200,
   detuneCents = 0,
   reverbSend = REVERB_SEND_DEFAULT,
-  delaySend = DELAY_SEND_DEFAULT
+  delaySend = DELAY_SEND_DEFAULT,
+  pan = null,
+  gainMode = "profile"
 } = {}) {
   const ctx = ensureAudioContext();
   if (!ctx || !soundEnabled) return false;
@@ -574,9 +652,9 @@ function playTone(frequency, {
     outTarget.type = filterType;
     outTarget.frequency.value = filterFrequency;
     amp.connect(outTarget);
-    connectNode(outTarget, { reverbSend, delaySend });
+    connectNode(outTarget, { reverbSend, delaySend, pan, gainMode });
   } else {
-    connectNode(amp, { reverbSend, delaySend });
+    connectNode(amp, { reverbSend, delaySend, pan, gainMode });
   }
 
   activeVoiceCount += 1;
@@ -664,7 +742,7 @@ function playDrumHit(pattern = "kick") {
     amp.gain.exponentialRampToValueAtTime(0.42, t + 0.01);
     amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
     osc.connect(amp);
-    connectNode(amp, { gainValue: 1, reverbSend: 0.02, delaySend: 0 });
+    connectNode(amp, { gainValue: 1, reverbSend: 0.02, delaySend: 0, gainMode: "profile" });
     osc.start(t);
     osc.stop(t + 0.2);
     return true;
@@ -681,7 +759,7 @@ function playDrumHit(pattern = "kick") {
   amp.gain.exponentialRampToValueAtTime(0.0001, t + (pattern === "snare" ? 0.12 : 0.06));
   src.connect(filter);
   filter.connect(amp);
-  connectNode(amp, { gainValue: 1, reverbSend: 0.03, delaySend: 0 });
+  connectNode(amp, { gainValue: 1, reverbSend: 0.03, delaySend: 0, gainMode: "profile" });
   src.start(t);
   src.stop(t + (pattern === "snare" ? 0.12 : 0.06));
   return true;
@@ -689,26 +767,56 @@ function playDrumHit(pattern = "kick") {
 
 export function setPlaybackContext(context) {
   playbackContext = context && typeof context === "object" ? { ...context } : null;
+  pushSoundDebug("audio.setPlaybackContext", playbackContext || { context: null });
 }
 
-function emitSoundPlayed(soundKey, playMode) {
+function captureLastPlaybackMeta(soundKey, playMode, detail = {}) {
+  lastPlaybackMeta = {
+    soundKey,
+    playMode,
+    instrumentId: detail.instrumentId ?? playbackContext?.instrumentId ?? null,
+    gestureLabel: detail.gestureLabel ?? playbackContext?.gestureLabel ?? null,
+    gestureSource: detail.gestureSource ?? playbackContext?.gestureSource ?? null,
+    handKey: detail.handKey ?? playbackContext?.handKey ?? null,
+    pan: Number.isFinite(detail.pan) ? Number(detail.pan.toFixed(3)) : lastOutputRouteMeta.pan,
+    gainMode: detail.gainMode || lastOutputRouteMeta.gainMode || "profile"
+  };
+  return lastPlaybackMeta;
+}
+
+function emitSoundPlayed(soundKey, playMode, detail = {}) {
   const now = performance.now();
   const triggerTs = Number.isFinite(playbackContext?.triggerTs) ? playbackContext.triggerTs : null;
   const inferenceTs = Number.isFinite(playbackContext?.inferenceTs) ? playbackContext.inferenceTs : null;
+  const lastPlayback = captureLastPlaybackMeta(soundKey, playMode, detail);
+  const eventDetail = {
+    at: Date.now(),
+    soundKey,
+    playMode,
+    instrumentId: lastPlayback.instrumentId,
+    gestureLabel: lastPlayback.gestureLabel,
+    gestureSource: lastPlayback.gestureSource,
+    handKey: lastPlayback.handKey,
+    latencyMs: triggerTs == null ? null : (now - triggerTs),
+    inferenceLatencyMs: inferenceTs == null ? null : (now - inferenceTs),
+    pan: lastPlayback.pan,
+    gainMode: lastPlayback.gainMode
+  };
 
   window.dispatchEvent(new CustomEvent("jamjam:sound-played", {
-    detail: {
-      at: Date.now(),
-      soundKey,
-      playMode,
-      instrumentId: playbackContext?.instrumentId || null,
-      gestureLabel: playbackContext?.gestureLabel || null,
-      gestureSource: playbackContext?.gestureSource || null,
-      handKey: playbackContext?.handKey || null,
-      latencyMs: triggerTs == null ? null : (now - triggerTs),
-      inferenceLatencyMs: inferenceTs == null ? null : (now - inferenceTs)
-    }
+    detail: eventDetail
   }));
+  pushSoundDebug("audio.emitSoundPlayed", {
+    soundKey,
+    playMode,
+    instrumentId: lastPlayback.instrumentId,
+    handKey: lastPlayback.handKey,
+    gestureLabel: lastPlayback.gestureLabel,
+    pan: lastPlayback.pan,
+    gainMode: lastPlayback.gainMode,
+    triggerLatencyMs: triggerTs == null ? null : Number((now - triggerTs).toFixed(2)),
+    inferenceLatencyMs: inferenceTs == null ? null : Number((now - inferenceTs).toFixed(2))
+  });
 }
 
 export function ensureAudioContext() {
@@ -775,7 +883,17 @@ export function ensureAudioContext() {
 
 export async function unlockAudioContext() {
   const ctx = ensureAudioContext();
-  if (!ctx) return false;
+  if (!ctx) {
+    pushSoundDebug("audio.unlock.result", {
+      unlocked: false,
+      reason: "no_audio_context"
+    });
+    return false;
+  }
+  pushSoundDebug("audio.unlock.start", {
+    state: ctx.state,
+    soundEnabled
+  });
   if (ctx.state === "suspended") {
     await ctx.resume();
   }
@@ -790,6 +908,11 @@ export async function unlockAudioContext() {
     await ensureInstrumentSamplesReady();
   }
   unlocked = ctx.state === "running";
+  pushSoundDebug("audio.unlock.result", {
+    unlocked,
+    state: ctx.state,
+    soundEnabled
+  });
   return unlocked;
 }
 
@@ -799,6 +922,11 @@ export function toggleSound() {
     masterGain.gain.setTargetAtTime(soundEnabled ? MASTER_TARGET_GAIN : 0, nowTime(), 0.03);
   }
   if (!soundEnabled) stopAllMelodies();
+  pushSoundDebug("audio.toggleSound", {
+    soundEnabled,
+    hasContext: Boolean(audioCtx),
+    state: audioCtx?.state || "none"
+  });
   return getAudioState();
 }
 
@@ -808,6 +936,27 @@ export function getAudioState() {
     unlocked,
     running: Boolean(soundEnabled && audioCtx && audioCtx.state === "running")
   };
+}
+
+export function getAudioDebugState() {
+  return {
+    ready: Boolean(audioCtx),
+    unlocked,
+    running: Boolean(soundEnabled && audioCtx && audioCtx.state === "running"),
+    contextState: audioCtx?.state || "none",
+    soundEnabled,
+    activeVoiceCount,
+    panDebugMode,
+    lastPlayback: lastPlaybackMeta ? { ...lastPlaybackMeta } : null
+  };
+}
+
+export function setPanDebugMode(mode) {
+  panDebugMode = mode === "center" ? "center" : "context";
+}
+
+export function getPanDebugMode() {
+  return panDebugMode;
 }
 
 export function startAmbientLoop() {
@@ -989,6 +1138,47 @@ export function playKids_Bell(note) {
 
 export function playKids_Triangle(note) {
   playKids_Bell(note);
+}
+
+export function playDebugBeep({
+  frequency = 880,
+  gain = 0.16,
+  pan = 0,
+  durationMs = 180
+} = {}) {
+  const durationSec = Math.max(0.05, durationMs / 1000);
+  const ok = playTone(frequency, {
+    type: "sine",
+    attack: 0.004,
+    decay: Math.max(0.04, durationSec * 0.5),
+    sustain: 0.0001,
+    release: Math.max(0.05, durationSec * 0.6),
+    gain,
+    filterType: "lowpass",
+    filterFrequency: 2600,
+    reverbSend: 0.02,
+    delaySend: 0,
+    pan,
+    gainMode: "debug-fixed"
+  });
+  if (!ok) return false;
+
+  emitSoundPlayed("debug-beep", "debug", {
+    instrumentId: "debug",
+    gestureLabel: "DebugBeep",
+    gestureSource: "debug",
+    handKey: "debug",
+    pan,
+    gainMode: "debug-fixed"
+  });
+  window.dispatchEvent(new CustomEvent("jamjam:audio-debug-played", {
+    detail: {
+      ...getAudioDebugState().lastPlayback,
+      frequency,
+      durationMs
+    }
+  }));
+  return true;
 }
 
 export function startMelodySequence(instrumentType, playFunction) {

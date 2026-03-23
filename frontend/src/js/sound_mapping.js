@@ -7,7 +7,7 @@ export const DEFAULT_SOUND_MAPPING = {
   tambourine: "guitar",
   a: "bell",
   cat: "flute",
-  penguin: "guitar"
+  penguin: "violin"
 };
 
 // 제스처별 오브젝트 고정 매핑입니다.
@@ -15,9 +15,9 @@ export const DEFAULT_GESTURE_MAPPING = {
   Fist: "penguin",
   OpenPalm: "drum",
   V: "tambourine",
-  Pinky: "xylophone",
+  Pinky: "a",
   Animal: "cat",
-  KHeart: "a"
+  KHeart: "xylophone"
 };
 
 export function loadCustomSounds() {

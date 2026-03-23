@@ -89,6 +89,7 @@ const landingStartButton = document.getElementById("landingStartButton"); // 시
 const pulseMessage = document.getElementById("pulseMessage"); // 화면 중앙에 뜨는 안내 메시지를 가져옵니다.
 const gestureSquirrelEffect = document.getElementById("gestureSquirrelEffect"); // 다람쥐 효과 이미지를 가져옵니다.
 const testModeToggleButton = document.getElementById("testModeToggleButton");
+const testModeDock = document.getElementById("testModeDock");
 const testModePanel = document.getElementById("testModePanel");
 const testModeVision = document.getElementById("testModeVision");
 const testModeSummary = document.getElementById("testModeSummary");
@@ -98,13 +99,28 @@ const testModeHands = document.getElementById("testModeHands");
 const testModeModel = document.getElementById("testModeModel");
 const testModeInFlight = document.getElementById("testModeInFlight");
 const testModeLastInference = document.getElementById("testModeLastInference");
+const testModeAudioState = document.getElementById("testModeAudioState");
+const testModeSoundEnabled = document.getElementById("testModeSoundEnabled");
+const testModeAudioUnlocked = document.getElementById("testModeAudioUnlocked");
+const testModeAudioVoices = document.getElementById("testModeAudioVoices");
+const testModeAudioPanMode = document.getElementById("testModeAudioPanMode");
+const testModeLastSoundKey = document.getElementById("testModeLastSoundKey");
+const testModeLastPlayMode = document.getElementById("testModeLastPlayMode");
+const testModeLastPan = document.getElementById("testModeLastPan");
+const testModeLastGainMode = document.getElementById("testModeLastGainMode");
+const testModeLastSound = document.getElementById("testModeLastSound");
+const testModePlayBeepButton = document.getElementById("testModePlayBeepButton");
+const testModeCenterPanButton = document.getElementById("testModeCenterPanButton");
+const testModeRestorePanButton = document.getElementById("testModeRestorePanButton");
 const testModeWebcamPreview = document.getElementById("testModeWebcamPreview");
 const testModeRawCanvas = document.getElementById("testModeRawCanvas");
 const testModeNormalizedCanvas = document.getElementById("testModeNormalizedCanvas");
+const testModeNormalizedGestureDisplay = document.getElementById("testModeNormalizedGestureDisplay");
 const testModeRawCtx = testModeRawCanvas ? testModeRawCanvas.getContext("2d") : null;
 const testModeNormalizedCtx = testModeNormalizedCanvas ? testModeNormalizedCanvas.getContext("2d") : null;
 const testModeLeftRaw = document.getElementById("testModeLeftRaw");
 const testModeLeftFinal = document.getElementById("testModeLeftFinal");
+const testModeLeftGestureDisplay = document.getElementById("testModeLeftGestureDisplay");
 const testModeLeftSource = document.getElementById("testModeLeftSource");
 const testModeLeftObject = document.getElementById("testModeLeftObject");
 const testModeLeftInferenceMs = document.getElementById("testModeLeftInferenceMs");
@@ -112,6 +128,7 @@ const testModeLeftSoundMs = document.getElementById("testModeLeftSoundMs");
 const testModeLeftMelody = document.getElementById("testModeLeftMelody");
 const testModeRightRaw = document.getElementById("testModeRightRaw");
 const testModeRightFinal = document.getElementById("testModeRightFinal");
+const testModeRightGestureDisplay = document.getElementById("testModeRightGestureDisplay");
 const testModeRightSource = document.getElementById("testModeRightSource");
 const testModeRightObject = document.getElementById("testModeRightObject");
 const testModeRightInferenceMs = document.getElementById("testModeRightInferenceMs");
@@ -121,6 +138,7 @@ const testModeFieldEls = {
   left: {
     raw: testModeLeftRaw,
     final: testModeLeftFinal,
+    gestureDisplay: testModeLeftGestureDisplay,
     source: testModeLeftSource,
     object: testModeLeftObject,
     inferenceMs: testModeLeftInferenceMs,
@@ -130,6 +148,7 @@ const testModeFieldEls = {
   right: {
     raw: testModeRightRaw,
     final: testModeRightFinal,
+    gestureDisplay: testModeRightGestureDisplay,
     source: testModeRightSource,
     object: testModeRightObject,
     inferenceMs: testModeRightInferenceMs,
@@ -186,12 +205,12 @@ const PERF_LOG_KEY = "jamjam.perf.logs.v1";
 const PERF_LOG_LIMIT = 200;
 
 const SOUND_PROFILES = {
-  drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "melody", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
-  piano: { soundTag: "피아노 선율", burstType: "xylophone", playbackMode: "melody", melodyType: "piano", play: (note) => Audio.playKids_Piano(note) },
-  guitar: { soundTag: "기타 스트럼", burstType: "tambourine", playbackMode: "melody", melodyType: "guitar", play: (note) => Audio.playKids_Guitar(note) },
-  flute: { soundTag: "플룻 멜로디", burstType: "heart", playbackMode: "melody", melodyType: "flute", play: (note) => Audio.playKids_Flute(note) },
-  violin: { soundTag: "바이올린 하모니", burstType: "animal", playbackMode: "melody", melodyType: "violin", play: (note) => Audio.playKids_Violin(note) },
-  bell: { soundTag: "벨 포인트", burstType: "pinky", playbackMode: "melody", melodyType: "bell", play: (note) => Audio.playKids_Bell(note) }
+  drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
+  piano: { soundTag: "피아노 선율", burstType: "xylophone", playbackMode: "oneshot", melodyType: "piano", play: (note) => Audio.playKids_Piano(note) },
+  guitar: { soundTag: "기타 스트럼", burstType: "tambourine", playbackMode: "oneshot", melodyType: "guitar", play: (note) => Audio.playKids_Guitar(note) },
+  flute: { soundTag: "플룻 멜로디", burstType: "heart", playbackMode: "oneshot", melodyType: "flute", play: (note) => Audio.playKids_Flute(note) },
+  violin: { soundTag: "바이올린 하모니", burstType: "animal", playbackMode: "oneshot", melodyType: "violin", play: (note) => Audio.playKids_Violin(note) },
+  bell: { soundTag: "벨 포인트", burstType: "pinky", playbackMode: "oneshot", melodyType: "bell", play: (note) => Audio.playKids_Bell(note) }
 };
 
 // GESTURE_SOUND_PROFILES는 제거됨 - gestureMapping과 SOUND_PROFILES 조합으로 대체
@@ -272,6 +291,28 @@ function formatMs(value) {
 function setPanelValue(element, value) {
   if (!element) return;
   element.textContent = value;
+}
+
+function setGestureDisplay(element, label, active) {
+  if (!element) return;
+  element.textContent = label;
+  element.classList.toggle("is-active", active);
+  element.classList.toggle("is-idle", !active);
+}
+
+function formatBoolean(value) {
+  return value ? "Yes" : "No";
+}
+
+function hasMeaningfulGesture(label, classId = null) {
+  const normalized = String(label || "").trim().toLowerCase();
+  return !(
+    !normalized ||
+    normalized === "none" ||
+    normalized === "class0" ||
+    normalized === "neutral" ||
+    classId === 0
+  );
 }
 
 function getTestModeHandColor(handKey = "default") {
@@ -447,6 +488,17 @@ function renderTestModeVision(debugSnapshot, handKeys) {
     drawHandGraph(testModeRawCtx, rawPoints, handKey, { pointRadius: 3.4, lineWidth: 2 });
   });
 
+  const focusHandKey = handKeys.includes("right") ? "right" : (handKeys[0] || null);
+  const focusHand = focusHandKey ? debugSnapshot[focusHandKey] : null;
+  const focusResolved = focusHand?.lastResolvedGesture || null;
+  const focusRaw = focusHand?.lastRawModelPrediction || null;
+  const finalActive = hasMeaningfulGesture(focusResolved?.label);
+  const rawActive = hasMeaningfulGesture(focusRaw?.label, focusRaw?.classId ?? null);
+  const gestureHeadline = finalActive
+    ? formatDisplayGesture(focusResolved?.label, focusResolved?.confidence)
+    : (rawActive ? `${formatDisplayGesture(focusRaw?.label, focusRaw?.confidence, focusRaw?.classId ?? null)} 후보` : "대기 중");
+  setGestureDisplay(testModeNormalizedGestureDisplay, gestureHeadline, finalActive || rawActive);
+
   renderNormalizedVisionCanvas(testModeNormalizedCtx, testModeNormalizedCanvas, debugSnapshot, handKeys);
 }
 
@@ -466,11 +518,8 @@ function syncTestModeUI() {
     testModeToggleButton.textContent = testModeEnabled ? "테스트 모드 끄기" : "테스트 모드 켜기";
     testModeToggleButton.setAttribute("aria-pressed", String(testModeEnabled));
   }
-  if (testModePanel) {
-    testModePanel.classList.toggle("is-hidden", !testModeEnabled);
-  }
-  if (testModeVision) {
-    testModeVision.classList.toggle("is-hidden", !testModeEnabled);
+  if (testModeDock) {
+    testModeDock.classList.toggle("is-hidden", !testModeEnabled);
   }
 }
 
@@ -489,7 +538,8 @@ function renderTestModePanel() {
 
   setPanelValue(testModeSummary, "Raw와 Final을 동시에 보며 추론/후처리를 구분합니다.");
   setPanelValue(testModeSession, sessionStarted ? "시작됨" : "대기");
-  setPanelValue(testModeHands, handKeys.length > 0 ? handKeys.join(", ") : "없음");
+  const visibleHandKeys = handKeys.filter((handKey) => handKey !== "left");
+  setPanelValue(testModeHands, visibleHandKeys.length > 0 ? visibleHandKeys.join(", ") : "없음");
   setPanelValue(testModeModel, modelStatus.endpointConfigured ? `${modelStatus.mode} ready` : "loading");
   setPanelValue(
     testModeInFlight,
@@ -498,6 +548,23 @@ function renderTestModePanel() {
       : "No"
   );
   setPanelValue(testModeLastInference, formatMs(modelStatus.lastDurationMs));
+  const audioDebugState = Audio.getAudioDebugState();
+  const lastPlayback = audioDebugState.lastPlayback || null;
+  setPanelValue(testModeAudioState, audioDebugState.contextState);
+  setPanelValue(testModeSoundEnabled, formatBoolean(audioDebugState.soundEnabled));
+  setPanelValue(testModeAudioUnlocked, formatBoolean(audioDebugState.unlocked));
+  setPanelValue(testModeAudioVoices, String(audioDebugState.activeVoiceCount));
+  setPanelValue(testModeAudioPanMode, Audio.getPanDebugMode());
+  setPanelValue(testModeLastSoundKey, lastPlayback?.soundKey || "-");
+  setPanelValue(testModeLastPlayMode, lastPlayback?.playMode || "-");
+  setPanelValue(testModeLastPan, Number.isFinite(lastPlayback?.pan) ? String(lastPlayback.pan) : "-");
+  setPanelValue(testModeLastGainMode, lastPlayback?.gainMode || "-");
+  setPanelValue(
+    testModeLastSound,
+    lastPlayback
+      ? `${lastPlayback.soundKey || "-"} / ${lastPlayback.playMode || "-"} / pan ${Number.isFinite(lastPlayback.pan) ? lastPlayback.pan : "-"}`
+      : "-"
+  );
 
   ["left", "right"].forEach((handKey) => {
     const hand = debugSnapshot[handKey];
@@ -512,6 +579,12 @@ function renderTestModePanel() {
 
     setPanelValue(fields.raw, formatDisplayGesture(rawModel?.label, rawModel?.confidence, rawModel?.classId ?? null));
     setPanelValue(fields.final, formatDisplayGesture(resolved?.label, resolved?.confidence));
+    const finalActive = hasMeaningfulGesture(resolved?.label);
+    const rawActive = hasMeaningfulGesture(rawModel?.label, rawModel?.classId ?? null);
+    const gestureHeadline = finalActive
+      ? formatDisplayGesture(resolved?.label, resolved?.confidence)
+      : (rawActive ? `${formatDisplayGesture(rawModel?.label, rawModel?.confidence, rawModel?.classId ?? null)} 후보` : "대기 중");
+    setGestureDisplay(fields.gestureDisplay, gestureHeadline, finalActive || rawActive);
     setPanelValue(fields.source, resolved?.source || "-");
     setPanelValue(fields.object, instrumentId ? getInstrumentName(instrumentId) : "-");
     setPanelValue(fields.inferenceMs, formatMs(rawModel?.elapsed_ms));
@@ -1163,6 +1236,23 @@ async function init() {
     testModeToggleButton.addEventListener("click", () => {
       testModeEnabled = !testModeEnabled;
       syncTestModeUI();
+    });
+  }
+  if (testModePlayBeepButton) {
+    testModePlayBeepButton.addEventListener("click", async () => {
+      const unlockedOk = await Audio.unlockAudioContext();
+      if (!unlockedOk) return;
+      Audio.playDebugBeep();
+    });
+  }
+  if (testModeCenterPanButton) {
+    testModeCenterPanButton.addEventListener("click", () => {
+      Audio.setPanDebugMode("center");
+    });
+  }
+  if (testModeRestorePanButton) {
+    testModeRestorePanButton.addEventListener("click", () => {
+      Audio.setPanDebugMode("context");
     });
   }
   syncTestModeUI();

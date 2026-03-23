@@ -77,8 +77,8 @@ export function detectGesture(landmarks, now, sessionStarted) {
   };
 }
 
-const DEFAULT_CONFIDENCE_ENTER = 0.58;
-const DEFAULT_CONFIDENCE_HOLD = 0.46;
+const DEFAULT_CONFIDENCE_ENTER = 0.45;
+const DEFAULT_CONFIDENCE_HOLD = 0.32;
 const DEFAULT_STABLE_FRAMES = 1;
 const DEFAULT_CLEAR_FRAMES = 1;
 
@@ -94,15 +94,15 @@ const STABLE_FRAMES = Math.round(parseNumberParam("gestureStableFrames", DEFAULT
 const CLEAR_FRAMES = Math.round(parseNumberParam("gestureClearFrames", DEFAULT_CLEAR_FRAMES, 1, 6));
 
 const CLASS_SPECIFIC_ENTER = {
-  Pinky: parseNumberParam("gestureEnterPinky", 0.36, 0.2, 0.95),
-  Animal: parseNumberParam("gestureEnterAnimal", 0.34, 0.2, 0.95),
-  KHeart: parseNumberParam("gestureEnterKHeart", 0.36, 0.2, 0.95)
+  Pinky: parseNumberParam("gestureEnterPinky", 0.30, 0.2, 0.95),
+  Animal: parseNumberParam("gestureEnterAnimal", 0.28, 0.2, 0.95),
+  KHeart: parseNumberParam("gestureEnterKHeart", 0.30, 0.2, 0.95)
 };
 
 const CLASS_SPECIFIC_HOLD = {
-  Pinky: parseNumberParam("gestureHoldPinky", 0.24, 0.1, CLASS_SPECIFIC_ENTER.Pinky),
-  Animal: parseNumberParam("gestureHoldAnimal", 0.22, 0.1, CLASS_SPECIFIC_ENTER.Animal),
-  KHeart: parseNumberParam("gestureHoldKHeart", 0.24, 0.1, CLASS_SPECIFIC_ENTER.KHeart)
+  Pinky: parseNumberParam("gestureHoldPinky", 0.20, 0.1, CLASS_SPECIFIC_ENTER.Pinky),
+  Animal: parseNumberParam("gestureHoldAnimal", 0.18, 0.1, CLASS_SPECIFIC_ENTER.Animal),
+  KHeart: parseNumberParam("gestureHoldKHeart", 0.20, 0.1, CLASS_SPECIFIC_ENTER.KHeart)
 };
 
 const CLASS_SPECIFIC_STABLE_FRAMES = {

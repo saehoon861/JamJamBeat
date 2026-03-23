@@ -8,7 +8,7 @@ import logoWebp from "../../assets/로고-removebg-preview.webp";
 const logoPng = logoWebp; 
 import batonImage from "../../assets/objects/지휘봉.png";
 import backgroundVideo from "../../assets/objects/움직이는_동화_영상_만들기.mp4?url";
-import handGesturesGuide from "../../assets/hand_gestures_guide.png";
+import handGesturesGuide from "../../assets/hand_gestures_guide_v2.png";
 import hedgehogCreditVideo from "../../assets/objects/고슴도치1.mov?url";
 import penguinCreditVideo from "../../assets/objects/팽귄1.mov?url";
 
@@ -420,68 +420,94 @@ export default function App() {
           <img src={batonImage} alt="" aria-hidden="true" />
         </div>
 
-        <section id="testModeVision" className="test-mode-vision is-hidden" aria-live="polite">
-          <div className="test-mode-vision-head">
-            <p className="test-mode-eyebrow">손 입력 미리보기</p>
-            <p id="testModeVisionSummary" className="test-mode-vision-summary">원본 손과 모델 입력 좌표를 비교합니다.</p>
-          </div>
-          <div className="test-mode-vision-grid">
-            <article className="test-mode-vision-card">
-              <h3>원본 손</h3>
-              <div className="test-mode-preview-shell">
-                <video id="testModeWebcamPreview" autoPlay playsInline muted aria-hidden="true" />
-                <canvas id="testModeRawCanvas" width="256" height="144" aria-hidden="true" />
-              </div>
-            </article>
-            <article className="test-mode-vision-card">
-              <h3>모델 입력</h3>
-              <canvas id="testModeNormalizedCanvas" className="test-mode-normalized-canvas" width="220" height="220" aria-hidden="true" />
-            </article>
-          </div>
-        </section>
+        <div id="testModeDock" className="test-mode-dock is-hidden">
+          <section id="testModeVision" className="test-mode-vision" aria-live="polite">
+            <div className="test-mode-vision-head">
+              <p className="test-mode-eyebrow">손 입력 미리보기</p>
+              <p id="testModeVisionSummary" className="test-mode-vision-summary">원본 손과 모델 입력 좌표를 비교합니다.</p>
+            </div>
+            <div className="test-mode-vision-grid">
+              <article className="test-mode-vision-card">
+                <h3>원본 손</h3>
+                <div className="test-mode-preview-shell">
+                  <video id="testModeWebcamPreview" autoPlay playsInline muted aria-hidden="true" />
+                  <canvas id="testModeRawCanvas" width="256" height="144" aria-hidden="true" />
+                </div>
+              </article>
+              <article className="test-mode-vision-card">
+                <h3>모델 입력</h3>
+                <p id="testModeNormalizedGestureDisplay" className="test-mode-vision-gesture-display is-idle">대기 중</p>
+                <canvas id="testModeNormalizedCanvas" className="test-mode-normalized-canvas" width="220" height="220" aria-hidden="true" />
+              </article>
+            </div>
+          </section>
 
-        <section id="testModePanel" className="test-mode-panel is-hidden" aria-live="polite">
-          <div className="test-mode-head">
-            <p className="test-mode-eyebrow">실시간 테스트 모드</p>
-            <p id="testModeSummary" className="test-mode-summary">카메라/모델 상태를 관찰합니다.</p>
-          </div>
+          <section id="testModePanel" className="test-mode-panel" aria-live="polite">
+            <div className="test-mode-head">
+              <p className="test-mode-eyebrow">실시간 테스트 모드</p>
+              <p id="testModeSummary" className="test-mode-summary">카메라/모델 상태를 관찰합니다.</p>
+            </div>
 
-          <dl className="test-mode-grid">
-            <dt>세션</dt><dd id="testModeSession">-</dd>
-            <dt>감지 손</dt><dd id="testModeHands">-</dd>
-            <dt>모델</dt><dd id="testModeModel">-</dd>
-            <dt>최근 추론</dt><dd id="testModeInFlight">-</dd>
-            <dt>마지막 추론</dt><dd id="testModeLastInference">-</dd>
-          </dl>
+            <dl className="test-mode-grid">
+              <dt>세션</dt><dd id="testModeSession">-</dd>
+              <dt>감지 손</dt><dd id="testModeHands">-</dd>
+              <dt>모델</dt><dd id="testModeModel">-</dd>
+              <dt>최근 추론</dt><dd id="testModeInFlight">-</dd>
+              <dt>마지막 추론</dt><dd id="testModeLastInference">-</dd>
+            </dl>
 
-          <div className="test-mode-columns">
-            <article className="test-mode-card">
-              <h3>왼손</h3>
-              <dl className="test-mode-grid">
-                <dt>Raw</dt><dd id="testModeLeftRaw">-</dd>
-                <dt>Final</dt><dd id="testModeLeftFinal">-</dd>
-                <dt>Source</dt><dd id="testModeLeftSource">-</dd>
-                <dt>오브젝트</dt><dd id="testModeLeftObject">-</dd>
-                <dt>추론 ms</dt><dd id="testModeLeftInferenceMs">-</dd>
-                <dt>소리 ms</dt><dd id="testModeLeftSoundMs">-</dd>
-                <dt>루프</dt><dd id="testModeLeftMelody">-</dd>
-              </dl>
-            </article>
+            <div className="test-mode-columns test-mode-columns-right-only">
+              <article className="test-mode-card">
+                <h3>오디오 진단</h3>
+                <dl className="test-mode-grid">
+                  <dt>AudioCtx</dt><dd id="testModeAudioState">-</dd>
+                  <dt>sound</dt><dd id="testModeSoundEnabled">-</dd>
+                  <dt>unlocked</dt><dd id="testModeAudioUnlocked">-</dd>
+                  <dt>voices</dt><dd id="testModeAudioVoices">-</dd>
+                  <dt>pan mode</dt><dd id="testModeAudioPanMode">-</dd>
+                  <dt>last key</dt><dd id="testModeLastSoundKey">-</dd>
+                  <dt>play mode</dt><dd id="testModeLastPlayMode">-</dd>
+                  <dt>last pan</dt><dd id="testModeLastPan">-</dd>
+                  <dt>gain mode</dt><dd id="testModeLastGainMode">-</dd>
+                  <dt>last sound</dt><dd id="testModeLastSound">-</dd>
+                </dl>
+                <div className="test-mode-actions">
+                  <button id="testModePlayBeepButton" className="test-mode-action-button" type="button">테스트 비프</button>
+                  <button id="testModeCenterPanButton" className="test-mode-action-button" type="button">센터 출력으로 테스트</button>
+                  <button id="testModeRestorePanButton" className="test-mode-action-button is-secondary" type="button">기본 출력 복원</button>
+                </div>
+              </article>
 
-            <article className="test-mode-card">
-              <h3>오른손</h3>
-              <dl className="test-mode-grid">
-                <dt>Raw</dt><dd id="testModeRightRaw">-</dd>
-                <dt>Final</dt><dd id="testModeRightFinal">-</dd>
-                <dt>Source</dt><dd id="testModeRightSource">-</dd>
-                <dt>오브젝트</dt><dd id="testModeRightObject">-</dd>
-                <dt>추론 ms</dt><dd id="testModeRightInferenceMs">-</dd>
-                <dt>소리 ms</dt><dd id="testModeRightSoundMs">-</dd>
-                <dt>루프</dt><dd id="testModeRightMelody">-</dd>
-              </dl>
-            </article>
-          </div>
-        </section>
+              <article className="test-mode-card test-mode-card-hidden" aria-hidden="true">
+                <h3>왼손</h3>
+                <p id="testModeLeftGestureDisplay" className="test-mode-gesture-display is-idle">대기 중</p>
+                <dl className="test-mode-grid">
+                  <dt>Raw</dt><dd id="testModeLeftRaw">-</dd>
+                  <dt>Final</dt><dd id="testModeLeftFinal">-</dd>
+                  <dt>Source</dt><dd id="testModeLeftSource">-</dd>
+                  <dt>오브젝트</dt><dd id="testModeLeftObject">-</dd>
+                  <dt>추론 ms</dt><dd id="testModeLeftInferenceMs">-</dd>
+                  <dt>소리 ms</dt><dd id="testModeLeftSoundMs">-</dd>
+                  <dt>루프</dt><dd id="testModeLeftMelody">-</dd>
+                </dl>
+              </article>
+
+              <article className="test-mode-card">
+                <h3>오른손</h3>
+                <p id="testModeRightGestureDisplay" className="test-mode-gesture-display is-idle">대기 중</p>
+                <dl className="test-mode-grid">
+                  <dt>Raw</dt><dd id="testModeRightRaw">-</dd>
+                  <dt>Final</dt><dd id="testModeRightFinal">-</dd>
+                  <dt>Source</dt><dd id="testModeRightSource">-</dd>
+                  <dt>오브젝트</dt><dd id="testModeRightObject">-</dd>
+                  <dt>추론 ms</dt><dd id="testModeRightInferenceMs">-</dd>
+                  <dt>소리 ms</dt><dd id="testModeRightSoundMs">-</dd>
+                  <dt>루프</dt><dd id="testModeRightMelody">-</dd>
+                </dl>
+              </article>
+            </div>
+          </section>
+        </div>
       </main>
     </>
   );

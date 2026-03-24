@@ -1055,6 +1055,19 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function prepareVideoElement(videoEl) {
+  if (!videoEl) return;
+  videoEl.autoplay = true;
+  videoEl.muted = true;
+  videoEl.defaultMuted = true;
+  videoEl.playsInline = true;
+  videoEl.setAttribute("autoplay", "");
+  videoEl.setAttribute("muted", "");
+  videoEl.setAttribute("playsinline", "");
+  videoEl.setAttribute("webkit-playsinline", "true");
+  videoEl.setAttribute("disablepictureinpicture", "true");
+}
+
 function stopCameraTracks(stream) {
   if (!stream || typeof stream.getTracks !== "function") return;
   stream.getTracks().forEach((track) => {
@@ -1095,23 +1108,41 @@ async function initCamera() {
       statusText.textContent = "카메라 화면을 준비하는 중입니다...";
       return;
     }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      statusText.textContent = "이 브라우저에서는 카메라를 사용할 수 없습니다.";
+      statusText.style.color = "var(--danger)";
+      return;
+    }
     console.info("[MediaPipe] initCamera:start");
     statusText.textContent = "카메라를 준비하는 중입니다...";
 
     clearCameraSource();
+    prepareVideoElement(activeVideo);
+    prepareVideoElement(testModeWebcamPreview);
 
     const cameraAttempts = [
       {
-        label: "detailed",
+        label: "front-detailed",
         constraints: {
+          facingMode: { ideal: "user" },
           width: { ideal: 640 },
           height: { ideal: 360 },
           frameRate: { ideal: 30, max: 30 }
         }
       },
       {
-        label: "compat",
+        label: "front-compat",
         constraints: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+          frameRate: { ideal: 24, max: 30 }
+        }
+      },
+      {
+        label: "rear-compat",
+        constraints: {
+          facingMode: { ideal: "environment" },
           width: { ideal: 640 },
           height: { ideal: 360 },
           frameRate: { ideal: 24, max: 30 }
@@ -1129,7 +1160,10 @@ async function initCamera() {
     for (let index = 0; index < cameraAttempts.length; index += 1) {
       const attempt = cameraAttempts[index];
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: attempt.constraints });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: attempt.constraints
+        });
         console.info("[MediaPipe] initCamera:getUserMedia " + attempt.label + " success");
         break;
       } catch (attemptError) {
@@ -1157,14 +1191,10 @@ async function initCamera() {
 
     activeVideo.srcObject = stream;
     cameraStream = stream;
-    activeVideo.playsInline = true;
-    activeVideo.muted = true;
-    activeVideo.setAttribute("playsinline", "");
+    prepareVideoElement(activeVideo);
     if (testModeWebcamPreview) {
       testModeWebcamPreview.srcObject = stream;
-      testModeWebcamPreview.playsInline = true;
-      testModeWebcamPreview.muted = true;
-      testModeWebcamPreview.setAttribute("playsinline", "");
+      prepareVideoElement(testModeWebcamPreview);
     }
     activeVideo.onloadedmetadata = () => {
       console.info("[MediaPipe] initCamera:loadedmetadata", {
@@ -1273,9 +1303,7 @@ async function refreshCameraTarget() {
     if (activeVideo.srcObject !== cameraStream) {
       activeVideo.srcObject = cameraStream;
     }
-    activeVideo.playsInline = true;
-    activeVideo.muted = true;
-    activeVideo.setAttribute("playsinline", "");
+    prepareVideoElement(activeVideo);
     activeVideo.play().catch(() => {});
     return;
   }

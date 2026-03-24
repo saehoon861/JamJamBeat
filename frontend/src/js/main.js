@@ -31,7 +31,14 @@ const TEST_MODE_HAND_COLORS = {
 import { getConfiguredHandLandmarkerTaskPath, getConfiguredMediaPipeWasmRoot, getConfiguredSplitHandInference } from "./env_config.js";
 import { setupSeamlessBackgroundLoop, applySceneMode } from "./scene_runtime.js";
 import { createParticleSystem, restartClassAnimation } from "./particle_system.js";
-import { DEFAULT_SOUND_MAPPING, loadSoundMapping, getSoundProfileForInstrument, loadGestureMapping } from "./sound_mapping.js";
+import {
+  DEFAULT_OBJECT_SAMPLE_MAPPING,
+  DEFAULT_SOUND_MAPPING,
+  getSoundProfileForInstrument,
+  loadGestureMapping,
+  loadObjectSampleMapping,
+  loadSoundMapping
+} from "./sound_mapping.js";
 import { createInteractionRuntime } from "./interaction_runtime.js";
 import { createHandTrackingRuntime } from "./hand_tracking_runtime.js";
 import { createControlRuntime } from "./control_runtime.js";
@@ -199,7 +206,7 @@ const POINTER_TRAIL_MIN_DISTANCE = 14;
 const POINTER_TRAIL_MIN_INTERVAL_MS = 28;
 
 const SOUND_PROFILES = {
-  drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
+  drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: () => Audio.playKids_Drum() },
   djembe: { soundTag: "젬베 타격", burstType: "tambourine", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Djembe(note) },
   piano: { soundTag: "피아노 선율", burstType: "xylophone", playbackMode: "oneshot", melodyType: "piano", play: (note) => Audio.playKids_Piano(note) },
   guitar: { soundTag: "기타 스트럼", burstType: "tambourine", playbackMode: "oneshot", melodyType: "guitar", play: (note) => Audio.playKids_Guitar(note) },
@@ -208,6 +215,63 @@ const SOUND_PROFILES = {
   bell: { soundTag: "벨 포인트", burstType: "pinky", playbackMode: "oneshot", melodyType: "bell", play: (note) => Audio.playKids_Bell(note) },
   musicbox: { soundTag: "뮤직박스 반짝임", burstType: "pinky", playbackMode: "oneshot", melodyType: "musicbox", play: (note) => Audio.playKids_MusicBox(note) },
   softpad: { soundTag: "소프트 패드 잔향", burstType: "heart", playbackMode: "oneshot", melodyType: "softpad", play: (note) => Audio.playKids_SoftPad(note) }
+};
+
+const SAMPLE_LIBRARY = {
+  kick: {
+    label: "킥",
+    soundKey: "sample-kick",
+    path: "/assets/sounds/kick.wav",
+    options: { gain: 0.24, reverbSend: 0.03, delaySend: 0, filterType: "lowpass", filterFrequency: 1500 }
+  },
+  "small-drum": {
+    label: "작은북",
+    soundKey: "sample-small-drum",
+    path: "/assets/sounds/작은북.wav",
+    options: { gain: 0.16, playbackRate: 1.05, reverbSend: 0.06, delaySend: 0.01, filterType: "bandpass", filterFrequency: 2000 }
+  },
+  snare: {
+    label: "스네어",
+    soundKey: "sample-snare",
+    path: "/assets/sounds/snare.wav",
+    options: { gain: 0.17, reverbSend: 0.05, delaySend: 0.01, filterType: "bandpass", filterFrequency: 2200 }
+  },
+  crash: {
+    label: "심벌",
+    soundKey: "sample-crash",
+    path: "/assets/sounds/crash_simval_choke.wav",
+    options: { gain: 0.12, playbackRate: 1.04, reverbSend: 0.16, delaySend: 0.04, filterType: "highpass", filterFrequency: 2200 }
+  },
+  maracas: {
+    label: "마라카스",
+    soundKey: "sample-maracas",
+    path: "/assets/sounds/maracas-single-clear.mp3",
+    options: { gain: 0.15, reverbSend: 0.04, delaySend: 0.01, filterType: "highpass", filterFrequency: 2400 }
+  },
+  iloveyou: {
+    label: "I love you",
+    soundKey: "sample-iloveyou",
+    path: "/assets/sounds/iloveyou.mp3",
+    options: { gain: 0.32, reverbSend: 0.08, delaySend: 0.02, filterType: "lowpass", filterFrequency: 4200 }
+  },
+  "flute-c4": { label: "플룻 도", soundKey: "sample-flute-c4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4도.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-d4": { label: "플룻 레", soundKey: "sample-flute-d4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4레.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-e4": { label: "플룻 미", soundKey: "sample-flute-e4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4미.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-f4": { label: "플룻 파", soundKey: "sample-flute-f4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4파.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-g4": { label: "플룻 솔", soundKey: "sample-flute-g4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4솔.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-a4": { label: "플룻 라", soundKey: "sample-flute-a4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4라.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-b4": { label: "플룻 시", soundKey: "sample-flute-b4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4시.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "lute-c3": { label: "류트 도3", soundKey: "sample-lute-c3", path: "/assets/sounds/플룻_류트_효과음/류트_O3도.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-d3": { label: "류트 레3", soundKey: "sample-lute-d3", path: "/assets/sounds/플룻_류트_효과음/류트_O3레.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-e3": { label: "류트 미3", soundKey: "sample-lute-e3", path: "/assets/sounds/플룻_류트_효과음/류트_O3미.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-f3": { label: "류트 파3", soundKey: "sample-lute-f3", path: "/assets/sounds/플룻_류트_효과음/류트_O3파.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-g3": { label: "류트 솔3", soundKey: "sample-lute-g3", path: "/assets/sounds/플룻_류트_효과음/류트_O3솔.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-a3": { label: "류트 라3", soundKey: "sample-lute-a3", path: "/assets/sounds/플룻_류트_효과음/류트_O3라.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-b3": { label: "류트 시3", soundKey: "sample-lute-b3", path: "/assets/sounds/플룻_류트_효과음/류트_O3시.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-c4": { label: "류트 도4", soundKey: "sample-lute-c4", path: "/assets/sounds/플룻_류트_효과음/류트_O4도.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  duck: { label: "꽥꽥", soundKey: "sample-duck", path: "/assets/sounds/플룻_류트_효과음/꽥꽥.m4a", options: { gain: 0.2, reverbSend: 0.04, delaySend: 0.01, filterType: "highpass", filterFrequency: 1800 } },
+  scratch: { label: "끼리릭", soundKey: "sample-scratch", path: "/assets/sounds/플룻_류트_효과음/끼리릭.m4a", options: { gain: 0.18, reverbSend: 0.04, delaySend: 0.01, filterType: "bandpass", filterFrequency: 2600 } },
+  triangle: { label: "트라이앵글", soundKey: "sample-triangle", path: "/assets/sounds/플룻_류트_효과음/트라이앵글.m4a", options: { gain: 0.16, reverbSend: 0.12, delaySend: 0.02, filterType: "highpass", filterFrequency: 3000 } }
 };
 
 // GESTURE_SOUND_PROFILES는 제거됨 - gestureMapping과 SOUND_PROFILES 조합으로 대체
@@ -247,7 +311,8 @@ const NUM_HANDS = parseNumHands();
 const HAND_DETECTION_TARGET = NUM_HANDS;
 const ENABLE_SPLIT_HAND_INFERENCE = getConfiguredSplitHandInference();
 let soundMapping = loadSoundMapping(SOUND_PROFILES);
-const gestureMapping = loadGestureMapping();
+let gestureMapping = loadGestureMapping();
+let objectSampleMapping = loadObjectSampleMapping();
 const particleSystem = createParticleSystem(effectCtx, effectCanvas);
 let animationManager = createNoopAnimationManager();
 const feverController = createNoopFeverController();
@@ -647,13 +712,38 @@ function getMappedSoundProfile(instrumentId) {
   return getSoundProfileForInstrument(soundMapping, DEFAULT_SOUND_MAPPING, SOUND_PROFILES, instrumentId);
 }
 
+function getConfiguredObjectSample(instrumentId) {
+  const sampleId = objectSampleMapping[instrumentId] || DEFAULT_OBJECT_SAMPLE_MAPPING[instrumentId];
+  return SAMPLE_LIBRARY[sampleId] || null;
+}
+
+function primeConfiguredObjectSamples(mapping = objectSampleMapping) {
+  const audioState = Audio.getAudioState();
+  if (!audioState.ready || !audioState.running) return;
+  const paths = Object.values(mapping || {})
+    .map((sampleId) => SAMPLE_LIBRARY[sampleId]?.path || null)
+    .filter(Boolean);
+  Audio.primeSampleBuffers(paths);
+}
+
+function playConfiguredObjectSample(instrumentId) {
+  const sample = getConfiguredObjectSample(instrumentId);
+  if (!sample) return null;
+  const played = Audio.playSample(sample.path, sample.soundKey, sample.options);
+  if (!played) return null;
+  return sample;
+}
+
 function playMappedInstrumentSound(instrumentId, element, { note, spawnEffect = true } = {}) {
   const profile = getMappedSoundProfile(instrumentId);
-  profile.play(note);
+  const sample = playConfiguredObjectSample(instrumentId);
+  if (!sample) {
+    profile.play(note);
+  }
   if (spawnEffect && element) {
     spawnBurst(profile.burstType, element);
   }
-  return profile;
+  return sample ? { ...profile, soundTag: sample.label } : profile;
 }
 
 function getGestureSoundProfile(label, instrumentId) {
@@ -665,11 +755,14 @@ function getGestureSoundProfile(label, instrumentId) {
 function playGestureMappedSound(label, instrumentId, { note, spawnEffect = true } = {}) {
   const element = instrumentElements[instrumentId] || null;
   const profile = getGestureSoundProfile(label, instrumentId);
-  profile.play(note);
+  const sample = playConfiguredObjectSample(instrumentId);
+  if (!sample) {
+    profile.play(note);
+  }
   if (spawnEffect && element) {
     spawnBurst(profile.burstType, element);
   }
-  return profile;
+  return sample ? { ...profile, soundTag: sample.label } : profile;
 }
 
 // 우리가 연주할 수 있는 '동물 악기'들의 정보입니다. 이름과 소리, 그리고 닿았을 때 어떤 행동을 할지 적혀 있습니다.
@@ -785,6 +878,7 @@ function activateStart() { // 게임을 실제로 시작하는 기능입니다.
     } else {
       Audio.stopAmbientLoop();
     }
+    primeConfiguredObjectSamples();
   } else { // 오디오가 꺼져 있으면
     statusText.textContent = "소리를 들으려면 '소리 켜기' 버튼을 눌러주세요."; // 소리를 켜라는 메시지를 보여줍니다.
   }
@@ -1290,6 +1384,19 @@ async function init() {
     getModelInferenceStatus = newModelApi.getModelInferenceStatus;
     setModelPredictionProvider(getModelPrediction);
     console.info(`[JamJamBeat] ✅ 모델 전환 완료: ${event.detail.modelId}`);
+  });
+  window.addEventListener("jamjam:gesture-mapping-changed", (event) => {
+    gestureMapping = {
+      ...loadGestureMapping(),
+      ...(event.detail?.mapping || {})
+    };
+  });
+  window.addEventListener("jamjam:object-sample-mapping-changed", (event) => {
+    objectSampleMapping = {
+      ...loadObjectSampleMapping(),
+      ...(event.detail?.mapping || {})
+    };
+    primeConfiguredObjectSamples(objectSampleMapping);
   });
 
   setupSeamlessBackgroundLoop({ crossfadeSec: BG_VIDEO_CROSSFADE_SEC }); // 배경 영상 반복 시스템을 먼저 준비합니다.

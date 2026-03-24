@@ -4,6 +4,22 @@ import { useInstrumentLayout } from "./hooks/useInstrumentLayout.js";
 import { useMainControls } from "./hooks/useMainControls.js";
 import { useLegacyMainRuntime } from "./hooks/useLegacyMainRuntime.js";
 import {
+  getInstrumentVolumes,
+  resetInstrumentVolumes as resetSavedInstrumentVolumes,
+  setInstrumentVolume as saveInstrumentVolume
+} from "../js/audio.js";
+import {
+  DEFAULT_GESTURE_MAPPING,
+  DEFAULT_OBJECT_SAMPLE_MAPPING,
+  loadGestureMapping,
+  loadObjectSampleMapping,
+  OBJECT_SAMPLE_OPTIONS,
+  resetObjectSampleMapping as resetSavedObjectSampleMapping,
+  resetGestureMapping as resetSavedGestureMapping,
+  setObjectSampleMapping as saveObjectSampleMapping,
+  setGestureMapping as saveGestureMapping
+} from "../js/sound_mapping.js";
+import {
   getAllModelConfigs,
   getCurrentModelId,
   switchModel
@@ -16,6 +32,21 @@ const backgroundVideo = "/assets/objects/움직이는_동화_영상_만들기.mp
 const handGesturesGuide = "/assets/objects/Change_the_cats_hand_gesture_to_make_a_pinky_fing-1774251764915.png";
 const hedgehogCreditVideo = "/assets/objects/고슴도치1.mov";
 const penguinCreditVideo = "/assets/objects/팽귄1.mov";
+
+const BGM_PLAYLIST = [
+  {
+    id: "nursery",
+    title: "행복해지는 놀이음악",
+    src: "/assets/sounds/[놀이음악]행복해지는 귀엽고 산뜻한 놀이음악, 밝은 음악 😍 Nersery Rhymes for Kidsㅣ코코키즈 [Qo5bmDQRVTY].mp3",
+    slots: ["morning", "day"]
+  },
+  {
+    id: "spring-piano",
+    title: "봄을 부르는 피아노",
+    src: "/assets/sounds/봄을 부르는 피아노 음악 🌷 싱그러운 선율 들어요 [bExNhDN12HI].mp3",
+    slots: ["evening", "night"]
+  }
+];
 
 const INSTRUMENTS = [
   {
@@ -87,6 +118,59 @@ const CREDIT_GROUPS = [
   }
 ];
 
+const GESTURE_OPTIONS = [
+  { id: "Fist", label: "주먹" },
+  { id: "OpenPalm", label: "손바닥" },
+  { id: "V", label: "브이" },
+  { id: "Pinky", label: "새끼손가락" },
+  { id: "Animal", label: "애니멀" },
+  { id: "KHeart", label: "케이하트" }
+];
+
+function buildInstrumentVolumeState() {
+  const savedVolumes = getInstrumentVolumes();
+  return Object.fromEntries(
+    INSTRUMENTS.map((instrument) => [instrument.id, savedVolumes[instrument.id] ?? 1])
+  );
+}
+
+function buildGestureMappingState() {
+  const savedMapping = loadGestureMapping();
+  return Object.fromEntries(
+    GESTURE_OPTIONS.map((gesture) => [gesture.id, savedMapping[gesture.id] ?? DEFAULT_GESTURE_MAPPING[gesture.id]])
+  );
+}
+
+function buildObjectSampleMappingState() {
+  const savedMapping = loadObjectSampleMapping();
+  return Object.fromEntries(
+    INSTRUMENTS.map((instrument) => [instrument.id, savedMapping[instrument.id] ?? DEFAULT_OBJECT_SAMPLE_MAPPING[instrument.id]])
+  );
+}
+
+function getCurrentTimeSlot(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 11) return "morning";
+  if (hour < 17) return "day";
+  if (hour < 21) return "evening";
+  return "night";
+}
+
+function getTimeSlotLabel(slot) {
+  if (slot === "morning") return "아침";
+  if (slot === "day") return "낮";
+  if (slot === "evening") return "저녁";
+  return "밤";
+}
+
+function resolveBgmTrack(selection, timeSlot) {
+  if (selection !== "auto") {
+    return BGM_PLAYLIST.find((track) => track.id === selection) || BGM_PLAYLIST[0];
+  }
+
+  return BGM_PLAYLIST.find((track) => track.slots.includes(timeSlot)) || BGM_PLAYLIST[0];
+}
+
 function getInstrumentStyle(id, isMvpButton) {
   // MVP 버튼은 그리드 레이아웃 사용하므로 위치 스타일 불필요
   if (isMvpButton) return undefined;
@@ -120,6 +204,223 @@ function InstrumentButton({ instrument }) {
   );
 }
 
+function TutorialGesturePreview() {
+  return (
+    <div className="tutorial-vision-grid tutorial-vision-grid-single">
+      <article className="tutorial-vision-card">
+        <h3 className="tutorial-vision-title">나의 손동작</h3>
+        <div className="tutorial-gesture-preview">
+          <canvas
+            id="tutorialNormalizedCanvas"
+            className="test-mode-normalized-canvas tutorial-normalized-canvas"
+            width="220"
+            height="220"
+            aria-hidden="true"
+          />
+          <div id="tutorialGestureResult" className="tutorial-gesture-result">
+            인식 중...
+          </div>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function LandingModelSelect({
+  selectedModelId,
+  modelLoading,
+  modelConfigs,
+  onChange
+}) {
+  return (
+    <div className="landing-model-select">
+      <label className="landing-model-label" htmlFor="landingModelSelect">
+        🤖 AI 모델 선택
+      </label>
+      <select
+        id="landingModelSelect"
+        className="landing-model-field"
+        value={selectedModelId}
+        onChange={onChange}
+        disabled={modelLoading}
+      >
+        {modelConfigs.map((config) => (
+          <option key={config.id} value={config.id}>
+            {config.name} - {config.description}
+          </option>
+        ))}
+      </select>
+      {modelLoading && (
+        <p className="landing-model-loading">모델 로딩 중...</p>
+      )}
+    </div>
+  );
+}
+
+function BgmPlayer({
+  activeBgmTrack,
+  bgmEnabled,
+  bgmSelection,
+  bgmVolume,
+  timeSlot,
+  onSelectionChange,
+  onToggle,
+  onVolumeChange
+}) {
+  return (
+    <div className="bgm-horizontal-player">
+      <div className="bgm-player-track">
+        <span className="bgm-player-icon" aria-hidden="true">🎵</span>
+        <div className="bgm-player-text">
+          <span className="bgm-player-title">{activeBgmTrack.title}</span>
+          <span className="bgm-player-mode">
+            {bgmSelection === "auto" ? `자동 · ${getTimeSlotLabel(timeSlot)} 시간` : "수동 선택"}
+          </span>
+        </div>
+      </div>
+
+      <div className="bgm-player-divider" aria-hidden="true" />
+
+      <select
+        className="bgm-player-select"
+        value={bgmSelection}
+        onChange={onSelectionChange}
+        aria-label="배경음악 선택"
+      >
+        <option value="auto">자동 선택</option>
+        {BGM_PLAYLIST.map((track) => (
+          <option key={track.id} value={track.id}>
+            {track.title}
+          </option>
+        ))}
+      </select>
+
+      <button
+        type="button"
+        className="bgm-player-toggle"
+        onClick={onToggle}
+        title={bgmEnabled ? "배경음악 끄기" : "배경음악 켜기"}
+        aria-pressed={bgmEnabled}
+      >
+        {bgmEnabled ? "⏸" : "▶"}
+      </button>
+
+      <label className={`bgm-player-volume ${bgmEnabled ? "" : "is-disabled"}`}>
+        <span className="bgm-player-volume-icon" aria-hidden="true">
+          {bgmEnabled ? "🔊" : "🔈"}
+        </span>
+        <input
+          className="bgm-player-range"
+          type="range"
+          min="0"
+          max="0.8"
+          step="0.01"
+          value={bgmVolume}
+          onChange={onVolumeChange}
+          disabled={!bgmEnabled}
+          aria-label="배경음악 볼륨"
+        />
+      </label>
+    </div>
+  );
+}
+
+function SoundSettingsPanel({
+  instrumentVolumes,
+  gestureMapping,
+  objectSampleMapping,
+  onVolumeChange,
+  onObjectSampleChange,
+  onGestureMappingChange,
+  onReset,
+  onResetObjectSampleMapping,
+  onResetGestureMapping
+}) {
+  return (
+    <div className="sound-settings-panel">
+      <div className="sound-settings-head">
+        <p className="sound-settings-title">오브젝트 샘플</p>
+        <button type="button" className="sound-settings-reset" onClick={onResetObjectSampleMapping}>
+          샘플 기본값
+        </button>
+      </div>
+      <div className="sound-settings-list sound-settings-list-mapping">
+        {INSTRUMENTS.map((instrument) => (
+          <label key={instrument.id} className="sound-settings-item sound-settings-item-select">
+            <span className="sound-settings-label">{instrument.label}</span>
+            <select
+              className="sound-settings-select"
+              value={objectSampleMapping[instrument.id] ?? DEFAULT_OBJECT_SAMPLE_MAPPING[instrument.id]}
+              onChange={(event) => onObjectSampleChange(instrument.id, event.target.value)}
+              aria-label={`${instrument.label} 샘플 선택`}
+            >
+              {OBJECT_SAMPLE_OPTIONS.map((sample) => (
+                <option key={sample.id} value={sample.id}>
+                  {sample.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      <div className="sound-settings-head">
+        <p className="sound-settings-title">오브젝트 볼륨</p>
+        <button type="button" className="sound-settings-reset" onClick={onReset}>
+          기본값 복원
+        </button>
+      </div>
+      <div className="sound-settings-list">
+        {INSTRUMENTS.map((instrument) => {
+          const volume = instrumentVolumes[instrument.id] ?? 1;
+          return (
+            <label key={instrument.id} className="sound-settings-item">
+              <span className="sound-settings-label">{instrument.label}</span>
+              <div className="sound-settings-control">
+                <input
+                  className="sound-settings-range"
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.01"
+                  value={volume}
+                  onChange={(event) => onVolumeChange(instrument.id, event.target.value)}
+                  aria-label={`${instrument.label} 소리 크기`}
+                />
+                <span className="sound-settings-value">{Math.round(volume * 100)}%</span>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      <div className="sound-settings-head sound-settings-head-mapping">
+        <p className="sound-settings-title">손동작 매핑</p>
+        <button type="button" className="sound-settings-reset" onClick={onResetGestureMapping}>
+          제스처 기본값
+        </button>
+      </div>
+      <div className="sound-settings-list sound-settings-list-mapping">
+        {GESTURE_OPTIONS.map((gesture) => (
+          <label key={gesture.id} className="sound-settings-item sound-settings-item-select">
+            <span className="sound-settings-label">{gesture.label}</span>
+            <select
+              className="sound-settings-select"
+              value={gestureMapping[gesture.id] ?? DEFAULT_GESTURE_MAPPING[gesture.id]}
+              onChange={(event) => onGestureMappingChange(gesture.id, event.target.value)}
+              aria-label={`${gesture.label} 오브젝트 매핑`}
+            >
+              {INSTRUMENTS.map((instrument) => (
+                <option key={instrument.id} value={instrument.id}>
+                  {instrument.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   useInstrumentLayout();
   useLegacyMainRuntime();
@@ -129,20 +430,119 @@ export default function App() {
   const [tutorialPracticeEnabled, setTutorialPracticeEnabled] = React.useState(false);
   const [bgmEnabled, setBgmEnabled] = React.useState(true);
   const [bgmVolume, setBgmVolume] = React.useState(0.22);
+  const [bgmSelection, setBgmSelection] = React.useState("auto");
+  const [timeSlot, setTimeSlot] = React.useState(() => getCurrentTimeSlot());
   const [selectedModelId, setSelectedModelId] = React.useState(() => getCurrentModelId());
   const [modelLoading, setModelLoading] = React.useState(false);
+  const [landingVisible, setLandingVisible] = React.useState(true);
+  const [showSoundSettings, setShowSoundSettings] = React.useState(false);
+  const [instrumentVolumes, setInstrumentVolumes] = React.useState(() => buildInstrumentVolumeState());
+  const [gestureMapping, setGestureMapping] = React.useState(() => buildGestureMappingState());
+  const [objectSampleMapping, setObjectSampleMapping] = React.useState(() => buildObjectSampleMappingState());
 
   const landingBgmRef = React.useRef(null);
   const modelConfigs = getAllModelConfigs();
+  const activeBgmTrack = resolveBgmTrack(bgmSelection, timeSlot);
+  const sceneUiState = showCredits
+    ? "credits"
+    : showTutorial
+      ? "tutorial"
+      : landingVisible
+        ? "landing"
+        : "playing";
+  const shouldPlayBgm = bgmEnabled && sceneUiState !== "playing";
 
   React.useEffect(() => {
-    const audio = new Audio("/assets/sounds/봄을 부르는 피아노 음악 🌷 싱그러운 선율 들어요 [bExNhDN12HI].mp3");
+    const syncTimeSlot = () => setTimeSlot(getCurrentTimeSlot());
+    syncTimeSlot();
+    const timer = window.setInterval(syncTimeSlot, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  React.useEffect(() => {
+    const landingOverlay = document.getElementById("landingOverlay");
+    if (!landingOverlay) return undefined;
+
+    const syncLandingVisibility = () => {
+      setLandingVisible(!landingOverlay.classList.contains("is-hidden"));
+    };
+
+    syncLandingVisibility();
+
+    const observer = new MutationObserver(syncLandingVisibility);
+    observer.observe(landingOverlay, {
+      attributes: true,
+      attributeFilter: ["class"]
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  React.useEffect(() => {
+    const handleInstrumentVolumesChanged = (event) => {
+      const nextVolumes = event.detail?.volumes || {};
+      setInstrumentVolumes((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          INSTRUMENTS.map((instrument) => [instrument.id, nextVolumes[instrument.id] ?? 1])
+        )
+      }));
+    };
+
+    window.addEventListener("jamjam:instrument-volumes-changed", handleInstrumentVolumesChanged);
+    return () => {
+      window.removeEventListener("jamjam:instrument-volumes-changed", handleInstrumentVolumesChanged);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const handleGestureMappingChanged = (event) => {
+      const nextMapping = event.detail?.mapping || {};
+      setGestureMapping((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          GESTURE_OPTIONS.map((gesture) => [
+            gesture.id,
+            nextMapping[gesture.id] ?? DEFAULT_GESTURE_MAPPING[gesture.id]
+          ])
+        )
+      }));
+    };
+
+    window.addEventListener("jamjam:gesture-mapping-changed", handleGestureMappingChanged);
+    return () => {
+      window.removeEventListener("jamjam:gesture-mapping-changed", handleGestureMappingChanged);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const handleObjectSampleMappingChanged = (event) => {
+      const nextMapping = event.detail?.mapping || {};
+      setObjectSampleMapping((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          INSTRUMENTS.map((instrument) => [
+            instrument.id,
+            nextMapping[instrument.id] ?? DEFAULT_OBJECT_SAMPLE_MAPPING[instrument.id]
+          ])
+        )
+      }));
+    };
+
+    window.addEventListener("jamjam:object-sample-mapping-changed", handleObjectSampleMappingChanged);
+    return () => {
+      window.removeEventListener("jamjam:object-sample-mapping-changed", handleObjectSampleMappingChanged);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const audio = new Audio(activeBgmTrack.src);
     audio.loop = true;
     audio.volume = bgmVolume;
     landingBgmRef.current = audio;
 
     const tryPlay = () => {
-      if (!landingBgmRef.current) return;
+      if (!landingBgmRef.current || !shouldPlayBgm) return;
       audio.play().catch(() => {
         window.addEventListener('click', tryPlay, { once: true });
         window.addEventListener('keydown', tryPlay, { once: true });
@@ -159,17 +559,17 @@ export default function App() {
         landingBgmRef.current = null;
       }
     };
-  }, []);
+  }, [activeBgmTrack.src, bgmVolume, shouldPlayBgm]);
 
   // 배경음악 켜기/끄기 상태 관리
   React.useEffect(() => {
     if (!landingBgmRef.current) return;
-    if (bgmEnabled) {
+    if (shouldPlayBgm) {
       landingBgmRef.current.play().catch(() => { });
     } else {
       landingBgmRef.current.pause();
     }
-  }, [bgmEnabled]);
+  }, [shouldPlayBgm]);
 
   // 음량 변경
   React.useEffect(() => {
@@ -187,6 +587,50 @@ export default function App() {
     setBgmVolume(newVolume);
   };
 
+  const handleBgmSelectionChange = (event) => {
+    setBgmSelection(event.target.value);
+  };
+
+  const handleInstrumentVolumeChange = (instrumentId, value) => {
+    const nextVolume = parseFloat(value);
+    setInstrumentVolumes((current) => ({
+      ...current,
+      [instrumentId]: nextVolume
+    }));
+    saveInstrumentVolume(instrumentId, nextVolume);
+  };
+
+  const handleResetInstrumentVolumes = () => {
+    resetSavedInstrumentVolumes();
+    setInstrumentVolumes(buildInstrumentVolumeState());
+  };
+
+  const handleObjectSampleChange = (instrumentId, sampleId) => {
+    setObjectSampleMapping((current) => ({
+      ...current,
+      [instrumentId]: sampleId
+    }));
+    saveObjectSampleMapping(instrumentId, sampleId);
+  };
+
+  const handleResetObjectSampleMapping = () => {
+    resetSavedObjectSampleMapping();
+    setObjectSampleMapping(buildObjectSampleMappingState());
+  };
+
+  const handleGestureMappingChange = (gestureId, instrumentId) => {
+    setGestureMapping((current) => ({
+      ...current,
+      [gestureId]: instrumentId
+    }));
+    saveGestureMapping(gestureId, instrumentId);
+  };
+
+  const handleResetGestureMapping = () => {
+    resetSavedGestureMapping();
+    setGestureMapping(buildGestureMappingState());
+  };
+
   const handleStartClick = () => {
     setTutorialPracticeEnabled(false);
     setShowTutorial(true);
@@ -194,14 +638,11 @@ export default function App() {
 
   const closeTutorial = () => {
     setShowTutorial(false);
-    if (!tutorialPracticeEnabled) {
-      requestStart();
-    }
+    requestStart();
   };
 
   const startTutorialPractice = () => {
     if (!tutorialPracticeEnabled) {
-      requestStart();
       setTutorialPracticeEnabled(true);
     }
   };
@@ -314,32 +755,7 @@ export default function App() {
                 <p className="test-mode-eyebrow">연습 미리보기</p>
                 <p id="tutorialVisionSummary" className="tutorial-vision-summary">아래 화면을 보며 동작을 연습해 보세요.</p>
               </div>
-              <div className="tutorial-vision-grid" style={{ gridTemplateColumns: '1fr', maxWidth: '320px', margin: '0 auto' }}>
-                <article className="tutorial-vision-card">
-                  <h3 style={{ textAlign: 'center', marginBottom: '14px' }}>나의 손동작</h3>
-                  <div style={{ position: 'relative' }}>
-                    <canvas
-                      id="tutorialNormalizedCanvas"
-                      className="test-mode-normalized-canvas tutorial-normalized-canvas"
-                      width="220"
-                      height="220"
-                      aria-hidden="true"
-                      style={{ width: '100%', height: 'auto', aspectRatio: '1/1' }}
-                    />
-                    <div id="tutorialGestureResult" style={{
-                      position: 'absolute',
-                      bottom: '12px', left: '50%', transform: 'translateX(-50%)',
-                      background: 'rgba(0,0,0,0.6)', color: '#fff',
-                      padding: '8px 18px', borderRadius: '20px',
-                      fontWeight: '800', fontSize: '1.05rem',
-                      whiteSpace: 'nowrap', opacity: 0, transition: 'all 0.3s ease',
-                      pointerEvents: 'none'
-                    }}>
-                      인식 중...
-                    </div>
-                  </div>
-                </article>
-              </div>
+              <TutorialGesturePreview />
             </div>
 
             <div className="tutorial-action-stack">
@@ -423,114 +839,41 @@ export default function App() {
         </section>
       )}
 
-      <main id="scene" className="scene hide-camera" data-fever="off">
+      <main
+        id="scene"
+        className="scene hide-camera"
+        data-fever="off"
+        data-ui={sceneUiState}
+        data-bgm={shouldPlayBgm ? "on" : "off"}
+      >
         <section id="landingOverlay" className="landing-overlay" aria-live="polite">
           <div className="landing-panel">
             <div className="landing-logo-container">
               <img className="landing-logo" src={logoPng} srcSet={logoWebp} alt="JamJam Beat Logo" loading="eager" />
             </div>
 
-            <div style={{
-              margin: '16px 0',
-              padding: '12px',
-              background: 'rgba(255,255,255,0.1)',
-              borderRadius: '8px',
-              backdropFilter: 'blur(10px)'
-            }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                color: '#fff',
-                fontSize: '0.95rem',
-                fontWeight: '600',
-                textShadow: '0 2px 4px rgba(0,0,0,0.5)'
-              }}>
-                🤖 AI 모델 선택
-              </label>
-              <select
-                value={selectedModelId}
-                onChange={handleModelChange}
-                disabled={modelLoading}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  background: 'rgba(255,255,255,0.9)',
-                  border: '1px solid rgba(255,255,255,0.3)',
-                  borderRadius: '6px',
-                  color: '#333',
-                  fontSize: '0.9rem',
-                  cursor: modelLoading ? 'wait' : 'pointer',
-                  fontWeight: '500'
-                }}
-              >
-                {modelConfigs.map((config) => (
-                  <option key={config.id} value={config.id}>
-                    {config.name} - {config.description}
-                  </option>
-                ))}
-              </select>
-              {modelLoading && (
-                <p style={{
-                  marginTop: '8px',
-                  fontSize: '0.85rem',
-                  color: '#fff',
-                  textAlign: 'center',
-                  textShadow: '0 2px 4px rgba(0,0,0,0.5)'
-                }}>
-                  모델 로딩 중...
-                </p>
-              )}
-            </div>
+            <LandingModelSelect
+              selectedModelId={selectedModelId}
+              modelLoading={modelLoading}
+              modelConfigs={modelConfigs}
+              onChange={handleModelChange}
+            />
 
             <button id="landingStartButton" type="button" onClick={handleStartClick}>시작하기</button>
             <button className="landing-credits-button" type="button" onClick={openCredits}>만든 사람들</button>
             <button className="landing-exit-button" type="button" onClick={handleExitClick}>종료하기</button>
           </div>
-        </section>        <div className="bgm-horizontal-player" style={{
-          position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 100,
-          display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '14px',
-          background: 'transparent', width: 'fit-content', padding: '8px 20px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '1.1rem', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))' }}>🎵</span>
-            <span style={{ fontSize: '0.95rem', color: '#fff', fontWeight: '700', textShadow: '0 2px 6px rgba(0,0,0,0.6)', letterSpacing: '0.5px' }}>
-              봄을 부르는 피아노
-            </span>
-          </div>
-
-          <div style={{ width: '1px', height: '14px', background: 'rgba(255,255,255,0.4)', boxShadow: '0 0 4px rgba(0,0,0,0.5)' }} />
-
-          <button 
-            type="button" 
-            onClick={toggleBgm}
-            style={{
-              background: 'transparent', border: 'none', flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', color: bgmEnabled ? '#fff' : '#ccc', fontSize: '1.25rem', transition: 'all 0.2s',
-              filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))', padding: 0
-            }}
-            title={bgmEnabled ? "배경음악 끄기" : "배경음악 켜기"}
-          >
-            {bgmEnabled ? "⏸" : "▶"}
-          </button>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '1rem', color: bgmEnabled ? '#fff' : '#ccc', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))' }}>
-              {bgmEnabled ? '🔊' : '🔈'}
-            </span>
-            <input 
-              type="range" 
-              min="0" max="0.8" step="0.01" 
-              value={bgmVolume} 
-              onChange={handleVolumeChange} 
-              disabled={!bgmEnabled}
-              style={{ 
-                width: '70px', accentColor: '#7db69e', cursor: bgmEnabled ? 'grab' : 'not-allowed',
-                opacity: bgmEnabled ? 0.9 : 0.4, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))'
-              }}
-            />
-          </div>
-        </div>
+        </section>
+        <BgmPlayer
+          activeBgmTrack={activeBgmTrack}
+          bgmEnabled={bgmEnabled}
+          bgmSelection={bgmSelection}
+          bgmVolume={bgmVolume}
+          timeSlot={timeSlot}
+          onSelectionChange={handleBgmSelectionChange}
+          onToggle={toggleBgm}
+          onVolumeChange={handleVolumeChange}
+        />
 
         <section className="layer layer-background" aria-hidden="true">
           <div className="bg-video-wrap" aria-hidden="true">
@@ -570,20 +913,41 @@ export default function App() {
         </section>
 
         <section className="layer layer-foreground" aria-live="polite">
-          <div className="camera-shell" aria-hidden="true" style={{ opacity: showTutorial ? 0 : 1 }}>
+          <div className={`camera-shell${showTutorial ? " is-muted" : ""}`} aria-hidden="true">
             <video id="webcam" autoPlay playsInline muted />
           </div>
-          <canvas id="handCanvas" style={{ opacity: showTutorial ? 0 : 1, pointerEvents: 'none' }} />
+          <canvas id="handCanvas" className={showTutorial ? "is-muted" : undefined} />
           <div className="guide-silhouette" aria-hidden="true" />
           <div id="gestureSquirrelEffect" className="gesture-squirrel" aria-hidden="true">🐿️</div>
           <p id="pulseMessage" className="pulse-message">손을 잼잼! 해서 숲을 깨워봐!</p>
         </section>
 
-        <section className="hud" aria-live="polite">
+        <section className="hud hud-panel" aria-live="polite">
           <h2>잼잼비트 숲의 입구</h2>
           <p id="status" className="status">카메라 준비 중...</p>
           <button id="soundUnlockButton" className="sound-unlock" type="button" onClick={requestSoundToggle}>{soundButtonLabel}</button>
           <button id="testModeToggleButton" className="test-mode-toggle" type="button">테스트 모드 켜기</button>
+          <button
+            className="hud-settings-toggle"
+            type="button"
+            onClick={() => setShowSoundSettings((current) => !current)}
+            aria-expanded={showSoundSettings}
+          >
+            {showSoundSettings ? "환경설정 닫기" : "환경설정"}
+          </button>
+          {showSoundSettings && (
+            <SoundSettingsPanel
+              instrumentVolumes={instrumentVolumes}
+              gestureMapping={gestureMapping}
+              objectSampleMapping={objectSampleMapping}
+              onVolumeChange={handleInstrumentVolumeChange}
+              onObjectSampleChange={handleObjectSampleChange}
+              onGestureMappingChange={handleGestureMappingChange}
+              onReset={handleResetInstrumentVolumes}
+              onResetObjectSampleMapping={handleResetObjectSampleMapping}
+              onResetGestureMapping={handleResetGestureMapping}
+            />
+          )}
           <button className="hud-exit-button" type="button" onClick={handleExitClick}>프로그램 끝내기</button>
           <a className="hud-main-link" href="./index.html">메인화면으로</a>
           <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>

@@ -6,21 +6,21 @@ const MODEL_CONFIGS = {
     name: "기본 프레임",
     description: "단일 프레임",
     mode: "frame",
-    importPath: "./model_inference_onnx.js"
+    loadModule: () => import("./model_inference_onnx.js")
   },
   "sequence_delta": {
     id: "sequence_delta",
     name: "시퀀스 델타",
     description: "8프레임 버퍼",
     mode: "sequence",
-    importPath: "./model_inference_sequence.js"
+    loadModule: () => import("./model_inference_sequence.js")
   },
   "frame_spatial_transformer": {
     id: "frame_spatial_transformer",
     name: "Spatial Transformer",
     description: "최신 모델 (추천)",
     mode: "frame",
-    importPath: "./model_inference_frame_spatial_transformer.js"
+    loadModule: () => import("./model_inference_frame_spatial_transformer.js")
   }
 };
 
@@ -83,7 +83,7 @@ async function loadModelModule(modelId) {
   console.info(`[ModelManager] Loading model: ${config.name} (${modelId})`);
 
   try {
-    const module = await import(/* @vite-ignore */ config.importPath);
+    const module = await config.loadModule();
 
     // 필수 API 검증
     if (typeof module.getModelPrediction !== "function") {

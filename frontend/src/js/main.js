@@ -5,17 +5,9 @@ import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision"; // �
 import * as Audio from "./audio.js"; // 소리 재생 관련 기능을 가져옵니다.
 import * as Renderer from "./renderer.js"; // 화면 그리기 관련 기능을 가져옵니다.
 import { resolveGesture, setModelPredictionProvider, resetGestureState } from "./gestures.js"; // 손동작 인식 로직을 가져옵니다.
+import { initializeDefaultModel, getCurrentModelApi, getCurrentModelId } from "./model_manager.js"; // 모델 동적 로딩 매니저
 
-// 시퀀스 모델 사용 여부를 URL 파라미터로 결정 (기본값: 시퀀스 모델 사용)
-const USE_SEQUENCE_MODEL = (() => {
-  const params = new URLSearchParams(window.location.search);
-  const seqModel = params.get("seqModel");
-  // seqModel=0 또는 false면 기존 모델, 그 외에는 시퀀스 모델 사용
-  if (seqModel === "0" || seqModel === "false") return false;
-  return true; // 기본값: 시퀀스 모델 사용
-})();
-
-// 모델 추론 함수들 (init에서 동적 로딩 후 할당됨)
+// 모델 추론 함수들 (model_manager에서 동적으로 가져옴)
 let getModelPrediction = null;
 let getModelInferenceStatus = null;
 const TEST_MODE_HAND_CONNECTIONS = [
@@ -203,6 +195,8 @@ const GESTURE_TRIGGER_COOLDOWN_MS = 280; // 손동작 인식이 너무 자주 �
 const BG_VIDEO_CROSSFADE_SEC = 0.42; // 배경 영상이 바뀔 때 자연스럽게 겹치는 시간(0.42초)입니다.
 const PERF_LOG_KEY = "jamjam.perf.logs.v1";
 const PERF_LOG_LIMIT = 200;
+const POINTER_TRAIL_MIN_DISTANCE = 14;
+const POINTER_TRAIL_MIN_INTERVAL_MS = 28;
 
 const SOUND_PROFILES = {
   drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
@@ -211,7 +205,9 @@ const SOUND_PROFILES = {
   guitar: { soundTag: "기타 스트럼", burstType: "tambourine", playbackMode: "oneshot", melodyType: "guitar", play: (note) => Audio.playKids_Guitar(note) },
   flute: { soundTag: "플룻 멜로디", burstType: "heart", playbackMode: "oneshot", melodyType: "flute", play: (note) => Audio.playKids_Flute(note) },
   violin: { soundTag: "바이올린 하모니", burstType: "animal", playbackMode: "oneshot", melodyType: "violin", play: (note) => Audio.playKids_Violin(note) },
-  bell: { soundTag: "벨 포인트", burstType: "pinky", playbackMode: "oneshot", melodyType: "bell", play: (note) => Audio.playKids_Bell(note) }
+  bell: { soundTag: "벨 포인트", burstType: "pinky", playbackMode: "oneshot", melodyType: "bell", play: (note) => Audio.playKids_Bell(note) },
+  musicbox: { soundTag: "뮤직박스 반짝임", burstType: "pinky", playbackMode: "oneshot", melodyType: "musicbox", play: (note) => Audio.playKids_MusicBox(note) },
+  softpad: { soundTag: "소프트 패드 잔향", burstType: "heart", playbackMode: "oneshot", melodyType: "softpad", play: (note) => Audio.playKids_SoftPad(note) }
 };
 
 // GESTURE_SOUND_PROFILES는 제거됨 - gestureMapping과 SOUND_PROFILES 조합으로 대체
@@ -264,6 +260,8 @@ let testModeEnabled = (() => {
   if (queryValue === "0" || queryValue === "false") return false;
   return false;
 })();
+let lastPointerTrailAt = 0;
+let lastPointerTrailPoint = null;
 
 function formatDisplayGesture(label, confidence = null, classId = null) {
   const normalized = String(label || "").trim().toLowerCase();
@@ -417,9 +415,14 @@ function drawNormalizedPreviewGuide(ctx, width, height) {
 }
 
 function getModelInputPreviewSummary() {
-  return USE_SEQUENCE_MODEL
-    ? "wrist 원점 + scale 정규화된 모델 입력"
-    : "미러링을 반영한 모델 입력 좌표";
+  const modelId = getCurrentModelId();
+  if (modelId === "sequence_delta") {
+    return "wrist 원점 + scale 정규화된 모델 입력";
+  } else if (modelId === "frame_spatial_transformer") {
+    return "pos_scale 정규화된 모델 입력";
+  } else {
+    return "미러링을 반영한 모델 입력 좌표";
+  }
 }
 
 function renderNormalizedVisionCanvas(ctx, canvas, debugSnapshot, handKeys) {
@@ -436,11 +439,13 @@ function renderNormalizedVisionCanvas(ctx, canvas, debugSnapshot, handKeys) {
     if (!Array.isArray(landmarks) || landmarks.length < 21) return;
 
     const sanitized = sanitizePreviewLandmarks(landmarks, handKey);
-    const modelInput = USE_SEQUENCE_MODEL ? normalizeSequencePreviewFrame(sanitized) : sanitized;
+    const modelId = getCurrentModelId();
+    const isNormalizedModel = modelId === "sequence_delta" || modelId === "frame_spatial_transformer";
+    const modelInput = isNormalizedModel ? normalizeSequencePreviewFrame(sanitized) : sanitized;
     if (!modelInput) return;
 
     const normalizedPoints = [];
-    if (USE_SEQUENCE_MODEL) {
+    if (isNormalizedModel) {
       let maxAbs = 0.25;
       for (let i = 0; i < 63; i += 3) {
         maxAbs = Math.max(maxAbs, Math.abs(modelInput[i]), Math.abs(modelInput[i + 1]));
@@ -472,7 +477,9 @@ function renderTestModeVision(debugSnapshot, handKeys) {
   const rawHeight = testModeRawCanvas.height;
 
   testModeRawCtx.clearRect(0, 0, rawWidth, rawHeight);
-  const summary = USE_SEQUENCE_MODEL
+  const modelId = getCurrentModelId();
+  const isNormalizedModel = modelId === "sequence_delta" || modelId === "frame_spatial_transformer";
+  const summary = isNormalizedModel
     ? "좌: 원본 손 / 우: wrist 원점 + scale 정규화"
     : "좌: 원본 손 / 우: 모델 입력 좌표(미러링 포함)";
   setPanelValue(testModeVisionSummary, summary);
@@ -510,8 +517,40 @@ function renderTutorialModelVision(debugSnapshot, handKeys) {
   if (!tutorialCtx) return;
 
   const tutorialSummary = document.getElementById("tutorialVisionSummary");
-  setPanelValue(tutorialSummary, `왼쪽은 원본 손, 오른쪽은 ${getModelInputPreviewSummary()}입니다.`);
+  setPanelValue(tutorialSummary, `나의 손 모양이 캐릭터 모델 좌표로 매핑됩니다.`);
   renderNormalizedVisionCanvas(tutorialCtx, tutorialCanvas, debugSnapshot, handKeys);
+
+  const resultEl = document.getElementById("tutorialGestureResult");
+  if (!resultEl) return;
+
+  let activeGesture = null;
+  let activeInstrumentId = null;
+
+  for (const handKey of handKeys) {
+    const hand = debugSnapshot[handKey];
+    if (!hand) continue;
+    const resolved = hand.lastResolvedGesture;
+    // 의미 있는 제스처가 최근에 인식되었다면 해당 제스처를 표시
+    if (resolved && resolved.label && resolved.label !== "None" && resolved.label !== "class0" && resolved.label !== "Neutral") {
+      activeGesture = resolved.label;
+      activeInstrumentId = gestureMapping[resolved.label] || null;
+      break; 
+    }
+  }
+
+  if (activeInstrumentId && activeGesture) {
+    const instrumentName = getInstrumentName(activeInstrumentId);
+    const profile = getMappedSoundProfile(activeInstrumentId);
+    const soundName = profile?.soundTag || instrumentName;
+    resultEl.textContent = `${instrumentName} (${soundName})`;
+    resultEl.style.opacity = "1";
+    resultEl.style.transform = "translate(-50%, -4px)";
+    resultEl.style.background = "linear-gradient(135deg, rgba(125, 182, 154, 0.95), rgba(90, 158, 133, 0.95))";
+    resultEl.style.boxShadow = "0 8px 24px rgba(125, 182, 154, 0.5)";
+  } else {
+    resultEl.style.opacity = "0";
+    resultEl.style.transform = "translate(-50%, 0)";
+  }
 }
 
 function syncTestModeUI() {
@@ -757,6 +796,38 @@ function registerHit(now) {
 
 function spawnBurst(type, element) {
   particleSystem.spawnBurst(type, element);
+}
+
+function spawnPointerBurst(x, y) {
+  particleSystem.spawnPointerBurst(x, y);
+}
+
+function setupMouseTrailEffect() {
+  const isFinePointerDevice = window.matchMedia?.("(pointer: fine)").matches ?? true;
+  if (!isFinePointerDevice) return;
+
+  window.addEventListener("pointermove", (event) => {
+    if (event.pointerType && event.pointerType !== "mouse") return;
+
+    const now = performance.now();
+    const point = { x: event.clientX, y: event.clientY };
+    const dx = lastPointerTrailPoint ? point.x - lastPointerTrailPoint.x : Infinity;
+    const dy = lastPointerTrailPoint ? point.y - lastPointerTrailPoint.y : Infinity;
+    const distance = Math.hypot(dx, dy);
+
+    if (now - lastPointerTrailAt < POINTER_TRAIL_MIN_INTERVAL_MS && distance < POINTER_TRAIL_MIN_DISTANCE) {
+      return;
+    }
+
+    particleSystem.spawnPointerTrail(point.x, point.y);
+    lastPointerTrailAt = now;
+    lastPointerTrailPoint = point;
+  }, { passive: true });
+
+  window.addEventListener("pointerdown", (event) => {
+    if (event.pointerType && event.pointerType !== "mouse") return;
+    particleSystem.spawnPointerBurst(event.clientX, event.clientY);
+  }, { passive: true });
 }
 
 function getVideoProcessSize(width, height) {
@@ -1144,6 +1215,7 @@ const interactionRuntime = createInteractionRuntime({
   activateStart,
   registerHit,
   spawnBurst,
+  spawnPointerBurst,
   setGestureObjectVariant,
   getGestureInstrumentId: (label) => gestureMapping[label] || null,
   getGesturePlayback: (label, instrumentId) => getGestureSoundProfile(label, instrumentId),
@@ -1193,20 +1265,32 @@ const trackingRuntime = createHandTrackingRuntime({
 });
 
 async function init() {
-  // 모델 추론 모듈 동적 로딩 (top-level await 회피)
-  const modelInferenceModule = USE_SEQUENCE_MODEL
-    ? await import("./model_inference_sequence.js")
-    : await import("./model_inference.js");
+  // 모델 매니저를 통한 동적 모델 로딩
+  await initializeDefaultModel();
 
-  getModelPrediction = modelInferenceModule.getModelPrediction;
-  getModelInferenceStatus = modelInferenceModule.getModelInferenceStatus;
+  const modelApi = getCurrentModelApi();
+  if (!modelApi) {
+    console.error("[JamJamBeat] ❌ 모델 로딩 실패");
+    alert("AI 모델을 로드하는 데 실패했습니다. 페이지를 새로고침해주세요.");
+    return;
+  }
+
+  getModelPrediction = modelApi.getModelPrediction;
+  getModelInferenceStatus = modelApi.getModelInferenceStatus;
   setModelPredictionProvider(getModelPrediction);
 
   // 사용 중인 모델 타입 로깅
-  console.info(`[JamJamBeat] 🎵 모델 타입: ${USE_SEQUENCE_MODEL ? "시퀀스 모델 (8프레임 버퍼)" : "기존 단일 프레임 모델"}`);
-  if (USE_SEQUENCE_MODEL) {
-    console.info("[JamJamBeat] ⏱️ warmup 대기: 첫 8프레임 수집 (~0.5~1.2초)");
-  }
+  const currentModelId = getCurrentModelId();
+  console.info(`[JamJamBeat] 🎵 현재 모델: ${currentModelId}`);
+
+  // 모델 전환 이벤트 리스너 등록
+  window.addEventListener("jamjam:model-loaded", (event) => {
+    const newModelApi = event.detail.api;
+    getModelPrediction = newModelApi.getModelPrediction;
+    getModelInferenceStatus = newModelApi.getModelInferenceStatus;
+    setModelPredictionProvider(getModelPrediction);
+    console.info(`[JamJamBeat] ✅ 모델 전환 완료: ${event.detail.modelId}`);
+  });
 
   setupSeamlessBackgroundLoop({ crossfadeSec: BG_VIDEO_CROSSFADE_SEC }); // 배경 영상 반복 시스템을 먼저 준비합니다.
   setCanvasSize(); // 현재 화면 크기에 맞게 캔버스를 조정합니다.
@@ -1282,6 +1366,7 @@ async function init() {
   const params = new URLSearchParams(window.location.search); // URL에 적힌 옵션을 읽습니다.
   const mode = params.get("mode") || "calm"; // 모드가 없으면 calm을 기본으로 씁니다.
   applySceneMode(scene, mode); // 장면 분위기를 적용합니다.
+  setupMouseTrailEffect();
 
   const createInstrumentAnimationManager = await loadAnimationManagerFactory();
   animationManager = createInstrumentAnimationManager();

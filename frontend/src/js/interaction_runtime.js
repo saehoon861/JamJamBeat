@@ -18,6 +18,7 @@ export function createInteractionRuntime({
   activateStart,
   registerHit,
   spawnBurst,
+  spawnPointerBurst,
   setGestureObjectVariant,
   getGestureInstrumentId,
   getGesturePlayback,
@@ -429,6 +430,80 @@ export function createInteractionRuntime({
     restartClassAnimation(gestureSquirrelEffect, "is-visible");
   }
 
+  function getGestureEffectZone() {
+    if (!handCursor || typeof handCursor.getBoundingClientRect !== "function") {
+      return null;
+    }
+
+    const rect = handCursor.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+
+    const zoneWidth = Math.max(180, rect.width * 3.2);
+    const zoneHeight = Math.max(150, rect.height * 0.82);
+    const centerX = rect.left + rect.width * 0.5;
+    const centerY = rect.top + rect.height * 0.16;
+
+    return {
+      left: centerX - zoneWidth * 0.5,
+      right: centerX + zoneWidth * 0.5,
+      top: centerY - zoneHeight * 0.5,
+      bottom: centerY + zoneHeight * 0.5,
+      centerX,
+      centerY
+    };
+  }
+
+  function clampPointToGestureZone(point, zone) {
+    if (!point || !zone) return point;
+    return {
+      x: Math.min(zone.right, Math.max(zone.left, point.x)),
+      y: Math.min(zone.bottom, Math.max(zone.top, point.y))
+    };
+  }
+
+  function createPointerBurstPoint(landmarks) {
+    const tip = Array.isArray(landmarks) ? landmarks[8] : null;
+    const wrist = Array.isArray(landmarks) ? landmarks[0] : null;
+    const zone = getGestureEffectZone();
+    if (
+      Number.isFinite(tip?.x) &&
+      Number.isFinite(tip?.y) &&
+      Number.isFinite(wrist?.x) &&
+      Number.isFinite(wrist?.y)
+    ) {
+      const anchorX = (1 - tip.x) * window.innerWidth;
+      const anchorY = tip.y * window.innerHeight;
+      const cursorHeight = handCursor?.offsetHeight || 214;
+      const tipOffsetPx = Math.max(10, cursorHeight * 0.82);
+      const dx = tip.x - wrist.x;
+      const dy = tip.y - wrist.y;
+      const angleRad = Math.atan2(dy, dx) + Math.PI / 2;
+
+      return clampPointToGestureZone({
+        x: anchorX + Math.sin(angleRad) * tipOffsetPx,
+        y: anchorY - Math.cos(angleRad) * tipOffsetPx
+      }, zone);
+    }
+
+    if (!zone) {
+      return null;
+    }
+
+    return {
+      x: zone.centerX,
+      y: zone.centerY
+    };
+  }
+
+  function showGestureRecognitionEffect(landmarks) {
+    const point = createPointerBurstPoint(landmarks);
+    if (point && typeof spawnPointerBurst === "function") {
+      spawnPointerBurst(point.x, point.y);
+      return;
+    }
+    showSquirrelEffect();
+  }
+
   // 제스처 모드에서 현재 손모양을 해석하고, 쿨다운/오디오 상태까지 확인한 뒤 반응을 실행합니다.
   function processGestureTriggers(landmarks, now, handKey = "default") {
     if (!isSessionStarted()) return;
@@ -507,7 +582,7 @@ export function createInteractionRuntime({
       }
 
       runGestureReaction(gesture.label, now, handKey);
-      showSquirrelEffect();
+      showGestureRecognitionEffect(landmarks);
 
       handState.lastGestureLabel = gesture.label;
 
@@ -528,6 +603,7 @@ export function createInteractionRuntime({
             retriggerMs: HELD_ONESHOT_INTERVAL_MS
           });
           runGestureReaction(gesture.label, now, handKey);
+          showGestureRecognitionEffect(landmarks);
           handState.lastGestureTriggerAt = now;
         }
       }
@@ -538,17 +614,36 @@ export function createInteractionRuntime({
 
   // 손 커서의 위치와 보이기/숨기기를 담당합니다.
   function setPointer(point, now, landmarks = null) {
-    const baseTransform = "translate(-50%, -86%)";
+    const baseTransform = "translate(-50%, -86%) scaleY(-1)";
     handCursor.style.opacity = 1;
     handCursor.style.left = `${point.x}px`;
     handCursor.style.top = `${point.y}px`;
 
-    // 손목과 검지 끝의 각도를 계산하여 세로 지휘봉 이미지를 회전합니다.
+    // 손목과 검지/중지 끝의 평균 각도를 계산하여 세로 지휘봉 이미지를 회전합니다.
+    if (landmarks && landmarks.length >= 13) {
+      const wrist = landmarks[0];
+      const indexTip = landmarks[8];
+      const middleTip = landmarks[12];
+
+      // 검지와 중지의 평균 위치를 사용하여 더 안정적인 방향 계산
+      const fingerX = (indexTip.x + middleTip.x) / 2;
+      const fingerY = (indexTip.y + middleTip.y) / 2;
+
+      // 손가락에서 손목 방향으로 계산하여 회전 방향 반전
+      const dx = wrist.x - fingerX;
+      const dy = wrist.y - fingerY;
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+      handCursor.style.transform = `${baseTransform} rotate(${angle}deg)`;
+      return;
+    }
+
+    // 랜드마크가 부족한 경우 검지만 사용
     if (landmarks && landmarks.length > 8) {
       const wrist = landmarks[0];
       const indexTip = landmarks[8];
-      const dx = indexTip.x - wrist.x;
-      const dy = indexTip.y - wrist.y;
+      // 손가락에서 손목 방향으로 계산하여 회전 방향 반전
+      const dx = wrist.x - indexTip.x;
+      const dy = wrist.y - indexTip.y;
       const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
       handCursor.style.transform = `${baseTransform} rotate(${angle}deg)`;
       return;

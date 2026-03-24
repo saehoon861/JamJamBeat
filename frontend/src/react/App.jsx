@@ -3,14 +3,19 @@ import { DEFAULT_LAYOUT } from "../js/instrument_layout.js";
 import { useInstrumentLayout } from "./hooks/useInstrumentLayout.js";
 import { useMainControls } from "./hooks/useMainControls.js";
 import { useLegacyMainRuntime } from "./hooks/useLegacyMainRuntime.js";
-import logoWebp from "../../assets/로고-removebg-preview.webp";
-// import logoPng from "../../assets/로고-removebg-preview.png";
-const logoPng = logoWebp; 
-import batonImage from "../../assets/objects/지휘봉.png";
-import backgroundVideo from "../../assets/objects/움직이는_동화_영상_만들기.mp4?url";
-import handGesturesGuide from "../../assets/objects/Change_the_cats_hand_gesture_to_make_a_pinky_fing-1774251764915.png";
-import hedgehogCreditVideo from "../../assets/objects/고슴도치1.mov?url";
-import penguinCreditVideo from "../../assets/objects/팽귄1.mov?url";
+import {
+  getAllModelConfigs,
+  getCurrentModelId,
+  switchModel
+} from "../js/model_manager.js";
+
+const logoWebp = "/assets/로고-removebg-preview.webp";
+const logoPng = logoWebp;
+const batonImage = "/assets/objects/지휘봉.png";
+const backgroundVideo = "/assets/objects/움직이는_동화_영상_만들기.mp4";
+const handGesturesGuide = "/assets/objects/Change_the_cats_hand_gesture_to_make_a_pinky_fing-1774251764915.png";
+const hedgehogCreditVideo = "/assets/objects/고슴도치1.mov";
+const penguinCreditVideo = "/assets/objects/팽귄1.mov";
 
 const INSTRUMENTS = [
   {
@@ -122,6 +127,65 @@ export default function App() {
   const [showTutorial, setShowTutorial] = React.useState(false);
   const [showCredits, setShowCredits] = React.useState(false);
   const [tutorialPracticeEnabled, setTutorialPracticeEnabled] = React.useState(false);
+  const [bgmEnabled, setBgmEnabled] = React.useState(true);
+  const [bgmVolume, setBgmVolume] = React.useState(0.22);
+  const [selectedModelId, setSelectedModelId] = React.useState(() => getCurrentModelId());
+  const [modelLoading, setModelLoading] = React.useState(false);
+
+  const landingBgmRef = React.useRef(null);
+  const modelConfigs = getAllModelConfigs();
+
+  React.useEffect(() => {
+    const audio = new Audio("/assets/sounds/봄을 부르는 피아노 음악 🌷 싱그러운 선율 들어요 [bExNhDN12HI].mp3");
+    audio.loop = true;
+    audio.volume = bgmVolume;
+    landingBgmRef.current = audio;
+
+    const tryPlay = () => {
+      if (!landingBgmRef.current) return;
+      audio.play().catch(() => {
+        window.addEventListener('click', tryPlay, { once: true });
+        window.addEventListener('keydown', tryPlay, { once: true });
+      });
+    };
+    tryPlay();
+
+    return () => {
+      window.removeEventListener('click', tryPlay);
+      window.removeEventListener('keydown', tryPlay);
+      if (landingBgmRef.current) {
+        landingBgmRef.current.pause();
+        landingBgmRef.current.removeAttribute('src');
+        landingBgmRef.current = null;
+      }
+    };
+  }, []);
+
+  // 배경음악 켜기/끄기 상태 관리
+  React.useEffect(() => {
+    if (!landingBgmRef.current) return;
+    if (bgmEnabled) {
+      landingBgmRef.current.play().catch(() => { });
+    } else {
+      landingBgmRef.current.pause();
+    }
+  }, [bgmEnabled]);
+
+  // 음량 변경
+  React.useEffect(() => {
+    if (landingBgmRef.current) {
+      landingBgmRef.current.volume = bgmVolume;
+    }
+  }, [bgmVolume]);
+
+  const toggleBgm = () => {
+    setBgmEnabled(!bgmEnabled);
+  };
+
+  const handleVolumeChange = (event) => {
+    const newVolume = parseFloat(event.target.value);
+    setBgmVolume(newVolume);
+  };
 
   const handleStartClick = () => {
     setTutorialPracticeEnabled(false);
@@ -144,9 +208,8 @@ export default function App() {
 
   const skipTutorialAndStart = () => {
     setShowTutorial(false);
-    if (!tutorialPracticeEnabled) {
-      requestStart();
-    }
+    setTutorialPracticeEnabled(false);
+    requestStart();
   };
 
   const openCredits = () => {
@@ -171,6 +234,36 @@ export default function App() {
       window.dispatchEvent(new CustomEvent("jamjam:refresh-camera-target"));
     }
   }, [showTutorial, tutorialPracticeEnabled]);
+
+  // 모델 로딩 이벤트 리스너
+  React.useEffect(() => {
+    const handleModelLoading = () => setModelLoading(true);
+    const handleModelLoaded = (event) => {
+      setModelLoading(false);
+      setSelectedModelId(event.detail.modelId);
+    };
+    const handleModelError = () => setModelLoading(false);
+
+    window.addEventListener("jamjam:model-loading", handleModelLoading);
+    window.addEventListener("jamjam:model-loaded", handleModelLoaded);
+    window.addEventListener("jamjam:model-load-error", handleModelError);
+
+    return () => {
+      window.removeEventListener("jamjam:model-loading", handleModelLoading);
+      window.removeEventListener("jamjam:model-loaded", handleModelLoaded);
+      window.removeEventListener("jamjam:model-load-error", handleModelError);
+    };
+  }, []);
+
+  const handleModelChange = async (event) => {
+    const newModelId = event.target.value;
+    if (newModelId === selectedModelId) return;
+
+    const success = await switchModel(newModelId);
+    if (!success) {
+      alert("모델 로딩에 실패했습니다. 콘솔을 확인해주세요.");
+    }
+  };
 
   return (
     <>
@@ -202,50 +295,49 @@ export default function App() {
               <span className="tutorial-icon" aria-hidden="true">✨</span>
               <h2 className="tutorial-title">숲의 지휘자 연습실</h2>
             </header>
-            
+
             <p className="tutorial-description">
-              나의 손동작을 카메라에 비춰보세요!<br/>
+              나의 손동작을 카메라에 비춰보세요!<br />
               6가지 동작을 따라 하면 숲의 음악이 시작됩니다.
             </p>
 
             <div className="tutorial-interactive-area">
               <div className="tutorial-image-container">
-                <img 
-                  src={handGesturesGuide} 
-                  alt="6가지 손동작 가이트" 
-                  className="tutorial-image" 
+                <img
+                  src={handGesturesGuide}
+                  alt="6가지 손동작 가이트"
+                  className="tutorial-image"
                 />
               </div>
 
               <div className="tutorial-vision-head">
                 <p className="test-mode-eyebrow">연습 미리보기</p>
-                <p id="tutorialVisionSummary" className="tutorial-vision-summary">왼쪽은 원본 손, 오른쪽은 모델 입력 좌표입니다.</p>
+                <p id="tutorialVisionSummary" className="tutorial-vision-summary">아래 화면을 보며 동작을 연습해 보세요.</p>
               </div>
-              <div className="tutorial-vision-grid">
+              <div className="tutorial-vision-grid" style={{ gridTemplateColumns: '1fr', maxWidth: '320px', margin: '0 auto' }}>
                 <article className="tutorial-vision-card">
-                  <h3>원본 손</h3>
-                  <div className="tutorial-mirror-zone">
-                    {tutorialPracticeEnabled ? (
-                      <>
-                        <div className="camera-shell tutorial-camera-shell" aria-hidden="true">
-                          <video id="webcam" autoPlay playsInline muted />
-                        </div>
-                        <canvas id="handCanvas" className="tutorial-hand-canvas" />
-                      </>
-                    ) : (
-                      <div className="tutorial-camera-placeholder" aria-hidden="true" />
-                    )}
+                  <h3 style={{ textAlign: 'center', marginBottom: '14px' }}>나의 손동작</h3>
+                  <div style={{ position: 'relative' }}>
+                    <canvas
+                      id="tutorialNormalizedCanvas"
+                      className="test-mode-normalized-canvas tutorial-normalized-canvas"
+                      width="220"
+                      height="220"
+                      aria-hidden="true"
+                      style={{ width: '100%', height: 'auto', aspectRatio: '1/1' }}
+                    />
+                    <div id="tutorialGestureResult" style={{
+                      position: 'absolute',
+                      bottom: '12px', left: '50%', transform: 'translateX(-50%)',
+                      background: 'rgba(0,0,0,0.6)', color: '#fff',
+                      padding: '8px 18px', borderRadius: '20px',
+                      fontWeight: '800', fontSize: '1.05rem',
+                      whiteSpace: 'nowrap', opacity: 0, transition: 'all 0.3s ease',
+                      pointerEvents: 'none'
+                    }}>
+                      인식 중...
+                    </div>
                   </div>
-                </article>
-                <article className="tutorial-vision-card">
-                  <h3>모델 입력</h3>
-                  <canvas
-                    id="tutorialNormalizedCanvas"
-                    className="test-mode-normalized-canvas tutorial-normalized-canvas"
-                    width="220"
-                    height="220"
-                    aria-hidden="true"
-                  />
                 </article>
               </div>
             </div>
@@ -337,11 +429,108 @@ export default function App() {
             <div className="landing-logo-container">
               <img className="landing-logo" src={logoPng} srcSet={logoWebp} alt="JamJam Beat Logo" loading="eager" />
             </div>
+
+            <div style={{
+              margin: '16px 0',
+              padding: '12px',
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: '8px',
+              backdropFilter: 'blur(10px)'
+            }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                color: '#fff',
+                fontSize: '0.95rem',
+                fontWeight: '600',
+                textShadow: '0 2px 4px rgba(0,0,0,0.5)'
+              }}>
+                🤖 AI 모델 선택
+              </label>
+              <select
+                value={selectedModelId}
+                onChange={handleModelChange}
+                disabled={modelLoading}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  background: 'rgba(255,255,255,0.9)',
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  borderRadius: '6px',
+                  color: '#333',
+                  fontSize: '0.9rem',
+                  cursor: modelLoading ? 'wait' : 'pointer',
+                  fontWeight: '500'
+                }}
+              >
+                {modelConfigs.map((config) => (
+                  <option key={config.id} value={config.id}>
+                    {config.name} - {config.description}
+                  </option>
+                ))}
+              </select>
+              {modelLoading && (
+                <p style={{
+                  marginTop: '8px',
+                  fontSize: '0.85rem',
+                  color: '#fff',
+                  textAlign: 'center',
+                  textShadow: '0 2px 4px rgba(0,0,0,0.5)'
+                }}>
+                  모델 로딩 중...
+                </p>
+              )}
+            </div>
+
             <button id="landingStartButton" type="button" onClick={handleStartClick}>시작하기</button>
             <button className="landing-credits-button" type="button" onClick={openCredits}>만든 사람들</button>
             <button className="landing-exit-button" type="button" onClick={handleExitClick}>종료하기</button>
           </div>
-        </section>
+        </section>        <div className="bgm-horizontal-player" style={{
+          position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 100,
+          display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '14px',
+          background: 'transparent', width: 'fit-content', padding: '8px 20px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.1rem', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))' }}>🎵</span>
+            <span style={{ fontSize: '0.95rem', color: '#fff', fontWeight: '700', textShadow: '0 2px 6px rgba(0,0,0,0.6)', letterSpacing: '0.5px' }}>
+              봄을 부르는 피아노
+            </span>
+          </div>
+
+          <div style={{ width: '1px', height: '14px', background: 'rgba(255,255,255,0.4)', boxShadow: '0 0 4px rgba(0,0,0,0.5)' }} />
+
+          <button 
+            type="button" 
+            onClick={toggleBgm}
+            style={{
+              background: 'transparent', border: 'none', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: bgmEnabled ? '#fff' : '#ccc', fontSize: '1.25rem', transition: 'all 0.2s',
+              filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))', padding: 0
+            }}
+            title={bgmEnabled ? "배경음악 끄기" : "배경음악 켜기"}
+          >
+            {bgmEnabled ? "⏸" : "▶"}
+          </button>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '1rem', color: bgmEnabled ? '#fff' : '#ccc', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))' }}>
+              {bgmEnabled ? '🔊' : '🔈'}
+            </span>
+            <input 
+              type="range" 
+              min="0" max="0.8" step="0.01" 
+              value={bgmVolume} 
+              onChange={handleVolumeChange} 
+              disabled={!bgmEnabled}
+              style={{ 
+                width: '70px', accentColor: '#7db69e', cursor: bgmEnabled ? 'grab' : 'not-allowed',
+                opacity: bgmEnabled ? 0.9 : 0.4, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))'
+              }}
+            />
+          </div>
+        </div>
 
         <section className="layer layer-background" aria-hidden="true">
           <div className="bg-video-wrap" aria-hidden="true">
@@ -374,7 +563,6 @@ export default function App() {
           <div className="fog fog-b" />
           <div className="fog fog-c" />
         </section>
-
         <section id="instrumentLayer" className="layer layer-middleground" aria-label="인터랙티브 악기 숲">
           {INSTRUMENTS.map((instrument) => (
             <InstrumentButton key={instrument.id} instrument={instrument} />
@@ -382,14 +570,10 @@ export default function App() {
         </section>
 
         <section className="layer layer-foreground" aria-live="polite">
-          {!showTutorial && (
-            <>
-              <div className="camera-shell" aria-hidden="true">
-                <video id="webcam" autoPlay playsInline muted />
-              </div>
-              <canvas id="handCanvas" />
-            </>
-          )}
+          <div className="camera-shell" aria-hidden="true" style={{ opacity: showTutorial ? 0 : 1 }}>
+            <video id="webcam" autoPlay playsInline muted />
+          </div>
+          <canvas id="handCanvas" style={{ opacity: showTutorial ? 0 : 1, pointerEvents: 'none' }} />
           <div className="guide-silhouette" aria-hidden="true" />
           <div id="gestureSquirrelEffect" className="gesture-squirrel" aria-hidden="true">🐿️</div>
           <p id="pulseMessage" className="pulse-message">손을 잼잼! 해서 숲을 깨워봐!</p>

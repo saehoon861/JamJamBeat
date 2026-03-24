@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN pip install --upgrade pip
+
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+RUN pip install numpy
+
+COPY checkpoints ./checkpoints
+COPY test_backend ./test_backend
+
+ENV JAMJAM_HOST=0.0.0.0 \
+    JAMJAM_PORT=8008 \
+    JAMJAM_MODEL_PATH=/app/checkpoints/best_model.pth
+
+EXPOSE 8008
+
+CMD ["python", "-m", "test_backend.infer_server"]

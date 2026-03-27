@@ -320,7 +320,7 @@ def resolve_agent_config(raw_config: dict[str, Any]) -> dict[str, Any]:
 
     mutation_cfg = dict(config.get("mutation") or {})
     config["mutation"] = {
-        "enabled": bool(mutation_cfg.get("enabled", True)),
+        "enabled": bool(mutation_cfg.get("enabled", False)),
         "max_consecutive_failures_before_golden_reset": int(
             mutation_cfg.get("max_consecutive_failures_before_golden_reset", 3)
         ),

@@ -43,6 +43,18 @@ LATEST_AGENT_RUN_PATH = AGENT_RUNS_ROOT / "latest_agent_run.json"
 ROLE_DATASET_DIRNAME = "role_datasets"
 TRIAL_RUNTIME_DIRNAME = "trial_runtime"
 ROLE_DATASET_CACHE_VERSION = 2
+TERMINAL_RUN_STATUSES = {"completed", "stopped", "finished_without_mutation", "finished_with_workspace_error"}
+MUTATION_PHASE_STOP_NO_IMPROVEMENT = 5
+MUTATION_PHASE_MIN_SUCCESS_RATIO = 0.20
+MUTATION_PHASE_ENTRY_MIN_SUCCESS_RATIO = 0.40
+WORKSPACE_CONFLICT_MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
+WORKSPACE_SHARED_PREFLIGHT_FILES = [
+    MODEL_PIPELINES_DIR / "run_pipeline.py",
+    MODEL_PIPELINES_DIR / "run_all.py",
+    MODEL_PIPELINES_DIR / "new_run_pipeline.py",
+    MODEL_PIPELINES_DIR / "_shared.py",
+    MODEL_ROOT / "model_evaluation" / "모델검증관련파일" / "evaluation_runtime.py",
+]
 
 
 def now_kst() -> datetime:
@@ -548,6 +560,11 @@ def setup_agent_run(agent_dir: Path, resolved_config: dict[str, Any], source_con
         "completed_trials": 0,
         "failed_attempts_consecutive": 0,
         "mutation_failure_streak": 0,
+        "mutation_phase_attempts": 0,
+        "mutation_phase_completed": 0,
+        "mutation_phase_failures": 0,
+        "mutation_trials_since_improvement": 0,
+        "workspace_invalid_count": 0,
         "current_backoff_seconds": 0,
         "backoff_index": 0,
         "next_retry_at_kst": None,
@@ -562,6 +579,7 @@ def setup_agent_run(agent_dir: Path, resolved_config: dict[str, Any], source_con
         "recent_scenario_streak": 0,
         "pair_cooldowns": {},
         "invalid_role_scenarios": {},
+        "mutation_stop_reason": None,
         "goal": dict(resolved_config["goal"]),
         "best": None,
         "last_candidate": None,
@@ -690,6 +708,9 @@ def _get_phase_sequence(config: dict[str, Any]) -> list[tuple[str, int]]:
 
 def maybe_advance_phase(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     state = deepcopy(state)
+    if str(state.get("status") or "") in TERMINAL_RUN_STATUSES:
+        return state
+
     phase_sequence = _get_phase_sequence(config)
     budgets = dict(phase_sequence)
     phase = str(state.get("phase_name") or "broad_search")
@@ -702,6 +723,25 @@ def maybe_advance_phase(state: dict[str, Any], config: dict[str, Any]) -> dict[s
     idx = phase_names.index(phase)
     next_idx = (idx + 1) % len(phase_names)
     next_phase = phase_names[next_idx]
+
+    if next_phase == "mutation_search":
+        agent_dir = resolve_agent_dir(state["run_id"])
+        can_enter, reason = _can_enter_mutation_phase(agent_dir, state, config)
+        if not can_enter:
+            state["status"] = "finished_without_mutation"
+            state["mutation_stop_reason"] = reason
+            state["updated_at_kst"] = iso_now()
+            append_jsonl(
+                agent_dir / "decision_log.jsonl",
+                {
+                    "event": "mutation_phase_skipped",
+                    "timestamp_kst": iso_now(),
+                    "phase_from": phase,
+                    "reason": reason,
+                },
+            )
+            return state
+
     state["phase_name"] = next_phase
     state["phase_trial_index"] = 0
     if next_idx == 0:
@@ -1524,6 +1564,141 @@ def _nvidia_smi_snapshot() -> str:
     return payload or f"nvidia-smi exited with code {completed.returncode}"
 
 
+def _workspace_preflight_paths(candidate: dict[str, Any] | None = None) -> tuple[list[Path], Path | None]:
+    paths = list(WORKSPACE_SHARED_PREFLIGHT_FILES)
+    mutation_target: Path | None = None
+    if candidate and candidate.get("mutation"):
+        mutation_target = (PROJECT_ROOT / str(candidate["mutation"]["target_file"])).resolve()
+        if mutation_target not in paths:
+            paths.append(mutation_target)
+    return paths, mutation_target
+
+
+def _scan_conflict_markers(path: Path) -> tuple[bool, str | None]:
+    if not path.exists():
+        return False, None
+    for idx, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if any(marker in line for marker in WORKSPACE_CONFLICT_MARKERS):
+            return True, f"{path}:{idx}"
+    return False, None
+
+
+def _py_compile_single(path: Path) -> tuple[bool, list[str], list[str]]:
+    completed = subprocess.run(
+        [sys.executable, "-m", "py_compile", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    stdout_tail = _tail_text_lines(completed.stdout or "", limit=100)
+    stderr_tail = _tail_text_lines(completed.stderr or "", limit=100)
+    return completed.returncode == 0, stdout_tail, stderr_tail
+
+
+def _workspace_preflight(candidate: dict[str, Any] | None = None, *, post_mutation: bool = False) -> dict[str, Any]:
+    paths, mutation_target = _workspace_preflight_paths(candidate)
+    for path in paths:
+        has_markers, marker_location = _scan_conflict_markers(path)
+        if has_markers:
+            return {
+                "valid": False,
+                "failure_reason": "workspace_invalid",
+                "message": f"merge_conflict_marker_detected:{marker_location}",
+                "path": str(path),
+                "stdout_tail": [],
+                "stderr_tail": [],
+            }
+
+    for path in paths:
+        compiled, stdout_tail, stderr_tail = _py_compile_single(path)
+        if compiled:
+            continue
+        if mutation_target is not None and path == mutation_target and post_mutation:
+            reason = "mutation_compile_error"
+        elif path in WORKSPACE_SHARED_PREFLIGHT_FILES:
+            reason = "shared_runner_parse_error"
+        else:
+            reason = "workspace_invalid"
+        return {
+            "valid": False,
+            "failure_reason": reason,
+            "message": f"py_compile_failed:{path.name}",
+            "path": str(path),
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+        }
+
+    return {
+        "valid": True,
+        "failure_reason": None,
+        "message": None,
+        "path": None,
+        "stdout_tail": [],
+        "stderr_tail": [],
+    }
+
+
+def _classify_runtime_failure(
+    *,
+    candidate: dict[str, Any],
+    returncode: int,
+    log_tail: list[str],
+) -> str:
+    if returncode == -9:
+        return "runner_exit_code_-9"
+
+    payload = "\n".join(log_tail)
+    shared_runner_files = ("run_pipeline.py", "run_all.py", "new_run_pipeline.py", "_shared.py", "evaluation_runtime.py")
+    if any(name in payload for name in shared_runner_files) and any(
+        token in payload for token in ("SyntaxError", "IndentationError", "NameError", "ImportError")
+    ):
+        return "shared_runner_parse_error"
+
+    if candidate.get("phase") == "mutation_search" and candidate.get("mutation"):
+        return "mutation_runtime_error"
+
+    return f"runner_exit_code_{returncode}"
+
+
+def _mutation_phase_success_ratio(state: dict[str, Any]) -> float | None:
+    attempts = int(state.get("mutation_phase_attempts") or 0)
+    if attempts <= 0:
+        return None
+    return float(int(state.get("mutation_phase_completed") or 0) / attempts)
+
+
+def _mutation_phase_stop_reason(state: dict[str, Any]) -> str | None:
+    if int(state.get("workspace_invalid_count") or 0) > 0:
+        return "workspace_invalid"
+    if int(state.get("mutation_trials_since_improvement") or 0) >= MUTATION_PHASE_STOP_NO_IMPROVEMENT:
+        return "mutation_no_improvement_streak"
+    ratio = _mutation_phase_success_ratio(state)
+    if ratio is not None and int(state.get("mutation_phase_attempts") or 0) >= MUTATION_PHASE_STOP_NO_IMPROVEMENT:
+        if ratio < MUTATION_PHASE_MIN_SUCCESS_RATIO:
+            return "mutation_low_success_ratio"
+    return None
+
+
+def _can_enter_mutation_phase(agent_dir: Path, state: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str | None]:
+    if not bool(config.get("mutation", {}).get("enabled")):
+        return False, "mutation_disabled"
+
+    best = state.get("best") or {}
+    if str(best.get("phase") or "") != "grid_search":
+        return False, "mutation_requires_grid_champion"
+
+    decision_metrics = _decision_metrics(agent_dir)
+    recent_ratio = decision_metrics.get("recent_20_success_ratio")
+    if recent_ratio is None or float(recent_ratio) < MUTATION_PHASE_ENTRY_MIN_SUCCESS_RATIO:
+        return False, "mutation_recent_success_ratio_too_low"
+
+    preflight = _workspace_preflight()
+    if not preflight["valid"]:
+        return False, str(preflight["failure_reason"] or "workspace_invalid")
+
+    return True, None
+
+
 def _run_command_streaming(cmd: list[str], *, cwd: Path, log_path: Path) -> tuple[int, list[str]]:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
@@ -1587,6 +1762,8 @@ def execute_candidate(agent_dir: Path, candidate: dict[str, Any]) -> dict[str, A
         "effective_hyperparameters": deepcopy(candidate["hyperparameters"]),
         "returncode": None,
         "log_tail": [],
+        "stdout_tail": [],
+        "stderr_tail": [],
         "nvidia_smi_snapshot": None,
     }
 
@@ -1603,14 +1780,73 @@ def execute_candidate(agent_dir: Path, candidate: dict[str, Any]) -> dict[str, A
     disk_pre = _collect_disk_diagnostics(config)
 
     try:
+        atomic_write_text(log_path, "")
+
         if mutation:
+            preflight = _workspace_preflight(candidate, post_mutation=False)
+            if not preflight["valid"]:
+                with log_path.open("a", encoding="utf-8") as log_file:
+                    log_file.write(
+                        "[experiment_agent] workspace preflight failed before mutation: "
+                        f"{preflight['failure_reason']} {preflight['message']}\n"
+                    )
+                result.update(
+                    {
+                        "status": "workspace_invalid",
+                        "failure_reason": preflight["failure_reason"],
+                        "log_path": str(log_path),
+                        "output_root": str(output_root) if output_root else None,
+                        "stdout_tail": list(preflight.get("stdout_tail") or []),
+                        "stderr_tail": list(preflight.get("stderr_tail") or []),
+                    }
+                )
+                worker_log(
+                    agent_dir,
+                    (
+                        f"workspace invalid before mutation: id={candidate['candidate_id']} "
+                        f"model={candidate['model_id']} scenario={candidate['scenario_name']} "
+                        f"reason={preflight['failure_reason']}"
+                    ),
+                    slot=worker_slot,
+                )
+                return result
+
             mutation_details = apply_code_mutation(agent_dir, mutation)
             result["mutation_applied"] = True
             result["mutation_details"] = mutation_details
+            post_preflight = _workspace_preflight(candidate, post_mutation=True)
+            if not post_preflight["valid"]:
+                with log_path.open("a", encoding="utf-8") as log_file:
+                    log_file.write(
+                        "[experiment_agent] workspace preflight failed after mutation: "
+                        f"{post_preflight['failure_reason']} {post_preflight['message']}\n"
+                    )
+                failure_reason = str(post_preflight["failure_reason"] or "workspace_invalid")
+                result.update(
+                    {
+                        "status": "workspace_invalid"
+                        if failure_reason in {"workspace_invalid", "shared_runner_parse_error"}
+                        else "failed",
+                        "failure_reason": failure_reason,
+                        "log_path": str(log_path),
+                        "output_root": str(output_root) if output_root else None,
+                        "stdout_tail": list(post_preflight.get("stdout_tail") or []),
+                        "stderr_tail": list(post_preflight.get("stderr_tail") or []),
+                    }
+                )
+                worker_log(
+                    agent_dir,
+                    (
+                        f"mutation preflight blocked execution: id={candidate['candidate_id']} "
+                        f"model={candidate['model_id']} scenario={candidate['scenario_name']} "
+                        f"reason={failure_reason}"
+                    ),
+                    slot=worker_slot,
+                )
+                return result
 
         effective_candidate = deepcopy(candidate)
         cmd, output_root, runtime_meta = _build_candidate_command(agent_dir, effective_candidate)
-        atomic_write_text(log_path, "")
         worker_log(
             agent_dir,
             (
@@ -1623,6 +1859,8 @@ def execute_candidate(agent_dir: Path, candidate: dict[str, Any]) -> dict[str, A
         returncode, log_tail = _run_command_streaming(cmd, cwd=MODEL_ROOT, log_path=log_path)
         result["returncode"] = int(returncode)
         result["log_tail"] = list(log_tail)
+        result["stdout_tail"] = list(log_tail)
+        result["stderr_tail"] = []
 
         if returncode == -9 and bool(config["search"].get("sigkill_retry_once", True)):
             retry_hparams = _build_retry_hparams(config=config, candidate=effective_candidate)
@@ -1648,6 +1886,8 @@ def execute_candidate(agent_dir: Path, candidate: dict[str, Any]) -> dict[str, A
                 returncode, log_tail = _run_command_streaming(cmd, cwd=MODEL_ROOT, log_path=log_path)
                 result["returncode"] = int(returncode)
                 result["log_tail"] = list(log_tail)
+                result["stdout_tail"] = list(log_tail)
+                result["stderr_tail"] = []
                 result["retry_succeeded"] = returncode == 0
 
         if result["returncode"] != 0:
@@ -1660,12 +1900,19 @@ def execute_candidate(agent_dir: Path, candidate: dict[str, Any]) -> dict[str, A
                 if result["retry_attempted"] or retry_floor_reached:
                     result["cooldown_requested"] = True
                     result["cooldown_trials"] = int(config["search"].get("sigkill_cooldown_trials", 12))
+            failure_reason = _classify_runtime_failure(
+                candidate=effective_candidate,
+                returncode=int(result["returncode"]),
+                log_tail=list(result.get("log_tail") or []),
+            )
             result.update(
                 {
-                    "status": "failed",
-                    "failure_reason": f"runner_exit_code_{result['returncode']}",
+                    "status": "workspace_invalid"
+                    if failure_reason in {"workspace_invalid", "shared_runner_parse_error"}
+                    else "failed",
+                    "failure_reason": failure_reason,
                     "log_path": str(log_path),
-                    "output_root": str(output_root),
+                    "output_root": str(output_root) if output_root else None,
                 }
             )
             worker_log(
@@ -1818,6 +2065,8 @@ def execute_candidate(agent_dir: Path, candidate: dict[str, Any]) -> dict[str, A
             "output_dir": str(run_dir) if run_dir else result.get("output_dir"),
             "log_path": str(log_path),
             "log_tail": list(result.get("log_tail") or []),
+            "stdout_tail": list(result.get("stdout_tail") or []),
+            "stderr_tail": list(result.get("stderr_tail") or []),
             "retry_attempted": bool(result.get("retry_attempted")),
             "retry_succeeded": bool(result.get("retry_succeeded")),
             "cooldown_requested": bool(result.get("cooldown_requested")),
@@ -1935,6 +2184,11 @@ def _render_report(agent_dir: Path, detail: str) -> str:
         f"- last_failure_at_kst: {state.get('last_failure_at_kst')}",
         f"- runner_exit_code_-9_count: {decision_metrics['runner_exit_code_-9_count']}",
         f"- recent_20_success_ratio: {decision_metrics['recent_20_success_ratio']}",
+        f"- workspace_invalid_count: {decision_metrics['workspace_invalid_count']}",
+        f"- shared_runner_parse_error_count: {decision_metrics['shared_runner_parse_error_count']}",
+        f"- mutation_failure_streak: {int(state.get('mutation_failure_streak') or 0)}",
+        f"- mutation_recent_success_ratio: {decision_metrics['mutation_recent_success_ratio']}",
+        f"- mutation_stop_reason: {state.get('mutation_stop_reason')}",
         f"- invalid_scenarios: {len(invalid_role_scenarios)}",
         (
             "- top_fail_models: "
@@ -2025,6 +2279,22 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
     worker_slot = candidate.get("worker_slot")
     effective_hyperparameters = deepcopy(result.get("effective_hyperparameters") or candidate["hyperparameters"])
 
+    def _update_recent_streaks(state: dict[str, Any]) -> None:
+        previous_model_id = state.get("recent_model_id")
+        previous_scenario_name = state.get("recent_scenario_name")
+        state["recent_model_id"] = candidate["model_id"]
+        state["recent_scenario_name"] = candidate["scenario_name"]
+        state["recent_model_streak"] = (
+            int(state.get("recent_model_streak") or 0) + 1
+            if previous_model_id == candidate["model_id"]
+            else 1
+        )
+        state["recent_scenario_streak"] = (
+            int(state.get("recent_scenario_streak") or 0) + 1
+            if previous_scenario_name == candidate["scenario_name"]
+            else 1
+        )
+
     if result["status"] == "completed":
         study.tell(int(candidate["trial_number"]), values=float(result["score"]), state=TrialState.COMPLETE)
         with metadata_lock(agent_dir):
@@ -2036,25 +2306,15 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
             state["phase_trial_index"] = int(state.get("phase_trial_index") or 0) + 1
             state["updated_at_kst"] = iso_now()
             state["last_candidate"] = candidate
-            previous_model_id = state.get("recent_model_id")
-            previous_scenario_name = state.get("recent_scenario_name")
-            state["recent_model_id"] = candidate["model_id"]
-            state["recent_scenario_name"] = candidate["scenario_name"]
-            state["recent_model_streak"] = (
-                int(state.get("recent_model_streak") or 0) + 1
-                if previous_model_id == candidate["model_id"]
-                else 1
-            )
-            state["recent_scenario_streak"] = (
-                int(state.get("recent_scenario_streak") or 0) + 1
-                if previous_scenario_name == candidate["scenario_name"]
-                else 1
-            )
+            _update_recent_streaks(state)
 
             state["completed_trials"] = int(state.get("completed_trials") or 0) + 1
             state["last_success_at_kst"] = iso_now()
             state["failed_attempts_consecutive"] = 0
             state["mutation_failure_streak"] = 0
+            if candidate["phase"] == "mutation_search":
+                state["mutation_phase_attempts"] = int(state.get("mutation_phase_attempts") or 0) + 1
+                state["mutation_phase_completed"] = int(state.get("mutation_phase_completed") or 0) + 1
             state = _reset_backoff(state)
             _append_leaderboard_row(agent_dir, candidate, result)
             append_jsonl(
@@ -2072,6 +2332,7 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
                         ((result["metrics"].get("class0_metrics") or {}).get("false_positive_rate")) or 1.0
                     ),
                     "retry_attempted": bool(result.get("retry_attempted")),
+                    "failure_reason": None,
                     "trial_runtime_path": result.get("trial_runtime_path"),
                     "worker_slot": worker_slot,
                 },
@@ -2133,6 +2394,8 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
                     ),
                     slot=worker_slot,
                 )
+                if candidate["phase"] == "mutation_search":
+                    state["mutation_trials_since_improvement"] = 0
             elif result.get("mutation_applied"):
                 restore_named_snapshot(agent_dir, "champion")
                 append_jsonl(
@@ -2150,6 +2413,12 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
                     f"mutation rollback to champion: id={candidate['candidate_id']} reason=no_improvement",
                     slot=worker_slot,
                 )
+                if candidate["phase"] == "mutation_search":
+                    state["mutation_trials_since_improvement"] = int(
+                        state.get("mutation_trials_since_improvement") or 0
+                    ) + 1
+            elif candidate["phase"] == "mutation_search":
+                state["mutation_trials_since_improvement"] = int(state.get("mutation_trials_since_improvement") or 0) + 1
 
             if int(state["completed_trials"]) % int(config["reporting"]["periodic_every_completed_trials"]) == 0:
                 report_path = write_periodic_report(agent_dir, reason=f"periodic_{state['completed_trials']}")
@@ -2159,7 +2428,28 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
                     slot=worker_slot,
                 )
 
-            state["status"] = "completed" if goal_reached(config["goal"], (state.get("best") or {}).get("metrics") or {}) else "running"
+            mutation_stop_reason = None
+            if candidate["phase"] == "mutation_search":
+                mutation_stop_reason = _mutation_phase_stop_reason(state)
+                if mutation_stop_reason:
+                    state["status"] = "finished_without_mutation"
+                    state["mutation_stop_reason"] = mutation_stop_reason
+                    append_jsonl(
+                        agent_dir / "decision_log.jsonl",
+                        {
+                            "event": "mutation_phase_stopped",
+                            "timestamp_kst": iso_now(),
+                            "candidate_id": candidate["candidate_id"],
+                            "reason": mutation_stop_reason,
+                            "worker_slot": worker_slot,
+                        },
+                    )
+            if not mutation_stop_reason:
+                state["status"] = (
+                    "completed"
+                    if goal_reached(config["goal"], (state.get("best") or {}).get("metrics") or {})
+                    else "running"
+                )
             _write_study_summary(agent_dir)
             save_state(agent_dir, state)
     elif result["status"] == "invalid":
@@ -2192,6 +2482,55 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
             state["status"] = "running"
             _write_study_summary(agent_dir)
             save_state(agent_dir, state)
+    elif result["status"] == "workspace_invalid":
+        study.tell(int(candidate["trial_number"]), state=TrialState.FAIL)
+        with metadata_lock(agent_dir):
+            state = _prune_expired_pair_cooldowns(load_state(agent_dir))
+            inflight = [item for item in load_inflight(agent_dir) if item.get("candidate_id") != candidate["candidate_id"]]
+            save_inflight(agent_dir, inflight)
+
+            state["attempted_trials"] = int(state.get("attempted_trials") or 0) + 1
+            state["phase_trial_index"] = int(state.get("phase_trial_index") or 0) + 1
+            state["updated_at_kst"] = iso_now()
+            state["last_candidate"] = candidate
+            _update_recent_streaks(state)
+            state["last_failure_at_kst"] = iso_now()
+            state["workspace_invalid_count"] = int(state.get("workspace_invalid_count") or 0) + 1
+            if candidate["phase"] == "mutation_search":
+                state["mutation_phase_attempts"] = int(state.get("mutation_phase_attempts") or 0) + 1
+                state["mutation_phase_failures"] = int(state.get("mutation_phase_failures") or 0) + 1
+                state["mutation_trials_since_improvement"] = int(state.get("mutation_trials_since_improvement") or 0) + 1
+
+            append_jsonl(
+                agent_dir / "decision_log.jsonl",
+                {
+                    "event": "workspace_invalid",
+                    "timestamp_kst": iso_now(),
+                    "candidate_id": candidate["candidate_id"],
+                    "phase": candidate["phase"],
+                    "model_id": candidate["model_id"],
+                    "scenario_name": candidate["scenario_name"],
+                    "returncode": result.get("returncode"),
+                    "failure_reason": result.get("failure_reason"),
+                    "reason": result.get("failure_reason"),
+                    "stdout_tail": list(result.get("stdout_tail") or []),
+                    "stderr_tail": list(result.get("stderr_tail") or []),
+                    "trial_runtime_path": result.get("trial_runtime_path"),
+                    "worker_slot": worker_slot,
+                },
+            )
+            state["status"] = "finished_with_workspace_error"
+            state["mutation_stop_reason"] = result.get("failure_reason")
+            _write_study_summary(agent_dir)
+            save_state(agent_dir, state)
+        worker_log(
+            agent_dir,
+            (
+                f"workspace invalid: id={candidate['candidate_id']} model={candidate['model_id']} "
+                f"scenario={candidate['scenario_name']} reason={result.get('failure_reason')}"
+            ),
+            slot=worker_slot,
+        )
     else:
         study.tell(int(candidate["trial_number"]), state=TrialState.FAIL)
         with metadata_lock(agent_dir):
@@ -2203,23 +2542,14 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
             state["phase_trial_index"] = int(state.get("phase_trial_index") or 0) + 1
             state["updated_at_kst"] = iso_now()
             state["last_candidate"] = candidate
-            previous_model_id = state.get("recent_model_id")
-            previous_scenario_name = state.get("recent_scenario_name")
-            state["recent_model_id"] = candidate["model_id"]
-            state["recent_scenario_name"] = candidate["scenario_name"]
-            state["recent_model_streak"] = (
-                int(state.get("recent_model_streak") or 0) + 1
-                if previous_model_id == candidate["model_id"]
-                else 1
-            )
-            state["recent_scenario_streak"] = (
-                int(state.get("recent_scenario_streak") or 0) + 1
-                if previous_scenario_name == candidate["scenario_name"]
-                else 1
-            )
+            _update_recent_streaks(state)
 
             state["last_failure_at_kst"] = iso_now()
             state["status"] = "running"
+            if candidate["phase"] == "mutation_search":
+                state["mutation_phase_attempts"] = int(state.get("mutation_phase_attempts") or 0) + 1
+                state["mutation_phase_failures"] = int(state.get("mutation_phase_failures") or 0) + 1
+                state["mutation_trials_since_improvement"] = int(state.get("mutation_trials_since_improvement") or 0) + 1
             append_jsonl(
                 agent_dir / "decision_log.jsonl",
                 {
@@ -2230,11 +2560,14 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
                     "model_id": candidate["model_id"],
                     "scenario_name": candidate["scenario_name"],
                     "returncode": result.get("returncode"),
+                    "failure_reason": result.get("failure_reason"),
                     "reason": result.get("failure_reason"),
                     "retry_attempted": bool(result.get("retry_attempted")),
                     "cooldown_requested": bool(result.get("cooldown_requested")),
                     "nvidia_smi_snapshot": result.get("nvidia_smi_snapshot"),
                     "log_tail": list(result.get("log_tail") or []),
+                    "stdout_tail": list(result.get("stdout_tail") or []),
+                    "stderr_tail": list(result.get("stderr_tail") or []),
                     "trial_runtime_path": result.get("trial_runtime_path"),
                     "worker_slot": worker_slot,
                 },
@@ -2254,28 +2587,45 @@ def update_after_trial(agent_dir: Path, candidate: dict[str, Any], result: dict[
                 state["pair_cooldowns"][pair_key] = int(state["attempted_trials"]) + cooldown_trials
             if result.get("mutation_applied"):
                 restore_named_snapshot(agent_dir, "champion")
-                state["mutation_failure_streak"] = int(state.get("mutation_failure_streak") or 0) + 1
-                if state["mutation_failure_streak"] >= int(
-                    config["mutation"]["max_consecutive_failures_before_golden_reset"]
-                ):
-                    restore_named_snapshot(agent_dir, "golden")
-                    refresh_snapshot_from_current(agent_dir, "champion")
-                    state["last_golden_reset_at_kst"] = iso_now()
-                    state["mutation_failure_streak"] = 0
+                if result.get("failure_reason") in {"mutation_compile_error", "mutation_runtime_error"}:
+                    state["mutation_failure_streak"] = int(state.get("mutation_failure_streak") or 0) + 1
+                    if state["mutation_failure_streak"] >= int(
+                        config["mutation"]["max_consecutive_failures_before_golden_reset"]
+                    ):
+                        restore_named_snapshot(agent_dir, "golden")
+                        refresh_snapshot_from_current(agent_dir, "champion")
+                        state["last_golden_reset_at_kst"] = iso_now()
+                        state["mutation_failure_streak"] = 0
+                        append_jsonl(
+                            agent_dir / "decision_log.jsonl",
+                            {
+                                "event": "golden_reset",
+                                "timestamp_kst": iso_now(),
+                                "candidate_id": candidate["candidate_id"],
+                                "reason": "mutation_failure_streak",
+                                "worker_slot": worker_slot,
+                            },
+                        )
+                        worker_log(
+                            agent_dir,
+                            "golden reset executed after consecutive mutation failures",
+                            slot=worker_slot,
+                        )
+            mutation_stop_reason = None
+            if candidate["phase"] == "mutation_search":
+                mutation_stop_reason = _mutation_phase_stop_reason(state)
+                if mutation_stop_reason:
+                    state["status"] = "finished_without_mutation"
+                    state["mutation_stop_reason"] = mutation_stop_reason
                     append_jsonl(
                         agent_dir / "decision_log.jsonl",
                         {
-                            "event": "golden_reset",
+                            "event": "mutation_phase_stopped",
                             "timestamp_kst": iso_now(),
                             "candidate_id": candidate["candidate_id"],
-                            "reason": "mutation_failure_streak",
+                            "reason": mutation_stop_reason,
                             "worker_slot": worker_slot,
                         },
-                    )
-                    worker_log(
-                        agent_dir,
-                        "golden reset executed after consecutive mutation failures",
-                        slot=worker_slot,
                     )
             _write_study_summary(agent_dir)
             save_state(agent_dir, state)
@@ -2360,22 +2710,36 @@ def _read_decision_events(agent_dir: Path) -> list[dict[str, Any]]:
 
 def _decision_metrics(agent_dir: Path) -> dict[str, Any]:
     events = _read_decision_events(agent_dir)
-    failure_events = [event for event in events if event.get("event") == "trial_failed"]
+    failure_events = [event for event in events if event.get("event") in {"trial_failed", "workspace_invalid"}]
     outcome_events = [
         event
         for event in events
-        if event.get("event") in {"trial_completed", "trial_failed"}
+        if event.get("event") in {"trial_completed", "trial_failed", "workspace_invalid"}
     ]
     recent = outcome_events[-20:]
     recent_successes = sum(1 for event in recent if event.get("event") == "trial_completed")
     recent_ratio = (recent_successes / len(recent)) if recent else None
+    mutation_outcomes = [
+        event
+        for event in outcome_events
+        if str(event.get("phase") or "") == "mutation_search"
+    ]
+    mutation_recent = mutation_outcomes[-20:]
+    mutation_recent_successes = sum(1 for event in mutation_recent if event.get("event") == "trial_completed")
+    mutation_recent_ratio = (mutation_recent_successes / len(mutation_recent)) if mutation_recent else None
+    failure_reasons = [str(event.get("failure_reason") or event.get("reason") or "unknown") for event in failure_events]
     return {
         "runner_exit_code_-9_count": sum(
-            1 for event in failure_events if str(event.get("reason")) == "runner_exit_code_-9"
+            1
+            for event in failure_events
+            if str(event.get("failure_reason") or event.get("reason")) == "runner_exit_code_-9"
         ),
-        "failure_reason_counts": dict(Counter(str(event.get("reason")) for event in failure_events)),
+        "failure_reason_counts": dict(Counter(failure_reasons)),
         "model_fail_counts": dict(Counter(str(event.get("model_id")) for event in failure_events if event.get("model_id"))),
         "recent_20_success_ratio": recent_ratio,
+        "workspace_invalid_count": sum(1 for event in events if event.get("event") == "workspace_invalid"),
+        "shared_runner_parse_error_count": sum(1 for reason in failure_reasons if reason == "shared_runner_parse_error"),
+        "mutation_recent_success_ratio": mutation_recent_ratio,
     }
 
 
@@ -2417,6 +2781,11 @@ def build_status_payload(agent_dir: Path) -> dict[str, Any]:
         "runner_exit_code_-9_count": decision_metrics["runner_exit_code_-9_count"],
         "model_fail_counts": decision_metrics["model_fail_counts"],
         "recent_20_success_ratio": decision_metrics["recent_20_success_ratio"],
+        "workspace_invalid_count": decision_metrics["workspace_invalid_count"],
+        "shared_runner_parse_error_count": decision_metrics["shared_runner_parse_error_count"],
+        "mutation_failure_streak": int(state.get("mutation_failure_streak") or 0),
+        "mutation_recent_success_ratio": decision_metrics["mutation_recent_success_ratio"],
+        "mutation_stop_reason": state.get("mutation_stop_reason"),
         "invalid_scenarios": invalid_role_scenarios,
         "invalid_reason_counts": invalid_reason_counts,
     }

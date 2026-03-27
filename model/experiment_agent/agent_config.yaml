@@ -34,7 +34,7 @@ search:
     broad_search: 50
     refinement: 20
     grid_search: 16
-    mutation_search: 10
+    mutation_search: 0
   broad_top_k_context: 8
   max_consecutive_same_model: 2
   max_consecutive_same_scenario: 2
@@ -76,7 +76,7 @@ hyperparameters:
     fallback_fps: [30.0]
 
 mutation:
-  enabled: true
+  enabled: false
   max_consecutive_failures_before_golden_reset: 3
   allowed_globs:
     - model/model_pipelines/*/model.py

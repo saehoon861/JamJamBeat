@@ -93,6 +93,13 @@ def _worker_loop(run_id: str, slot: int) -> int:
     try:
         while True:
             state = tools.load_state(agent_dir)
+            if str(state.get("status") or "") in tools.TERMINAL_RUN_STATUSES:
+                return 0
+
+            if str(state.get("phase_name") or "") == "mutation_search" and slot != 0:
+                time.sleep(1.0)
+                continue
+
             best_metrics = ((state.get("best") or {}).get("metrics")) or {}
             if tools.goal_reached(config["goal"], best_metrics):
                 def mark_completed(payload: dict) -> dict:

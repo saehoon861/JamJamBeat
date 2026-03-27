@@ -116,6 +116,147 @@ uv run python model_pipelines/run_pipeline.py \
 
 ---
 
+## 5-1. 신규 4모델 전용 train/test 실행
+
+`new_run_pipeline.py`는 새로 추가한 topology-aware 4개 파이프라인만 묶어서 실행한다.
+
+- 대상 모델:
+  - `edge_stgu_mlp`
+  - `sparse_masked_mlp`
+  - `hierarchical_tree_mlp`
+  - `lappe_dist_mixer`
+- 입력:
+  - `--train-csv` 학습용 CSV 1개
+  - `--test-csv` 테스트용 CSV 1개
+- 특징:
+  - train CSV 내부를 랜덤 `8:2`로 나눠 `train/val` 생성
+  - source group이 있으면 group 단위 랜덤 분할, 없으면 row 단위 랜덤 분할
+  - `best val loss` 기준 가중치를 `model.pt`로 저장
+  - `--patience`로 early stopping 가능, 기본값은 `6`
+  - 추가 메타 컬럼이 있어도 `source_file`, `frame_idx`, `timestamp`, `gesture`, `x0..z20`만 사용
+  - `preds_inference.csv` 없음
+  - 기본 학습 recipe: `cross_entropy`, `--no-use-weighted-sampler`, `--no-use-alpha`, `--use-label-smoothing`
+  - `--label-smoothing 0.05` 같은 방식으로 smoothing 값 직접 지정 가능
+  - `comparison_suite.json`에 웹 근거 기반 모델 구성 설명 포함
+
+```bash
+# 4개 모델 전체 실행
+uv run python model_pipelines/new_run_pipeline.py \
+    --train-csv data_fusion/기존데이터셋/pos_scale.csv \
+    --test-csv data_fusion/테스트데이터셋/total_data_test_pos_scale.csv
+```
+
+```bash
+# 일부 모델만 선택 실행
+uv run python model_pipelines/new_run_pipeline.py \
+    --train-csv data_fusion/기존데이터셋/pos_scale.csv \
+    --test-csv data_fusion/테스트데이터셋/total_data_test_pos_scale.csv \
+    --models edge_stgu_mlp lappe_dist_mixer
+```
+
+```bash
+# 하이퍼파라미터 지정 예시
+uv run python model_pipelines/new_run_pipeline.py \
+    --train-csv data_fusion/기존데이터셋/pos_scale.csv \
+    --test-csv data_fusion/테스트데이터셋/total_data_test_pos_scale.csv \
+    --epochs 30 \
+    --batch-size 64 \
+    --lr 5e-4 \
+    --loss-type cross_entropy \
+    --no-use-weighted-sampler \
+    --no-use-alpha \
+    --use-label-smoothing \
+    --label-smoothing 0.05
+```
+
+---
+
+## 5-2. 무제한 자율 실험 에이전트 실행
+
+`experiment_agent`는 목표 점수에 도달할 때까지 모델, 데이터셋, 손실함수, 샘플러, 옵티마이저, 일부 구조 파라미터를 자동으로 바꿔가며 반복 실험한다.
+
+- 목표 종료 조건:
+  - `test accuracy >= 0.91`
+  - `test macro F1 >= 0.90`
+- 중간 보고:
+  - `10`개 completed trial마다 `periodic_reports/`에 요약 저장
+  - champion 갱신 시 즉시 추가 요약 저장
+  - 필요할 때 `status` / `report`로 현재 상태 조회
+- 실행 방식:
+  - 기본 `CUDA` 사용
+  - 기본 `parallel_workers: 3`
+  - `worker_0`, `worker_1`, `worker_2`가 병렬로 서로 다른 trial을 실행
+- 실패 복구:
+  - 실패 시 exponential back-off 재시도, 최대 `24시간`
+  - mutation 실패 누적 시 agent 시작 시점의 `golden snapshot`으로 복원 후 계속 진행
+- 데이터셋 매칭:
+  - train 후보는 `기존데이터셋` root CSV와 `증강데이터셋`의 `*frame_aug.csv`
+  - test 후보는 `total_data_test_*.csv` 4개
+  - `baseline / pos_only / scale_only / pos_scale` family를 train/test 파일명에서 맞춰서만 실험
+- 주의:
+  - 이 agent는 탐색 과정에서도 `test` 점수를 계속 사용하므로 strict hold-out 성격은 약해진다.
+
+```bash
+# 새 agent run 시작
+uv run python experiment_agent/run_agent.py start \
+    --config experiment_agent/agent_config.yaml
+```
+
+```bash
+# 현재 상태 확인
+uv run python experiment_agent/run_agent.py status --run-id {agent_run_id}
+```
+
+```bash
+# 실시간 worker 로그 보기
+tail -f model_evaluation/agent_runs/{agent_run_id}/logs/worker_0.log
+tail -f model_evaluation/agent_runs/{agent_run_id}/logs/worker_1.log
+tail -f model_evaluation/agent_runs/{agent_run_id}/logs/worker_2.log
+```
+
+```bash
+# 저장된 요약 리포트 확인
+uv run python experiment_agent/run_agent.py report \
+    --run-id {agent_run_id} \
+    --detail summary
+```
+
+```bash
+# 상세 리포트 확인
+uv run python experiment_agent/run_agent.py report \
+    --run-id {agent_run_id} \
+    --detail full
+```
+
+```bash
+# graceful stop 요청
+uv run python experiment_agent/run_agent.py stop --run-id {agent_run_id}
+```
+
+```bash
+# 중단된 run 재개
+uv run python experiment_agent/run_agent.py resume --run-id {agent_run_id}
+```
+
+결과 위치:
+
+- agent 상태/리포트:
+  - `model/model_evaluation/agent_runs/{agent_run_id}/`
+- agent가 실제로 실행한 runner 산출물:
+  - `model/model_evaluation/pipelines/agent_managed/{agent_run_id}/`
+
+주요 파일:
+
+- `state.json`: 현재 상태, back-off, best 후보
+- `inflight_candidates.json`: 현재 병렬 실행 중인 trial 예약 상태
+- `leaderboard.csv`: trial별 주요 점수 비교표
+- `decision_log.jsonl`: 후보 제안 / 실패 / champion 갱신 / golden reset 로그
+- `study_summary.json`: Optuna study 요약
+- `champions.json`: champion 변경 이력
+- `golden_snapshot_manifest.json`: 복구 기준 스냅샷 목록
+
+---
+
 ## 6. 주요 옵션
 
 | 옵션 | 기본값 | 설명 |
@@ -128,8 +269,10 @@ uv run python model_pipelines/run_pipeline.py \
 | `--use-weighted-sampler` | `true` | train loader에 weighted sampler 사용 여부 |
 | `--use-alpha` | `true` | class alpha(weight) 사용 여부 |
 | `--use-label-smoothing` | `false` | label smoothing 사용 여부 |
-| `--device` | `cpu` | `cpu` / `cuda` / `auto` |
+| `--device` | `cuda` | `cpu` / `cuda` / `auto` |
 | `--seed` | `42` | 재현성 시드 |
+
+기본 실행 장치는 `cuda`다. GPU 없이 돌릴 때만 `--device cpu`를 명시하면 된다.
 
 ```bash
 # 예: 에폭 50, 배치 64로 실행
@@ -176,6 +319,9 @@ model_evaluation/pipelines/
 ```
 
 `run_pipeline.py` 단독 실행은 `--output-root` 아래 `{model_id}/{timestamp}/`에 저장된다.
+
+`new_run_pipeline.py` 실행은 `--output-root` 아래 `{timestamp}__{train_stem}__{test_stem}/`에 저장된다.
+각 suite 안에는 `comparison_suite.json`, `comparison_results.csv`, 그리고 모델별 `latest.json` / `run_summary.json` / `evaluation/`가 생성된다.
 
 ---
 

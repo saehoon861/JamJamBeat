@@ -64,10 +64,13 @@ def detect_angle_cols(df: pd.DataFrame) -> list[str]:
 def sample_metadata(df: pd.DataFrame, idx: int) -> dict[str, Any]:
     """예측 결과 CSV에 다시 붙일 최소 메타데이터만 추출한다."""
     row = df.iloc[idx]
+    timestamp = row.get("timestamp", "")
+    if pd.isna(timestamp):
+        timestamp = ""
     return {
         "source_file": row.get("source_file", ""),
         "frame_idx": int(row.get("frame_idx", idx)),
-        "timestamp": row.get("timestamp", ""),
+        "timestamp": timestamp,
     }
 
 

@@ -203,4 +203,8 @@ def instantiate_model_from_state_dict(
         model = mod.EfficientNetLike(num_classes=num_classes)
         return model, default_seq_len, None, None
 
+    if model_id == "frame_spatial_transformer":
+        model = mod.LandmarkSpatialTransformer(num_classes=num_classes)
+        return model, default_seq_len, None, None
+
     raise ValueError(f"Unsupported model_id: {model_id}")

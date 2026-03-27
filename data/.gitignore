@@ -1,0 +1,5 @@
+# Project-local raw/intermediate data
+labeled_data/
+raw_data/
+total_data/
+landmark_data/

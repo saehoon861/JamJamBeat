@@ -31,10 +31,10 @@ search:
   sigkill_retry_once: true
   sigkill_cooldown_trials: 12
   phase_trial_budgets:
-    broad_search: 16
-    refinement: 6
-    grid_search: 6
-    mutation_search: 0
+    broad_search: 36
+    refinement: 14
+    grid_search: 12
+    mutation_search: 8
   broad_top_k_context: 8
   max_consecutive_same_model: 2
   max_consecutive_same_scenario: 2
@@ -76,7 +76,7 @@ hyperparameters:
     fallback_fps: [30.0]
 
 mutation:
-  enabled: false
+  enabled: true
   max_consecutive_failures_before_golden_reset: 3
   allowed_globs:
     - model/model_pipelines/*/model.py

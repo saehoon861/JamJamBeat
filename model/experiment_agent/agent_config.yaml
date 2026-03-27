@@ -23,7 +23,7 @@ retention:
 
 search:
   seed: 42
-  parallel_workers: 3
+  parallel_workers: 2
   max_parallel_heavy: 1
   max_parallel_medium: 2
   tpe_n_startup_trials: 12

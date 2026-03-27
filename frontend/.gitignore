@@ -1,9 +1,0 @@
-node_modules/
-dist/
-.env.local
-.env.*.local
-.env.development
-.env.production
-.env.staging
-.firebase/
-.firebaserc

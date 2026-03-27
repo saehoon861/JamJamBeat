@@ -121,7 +121,7 @@ def strict_load_state_dict(model: torch.nn.Module, state_dict: Mapping[str, Any]
 
 def infer_num_classes_from_state_dict(state_dict: Mapping[str, Any]) -> int:
     """Infer classifier output count from common head tensor names."""
-    for key in ("head.2.weight", "head.6.weight", "head.weight", "net.6.weight", "net.4.weight"):
+    for key in ("head.2.weight", "head.6.weight", "head.weight", "net.6.weight", "net.4.weight", "classifier.3.weight"):
         tensor = state_dict.get(key)
         if tensor is not None and hasattr(tensor, "shape") and len(tensor.shape) == 2:
             return int(tensor.shape[0])
@@ -203,8 +203,23 @@ def instantiate_model_from_state_dict(
         model = mod.EfficientNetLike(num_classes=num_classes)
         return model, default_seq_len, None, None
 
-    if model_id == "frame_spatial_transformer":
-        model = mod.LandmarkSpatialTransformer(num_classes=num_classes)
-        return model, default_seq_len, None, None
+    if model_id in {"Landmark_Spatial_Transformer", "frame_spatial_transformer"}:
+        use_cls_token = "cls_token" in state_dict
+        d_model = 64
+        if "coord_embed.0.weight" in state_dict:
+            d_model = state_dict["coord_embed.0.weight"].shape[0]
+
+        model = mod.LandmarkSpatialTransformer(
+            num_landmarks=21,
+            coord_dim=3,
+            num_classes=num_classes,
+            d_model=d_model,
+            num_heads=4,
+            num_layers=2,
+            ff_dim=128,
+            dropout=0.2,
+            use_cls_token=use_cls_token,
+        )
+        return model, default_seq_len, 63, None
 
     raise ValueError(f"Unsupported model_id: {model_id}")

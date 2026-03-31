@@ -84,11 +84,14 @@ MODEL_CHOICES = [
     "mlp_embedding",
     "cnn1d_tcn",
     "transformer_embedding",
+    "frame_spatial_transformer",
     "mobilenetv3_small",
     "shufflenetv2_x0_5",
     "efficientnet_b0",
     "Landmark_Spatial_Transformer",
 ]
+OPTIMIZER_CHOICES = ("adamw", "adam", "sgd", "rmsprop")
+DEFAULT_OPTIMIZER = "adamw"
 
 
 # -----------------------------------------------------------------------------
@@ -119,6 +122,31 @@ def resolve_paths(csv_paths: list[str]) -> list[Path]:
 
 def resolve_role_path(path_str: str) -> Path:
     return resolve_paths([path_str])[0]
+
+
+def parse_model_overrides(raw_value: str | None) -> dict[str, Any] | None:
+    """Parse model override JSON from an inline string or a JSON file path."""
+    if raw_value is None:
+        return None
+
+    raw_value = str(raw_value).strip()
+    if not raw_value:
+        return None
+
+    candidate_path = Path(raw_value)
+    if not candidate_path.is_absolute():
+        cwd_candidate = Path.cwd() / candidate_path
+        candidate_path = cwd_candidate if cwd_candidate.exists() else PROJECT_ROOT / candidate_path
+    if candidate_path.exists():
+        payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    else:
+        payload = json.loads(raw_value)
+
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("--model-overrides must resolve to a JSON object.")
+    return payload
 
 
 def normalize_source_groups(df: pd.DataFrame) -> pd.DataFrame:
@@ -437,6 +465,10 @@ class FocalLoss(nn.Module):
         return (weight * ce).mean()
 
 
+class EmptyPredictionDatasetError(ValueError):
+    """Raised when prediction is requested for an empty dataset split."""
+
+
 
 
 
@@ -468,13 +500,14 @@ def build_training_recipe(
     use_weighted_sampler: bool,
     use_alpha: bool,
     use_label_smoothing: bool,
+    label_smoothing_value: float,
     focal_gamma: float,
 ) -> tuple[WeightedRandomSampler | None, bool, nn.Module, dict[str, Any]]:
     """Train sampler / loss 조합을 현재 실험 설정에 맞게 조립한다."""
     sampler = create_weighted_sampler(labels) if use_weighted_sampler else None
     shuffle_train = sampler is None
     alpha = compute_alpha(labels, num_classes=num_classes, device=device) if use_alpha else None
-    label_smoothing = DEFAULT_LABEL_SMOOTHING if use_label_smoothing else 0.0
+    label_smoothing = float(label_smoothing_value) if use_label_smoothing else 0.0
 
     if loss_type == "cross_entropy":
         criterion = nn.CrossEntropyLoss(weight=alpha, label_smoothing=label_smoothing)
@@ -492,10 +525,35 @@ def build_training_recipe(
         "sampler_policy": "weighted_sampler" if use_weighted_sampler else "shuffle",
         "alpha_policy": "enabled" if use_alpha else "disabled",
         "label_smoothing_enabled": bool(use_label_smoothing),
+        "configured_label_smoothing": float(label_smoothing_value),
         "effective_label_smoothing": float(label_smoothing),
         "effective_focal_gamma": float(focal_gamma),
     }
     return sampler, shuffle_train, criterion, recipe_meta
+
+
+def build_optimizer(
+    model: nn.Module,
+    *,
+    optimizer_name: str,
+    lr: float,
+    weight_decay: float,
+    momentum: float = 0.9,
+) -> torch.optim.Optimizer:
+    """Construct an optimizer from a small supported set for experiment search."""
+    name = str(optimizer_name).strip().lower()
+    params = model.parameters()
+
+    if name == "adamw":
+        return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+    if name == "adam":
+        return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
+    if name == "sgd":
+        return torch.optim.SGD(params, lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov=True)
+    if name == "rmsprop":
+        return torch.optim.RMSprop(params, lr=lr, weight_decay=weight_decay, momentum=momentum)
+
+    raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
 
 def get_dataset_labels(dataset: Dataset, *, model_id: str, split_name: str = "train") -> np.ndarray:
@@ -611,10 +669,24 @@ def predict_dataset(
     mode: str,
     num_classes: int,
     device: torch.device,
+    *,
+    model_id: str = "",
+    scenario_name: str = "",
+    split_name: str = "test",
 ) -> pd.DataFrame:
     """test split 전체를 순회하며 평가용 예측 원본 CSV를 만든다."""
     model.eval()
     records: list[dict[str, Any]] = []
+    dataset_size = int(len(dataset))
+    loader_dataset = getattr(loader, "dataset", None)
+    loader_dataset_size = int(len(loader_dataset)) if loader_dataset is not None else dataset_size
+    context = f"model={model_id or 'unknown'} scenario={scenario_name or 'unknown'} split={split_name}"
+
+    if dataset_size == 0 or loader_dataset_size == 0:
+        raise EmptyPredictionDatasetError(
+            f"Prediction requested for empty dataset: {context} "
+            f"dataset_size={dataset_size} loader_dataset_size={loader_dataset_size}"
+        )
 
     for batch in loader:
         t0 = time.perf_counter()
@@ -623,13 +695,20 @@ def predict_dataset(
 
         probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
         y_np = y.detach().cpu().numpy().astype(int)
-        idx_np = idx.detach().cpu().numpy().astype(int)
+
+        # idx가 tensor(정수 인덱스)이면 dataset.meta 역참조, dict이면 직접 사용
+        if isinstance(idx, dict):
+            batch_meta = [{k: (v[i].item() if torch.is_tensor(v) else v[i]) for k, v in idx.items()} for i in range(len(y_np))]
+            idx_np = np.arange(len(y_np))
+        else:
+            idx_np = idx.detach().cpu().numpy().astype(int)
+            batch_meta = [dataset.meta[si] for si in idx_np]
 
         # 배치 단위 wall time을 샘플 수로 나눠 간단한 per-sample latency를 저장한다.
         per_sample_ms = infer_ms / max(len(idx_np), 1)
 
         for i, sample_idx in enumerate(idx_np):
-            meta = dataset.meta[sample_idx]
+            meta = batch_meta[i]
             p = probs[i]
             pred_cls = int(np.argmax(p))
 
@@ -650,6 +729,11 @@ def predict_dataset(
                 row[f"p{c}"] = float(p[c])
             records.append(row)
 
+    if not records:
+        raise EmptyPredictionDatasetError(
+            f"Prediction produced no records: {context} dataset_size={dataset_size}"
+        )
+
     return pd.DataFrame(records)
 
 
@@ -665,6 +749,7 @@ def build_experiment(
     image_size: int,
     num_classes: int,
     test_sequence_policy: str = "sliding",
+    model_overrides: dict[str, Any] | None = None,
 ) -> tuple[nn.Module, str, Dataset, Dataset, Dataset]:
     """
     model_id로 대응되는 builder를 동적 import 해서 dataset / model 조립 책임을 위임한다.
@@ -682,6 +767,8 @@ def build_experiment(
     )
     if "test_sequence_policy" in inspect.signature(mod.build).parameters:
         kwargs["test_sequence_policy"] = test_sequence_policy
+    if model_overrides is not None and "model_overrides" in inspect.signature(mod.build).parameters:
+        kwargs["model_overrides"] = model_overrides
     return mod.build(
         **kwargs,
     )
@@ -739,6 +826,7 @@ def run(args: argparse.Namespace) -> dict:
         merged_frames.append(inference_df)
     merged_df = pd.concat(merged_frames, ignore_index=True)
     angle_cols = detect_angle_cols(merged_df)
+    model_overrides = parse_model_overrides(getattr(args, "model_overrides", None))
 
     dataset_key = infer_dataset_key(input_roles["train"])
     normalization_family = infer_normalization_family(dataset_key)
@@ -755,6 +843,7 @@ def run(args: argparse.Namespace) -> dict:
     # 평가 리포트와 checkpoint 저장에 같은 class ordering을 사용한다.
     class_names = args.class_names if args.class_names else DEFAULT_CLASS_NAMES
     num_classes = len(class_names)
+    label_smoothing_value = float(args.label_smoothing)
 
     # 모델별 / 실행시각별 폴더를 분리해 실험 결과를 누적 저장한다.
     KST = timezone(timedelta(hours=9))
@@ -775,6 +864,7 @@ def run(args: argparse.Namespace) -> dict:
         image_size=args.image_size,
         num_classes=num_classes,
         test_sequence_policy="independent_repeat",
+        model_overrides=model_overrides,
     )
     model = model.to(device)
     dataset_info["dataset_sample_counts"] = {
@@ -797,6 +887,7 @@ def run(args: argparse.Namespace) -> dict:
             image_size=args.image_size,
             num_classes=num_classes,
             test_sequence_policy="sliding",
+            model_overrides=model_overrides,
         )
         if inference_mode != mode:
             raise ValueError(
@@ -815,6 +906,7 @@ def run(args: argparse.Namespace) -> dict:
         use_weighted_sampler=args.use_weighted_sampler,
         use_alpha=args.use_alpha,
         use_label_smoothing=args.use_label_smoothing,
+        label_smoothing_value=label_smoothing_value,
         focal_gamma=args.focal_gamma,
     )
 
@@ -853,7 +945,13 @@ def run(args: argparse.Namespace) -> dict:
     else:
         inference_loader = None
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = build_optimizer(
+        model,
+        optimizer_name=args.optimizer,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        momentum=args.momentum,
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(args.epochs, 1))
 
     # best validation loss 기준으로 early stopping과 checkpoint selection을 수행한다.
@@ -890,7 +988,7 @@ def run(args: argparse.Namespace) -> dict:
             stale = 0
         else:
             stale += 1
-            if stale >= args.patience:
+            if args.patience > 0 and stale >= args.patience:
                 print(f"[{args.model_id}] early stopping at epoch={epoch}")
                 break
 
@@ -904,6 +1002,9 @@ def run(args: argparse.Namespace) -> dict:
         mode=mode,
         num_classes=num_classes,
         device=device,
+        model_id=args.model_id,
+        scenario_name=dataset_key,
+        split_name="test",
     )
 
     preds_path = run_dir / "preds_test.csv"
@@ -917,6 +1018,9 @@ def run(args: argparse.Namespace) -> dict:
             mode=mode,
             num_classes=num_classes,
             device=device,
+            model_id=args.model_id,
+            scenario_name=dataset_key,
+            split_name="inference",
         )
         preds_inference_path = run_dir / "preds_inference.csv"
         preds_inference_df.to_csv(preds_inference_path, index=False)
@@ -948,6 +1052,7 @@ def run(args: argparse.Namespace) -> dict:
         "seq_len": args.seq_len,
         "seq_stride": args.seq_stride,
         "image_size": args.image_size,
+        "model_overrides": model_overrides,
         "checkpoint_verification": {
             **best_state_verification,
             "model_id": args.model_id,
@@ -1002,7 +1107,8 @@ def run(args: argparse.Namespace) -> dict:
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "lr": args.lr,
-            "optimizer": "AdamW",
+            "optimizer": args.optimizer,
+            "momentum": args.momentum,
             "weight_decay": args.weight_decay,
             "patience": args.patience,
             "loss_type": args.loss_type,
@@ -1010,6 +1116,8 @@ def run(args: argparse.Namespace) -> dict:
             "use_alpha": args.use_alpha,
             "use_label_smoothing": args.use_label_smoothing,
             "focal_gamma": args.focal_gamma,
+            "model_overrides": model_overrides,
+            "configured_label_smoothing": recipe_meta["configured_label_smoothing"],
             "label_smoothing": recipe_meta["effective_label_smoothing"],
             "sampler_policy": recipe_meta["sampler_policy"],
             "alpha_policy": recipe_meta["alpha_policy"],
@@ -1086,6 +1194,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=6)
     parser.add_argument(
+        "--optimizer",
+        type=str,
+        default=DEFAULT_OPTIMIZER,
+        choices=OPTIMIZER_CHOICES,
+        help=f"optimizer 종류. 기본값: {DEFAULT_OPTIMIZER}",
+    )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=0.9,
+        help="SGD/RMSprop용 momentum. 기본값: 0.9",
+    )
+    parser.add_argument(
         "--loss-type",
         type=str,
         default=DEFAULT_LOSS_TYPE,
@@ -1113,6 +1234,12 @@ def build_parser() -> argparse.ArgumentParser:
             f"활성화 시 smoothing={DEFAULT_LABEL_SMOOTHING}"
         ),
     )
+    parser.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=DEFAULT_LABEL_SMOOTHING,
+        help=f"label smoothing 값. 기본값: {DEFAULT_LABEL_SMOOTHING}",
+    )
     parser.add_argument("--focal-gamma", type=float, default=DEFAULT_FOCAL_GAMMA, help=argparse.SUPPRESS)
 
     parser.add_argument("--seq-len", type=int, default=8)
@@ -1129,6 +1256,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="cpu", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--class-names", nargs="*", default=[])
+    parser.add_argument(
+        "--model-overrides",
+        type=str,
+        default="",
+        help="모델 생성자 override JSON 문자열 또는 JSON 파일 경로.",
+    )
 
     return parser
 

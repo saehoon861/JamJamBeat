@@ -1,0 +1,11 @@
+[project]
+name = "labeling-tool"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.2",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.1",
+    "pyyaml>=6.0.3",
+]

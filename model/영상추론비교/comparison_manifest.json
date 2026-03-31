@@ -1,0 +1,17 @@
+{
+  "bundle_id": "pos_scale_mlp_sequence_delta_20260319_162806",
+  "model_id": "mlp_sequence_delta",
+  "checkpoint_fingerprint": "2f9e81b7a142a0cd92707eb903fe4880f55cbcf920676f6433104ddf8c006d09",
+  "video_path": "/home/user/projects/JamJamBeat/data/raw_data/2_fast_right_man1.mp4",
+  "viewer_bundle_dir": "/home/user/projects/JamJamBeat-model3/runtime_mlp_sequence_delta 20260319_162614_pos_scale 20260319_162806",
+  "frontend_bundle_dir": "/home/user/projects/JamJamBeat-model3/frontend/pos_scale_mlp_sequence_delta_20260319_162806/runtime",
+  "hand": "right",
+  "seq_len": 8,
+  "normalize": "pos_scale",
+  "tau_frontend": 0.85,
+  "tau_viewer_baseline": 0.9,
+  "tau_viewer_matched": 0.85,
+  "infer_fps": 15.0,
+  "model_interval_ms": 150.0,
+  "infer_width": 96
+}

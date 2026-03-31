@@ -11,7 +11,7 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PIPELINES_ROOT = PROJECT_ROOT / "model" / "model_evaluation" / "pipelines"
+PIPELINES_ROOT = Path("model_evaluation/pipelines/0319학습-신규라벨-보정사항변경")
 OUTPUT_CSV = PROJECT_ROOT / "model" / "model_evaluation" / "comparison_results_all_labeled.csv"
 OUTPUT_MD = PROJECT_ROOT / "model" / "model_evaluation" / "comparison_results_all_labeled.md"
 OUTPUT_XLSX = PROJECT_ROOT / "model" / "model_evaluation" / "comparison_results_all_labeled.xlsx"

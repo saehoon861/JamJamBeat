@@ -443,7 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fallback-fps", type=float, default=30.0)
 
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="cpu", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--device", default="cuda", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--class-names", nargs="*", default=[])
     return parser

@@ -1,0 +1,5 @@
+inactive_open_web_search:
+  enabled: false
+  reason: >
+    기본 파이프라인에서 YouTube/yt-dlp 기반 open web search 를 제거했습니다.
+    현재 수집은 repack_sources 와 file_direct 만 대상으로 합니다.

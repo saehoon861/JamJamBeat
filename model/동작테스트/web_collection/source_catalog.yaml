@@ -1,0 +1,235 @@
+version: 2
+
+global:
+  hard_cap_gb: 15
+  hard_cap_videos: 20
+  max_file_gb: 15
+
+sources:
+  file_direct:
+    - name: prashver_output_video_demo
+      kind: http_file
+      url: https://raw.githubusercontent.com/prashver/hand-landmark-recognition-using-mediapipe/main/video_input/output_video.mp4
+      license_note: Public demo file hosted in repository; verify upstream reuse intent before redistribution
+      estimated_semantic: webcam hand gesture demo video
+      notes: Small direct mp4 from public repository for immediate low-risk download testing
+      size_estimate_bytes: 3952804
+      needs_manual_review: true
+
+    - name: prashver_webcam_demo
+      kind: http_file
+      url: https://raw.githubusercontent.com/prashver/hand-landmark-recognition-using-mediapipe/main/webcam_video/demo.mp4
+      license_note: Public demo file hosted in repository; verify upstream reuse intent before redistribution
+      estimated_semantic: webcam hand pose and gesture demo
+      notes: Small direct mp4 from public repository for immediate low-risk download testing
+      size_estimate_bytes: 5741199
+      needs_manual_review: true
+
+    - name: prashver_input_video_demo
+      kind: http_file
+      url: https://raw.githubusercontent.com/prashver/hand-landmark-recognition-using-mediapipe/main/video_input/input_video.mp4
+      license_note: Public demo file hosted in repository; verify upstream reuse intent before redistribution
+      estimated_semantic: input webcam hand gesture demo video
+      notes: Additional tracked mp4 from the same public repository, stable raw path
+      size_estimate_bytes: 7193123
+      needs_manual_review: true
+
+    - name: gesturehandrecognition_demo
+      kind: http_file
+      url: https://user-images.githubusercontent.com/80295128/158713160-447d2cd2-3b9e-4740-8939-15f74c821635.mp4
+      license_note: Public GitHub user-images demo asset; verify reuse intent before redistribution
+      estimated_semantic: hand gesture recognition demo video
+      notes: Direct demo mp4 extracted from a public project page
+      size_estimate_bytes: 7334871
+      needs_manual_review: true
+
+    - name: onnx_hand_gesture_demo
+      kind: http_file
+      url: https://user-images.githubusercontent.com/33194443/189632510-1823cd54-bc36-4889-ac14-adc16deba9b8.mp4
+      license_note: Public GitHub user-images demo asset; verify reuse intent before redistribution
+      estimated_semantic: onnx hand gesture recognition demo video
+      notes: Direct demo mp4 extracted from a public project page
+      size_estimate_bytes: 6866158
+      needs_manual_review: true
+
+    - name: unity_hand_tracking_sample
+      kind: http_file
+      url: https://user-images.githubusercontent.com/43823795/286647269-6501564f-e36c-4903-b9ec-ef109571a650.mp4
+      license_note: Public GitHub user-images demo asset; verify reuse intent before redistribution
+      estimated_semantic: unity hand tracking and gesture recognition sample video
+      notes: Stable public demo mp4 extracted from a public project README
+      size_estimate_bytes: 9538723
+      needs_manual_review: true
+
+    - name: sign_language_translator_demo
+      kind: http_file
+      url: https://raw.githubusercontent.com/meet244/Sign-Language-Translator/master/assets/demo.mp4
+      license_note: Public demo file hosted in repository; verify upstream reuse intent before redistribution
+      estimated_semantic: hand sign and gesture translation demo video
+      notes: Stable tracked mp4 under repository assets directory
+      size_estimate_bytes: 10461275
+      needs_manual_review: true
+
+    - name: opencv_hand_gesture_demo_webm
+      kind: http_file
+      url: https://raw.githubusercontent.com/david-0609/OpenCV-Hand-Gesture-Control/master/Hand-Gesture-Detection-Demo.webm
+      license_note: Public demo file hosted in repository; verify upstream reuse intent before redistribution
+      estimated_semantic: webcam hand gesture control demo video
+      notes: Stable tracked webm file from a public repository; downstream quality screen will verify readability
+      size_estimate_bytes: 10171260
+      needs_manual_review: true
+
+    - name: ipn_hand_videos01_archive
+      kind: gdrive_file
+      url: https://drive.google.com/uc?id=1HylyDnApIRNMloREqvKYWWhB88q7Z1Cg
+      archive_filename: videos01.tgz
+      extract_mode: tgz_video_sample
+      sample_limit: 2
+      license_note: Creative Commons Attribution 4.0 per IPN Hand dataset page
+      estimated_semantic: continuous RGB hand gesture videos archive 01
+      notes: Official IPN Hand video archive; extract only a small sample of actual video files into inbox
+      size_estimate_bytes: 1046898278
+      needs_manual_review: true
+
+    - name: ipn_hand_videos02_archive
+      kind: gdrive_file
+      url: https://drive.google.com/uc?id=1tqR2FF8OlXGmYACw3TSxyS6QGDit_s3a
+      archive_filename: videos02.tgz
+      extract_mode: tgz_video_sample
+      sample_limit: 2
+      license_note: Creative Commons Attribution 4.0 per IPN Hand dataset page
+      estimated_semantic: continuous RGB hand gesture videos archive 02
+      notes: Official IPN Hand video archive; extract only a small sample of actual video files into inbox
+      size_estimate_bytes: 1046898278
+      needs_manual_review: true
+
+    - name: ipn_hand_videos03_archive
+      kind: gdrive_file
+      url: https://drive.google.com/uc?id=1Dk7l-jAAvNLlb0faypAco88XYLWPa9g_
+      archive_filename: videos03.tgz
+      extract_mode: tgz_video_sample
+      sample_limit: 2
+      license_note: Creative Commons Attribution 4.0 per IPN Hand dataset page
+      estimated_semantic: continuous RGB hand gesture videos archive 03
+      notes: Official IPN Hand video archive; extract only a small sample of actual video files into inbox
+      size_estimate_bytes: 1046898278
+      needs_manual_review: true
+
+    - name: ipn_hand_videos04_archive
+      kind: gdrive_file
+      url: https://drive.google.com/uc?id=1x0mDr-QHQtDkfcQAm9bKdWBR7Lj3fLcV
+      archive_filename: videos04.tgz
+      extract_mode: tgz_video_sample
+      sample_limit: 2
+      license_note: Creative Commons Attribution 4.0 per IPN Hand dataset page
+      estimated_semantic: continuous RGB hand gesture videos archive 04
+      notes: Official IPN Hand video archive; extract only a small sample of actual video files into inbox
+      size_estimate_bytes: 1046898278
+      needs_manual_review: true
+
+    - name: ipn_hand_videos05_archive
+      kind: gdrive_file
+      url: https://drive.google.com/uc?id=1PCjldH6hmVYV7EObPf-jtNWCtDK60o6n
+      archive_filename: videos05.tgz
+      extract_mode: tgz_video_sample
+      sample_limit: 2
+      license_note: Creative Commons Attribution 4.0 per IPN Hand dataset page
+      estimated_semantic: continuous RGB hand gesture videos archive 05
+      notes: Official IPN Hand video archive; extract only a small sample of actual video files into inbox
+      size_estimate_bytes: 1046898278
+      needs_manual_review: true
+
+  bulk_direct:
+    - name: ipn_hand_mp4_videos
+      kind: gdrive_any
+      url: https://drive.google.com/open?id=1O4Fn_jbAEcKIksXHmQIMcHTyaDw4wt9x
+      license_note: Creative Commons Attribution 4.0 per IPN Hand dataset page
+      estimated_semantic: continuous RGB hand gesture videos
+      notes: >
+        Bulk Google Drive folder. 다운로드량이 크고 파일 수가 많아 기본 자동 수집 대상에서 제외합니다.
+      manual_reason: bulk_source
+
+  manual_pages:
+    - name: egogesture_dataset
+      kind: page_only
+      url: https://nlpr.ia.ac.cn/iva/yfzhang/datasets/egogesture.html
+      license_note: Check official page before use
+      estimated_semantic: egocentric static and dynamic hand gestures
+      notes: Official dataset page; commonly distributed behind manual flow
+      manual_reason: manual_only_license
+
+    - name: rgbd_in_hand_manipulation
+      kind: page_only
+      url: https://www.rgbdinhandmanipulation.com/
+      license_note: See official page
+      estimated_semantic: in-hand object manipulation sequences
+      notes: >
+        Public dataset page with direct download references, but link resolution
+        should be checked manually before pulling into this workspace.
+      manual_reason: manual_only_license
+
+  repack_sources:
+    - name: hagrid_grabbing
+      kind: http_file
+      url: https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/hagrid_v2/hagrid_v2_zip/grabbing.zip
+      license_note: CC BY-SA 4.0 variant per HaGRID page
+      estimated_semantic: static grabbing hand pose images
+      auto_download: false
+      manual_reason: image_source_out_of_scope
+      repack_mode: slideshow_still
+      fps: 30
+      clip_duration_sec: 1.0
+      sample_limit: 2
+      needs_manual_review: true
+
+    - name: hagrid_grip
+      kind: http_file
+      url: https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/hagrid_v2/hagrid_v2_zip/grip.zip
+      license_note: CC BY-SA 4.0 variant per HaGRID page
+      estimated_semantic: static grip hand pose images
+      auto_download: false
+      manual_reason: image_source_out_of_scope
+      repack_mode: slideshow_still
+      fps: 30
+      clip_duration_sec: 1.0
+      sample_limit: 2
+      needs_manual_review: true
+
+    - name: hagrid_fist
+      kind: http_file
+      url: https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/hagrid/hagrid_dataset_new_554800/hagrid_dataset/fist.zip
+      license_note: CC BY-SA 4.0 variant per HaGRID page
+      estimated_semantic: static fist hand pose images
+      auto_download: false
+      manual_reason: image_source_out_of_scope
+      repack_mode: slideshow_still
+      fps: 30
+      clip_duration_sec: 1.0
+      sample_limit: 2
+      needs_manual_review: true
+
+    - name: hagrid_palm
+      kind: http_file
+      url: https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/hagrid/hagrid_dataset_new_554800/hagrid_dataset/palm.zip
+      license_note: CC BY-SA 4.0 variant per HaGRID page
+      estimated_semantic: static open palm hand pose images
+      auto_download: false
+      manual_reason: image_source_out_of_scope
+      repack_mode: slideshow_still
+      fps: 30
+      clip_duration_sec: 1.0
+      sample_limit: 2
+      needs_manual_review: true
+
+    - name: hagrid_no_gesture
+      kind: http_file
+      url: https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/hagrid_v2/hagrid_v2_zip/no_gesture.zip
+      license_note: CC BY-SA 4.0 variant per HaGRID page
+      estimated_semantic: natural non-gesture hand postures
+      auto_download: false
+      manual_reason: image_source_out_of_scope
+      repack_mode: slideshow_still
+      fps: 30
+      clip_duration_sec: 1.0
+      sample_limit: 2
+      needs_manual_review: true

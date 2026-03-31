@@ -202,9 +202,13 @@ def instantiate_model_from_state_dict(
     if model_id == "efficientnet_b0":
         model = mod.EfficientNetLike(num_classes=num_classes)
         return model, default_seq_len, None, None
-
-    if model_id in {"Landmark_Spatial_Transformer", "frame_spatial_transformer"}:
+    
+    if model_id == "Landmark_Spatial_Transformer":
+        # [Fix] 학습된 체크포인트 상태(cls_token 유무)를 감지하여 use_cls_token 자동 설정
+        # 이를 통해 학습/추론 설정 불일치로 인한 예측 오류(Neutral 고정 등)를 방지합니다.
         use_cls_token = "cls_token" in state_dict
+
+        # d_model도 가중치 shape에서 추론 (coord_embed.0.weight: [d_model, coord_dim])
         d_model = 64
         if "coord_embed.0.weight" in state_dict:
             d_model = state_dict["coord_embed.0.weight"].shape[0]
@@ -219,7 +223,7 @@ def instantiate_model_from_state_dict(
             ff_dim=128,
             dropout=0.2,
             use_cls_token=use_cls_token,
-        )
+            )
         return model, default_seq_len, 63, None
-
+    
     raise ValueError(f"Unsupported model_id: {model_id}")

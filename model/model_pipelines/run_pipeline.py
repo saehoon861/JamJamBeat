@@ -88,6 +88,7 @@ MODEL_CHOICES = [
     "mobilenetv3_small",
     "shufflenetv2_x0_5",
     "efficientnet_b0",
+    "Landmark_Spatial_Transformer",
 ]
 OPTIMIZER_CHOICES = ("adamw", "adam", "sgd", "rmsprop")
 DEFAULT_OPTIMIZER = "adamw"

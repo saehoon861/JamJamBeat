@@ -340,6 +340,7 @@ cat model_evaluation/pipelines/{suite_name}/mlp_baseline/latest.json
 
 ---
 
+<<<<<<< HEAD
 ## 9. 모델별 영상/이미지 체크
 
 현재 기본 viewer는 `video_check_app_train_aligned.py`다.  
@@ -377,6 +378,31 @@ uv run python "model_evaluation/모델별영상체크/video_check_app_train_alig
 - `model_evaluation/pipelines/{suite_name}/{model_id}/latest.json`
 
 재생 컨트롤:
+=======
+## 8. 모델별 영상 체크 (추론 시각화)
+
+학습된 모델을 실제 영상에 돌려보고 예측 결과를 오버레이로 확인한다.
+
+**사전 조건:** 프로젝트 루트에 `hand_landmarker.task` 파일이 있어야 한다.
+
+### UI 모드 (드롭다운으로 run/영상 선택)
+
+```bash
+uv run python "model_evaluation/모델별영상체크/video_check_app.py"
+```
+
+실행하면 학습된 run과 `../data/raw_data/` 영상을 자동으로 탐색해 드롭다운으로 선택할 수 있다.
+
+### 직접 지정 모드
+
+```bash
+uv run python "model_evaluation/모델별영상체크/video_check_app.py" \
+  --run-dir model_evaluation/pipelines/mlp_baseline/20260310_082223 \
+  --video ../data/raw_data/4_slow_right_man3.mp4
+```
+
+### 재생 컨트롤
+>>>>>>> develop
 
 | 키 | 동작 |
 |----|------|
@@ -386,6 +412,7 @@ uv run python "model_evaluation/모델별영상체크/video_check_app_train_alig
 | `R` | 처음부터 재시작 |
 | `Q` / `Esc` | 종료 |
 
+<<<<<<< HEAD
 ### 9-2. 영상 export
 
 ```bash
@@ -489,12 +516,25 @@ run_dir/error_analysis/
 ---
 
 ## 11. PoC 수용 기준
+=======
+> 영상 전체를 먼저 분석한 뒤 재생 창이 열린다.
+> `cnn1d_tcn`, `transformer_embedding` 등 sequence 모델은 초반 몇 프레임은 워밍업 구간이라 예측이 불안정할 수 있다.
+
+---
+
+## 9. PoC 수용 기준
+>>>>>>> develop
 
 | 지표 | 기준 |
 |------|------|
 | `macro_f1` | ≥ 0.80 |
 | `class0_fnr` | < 0.10 |
+<<<<<<< HEAD
 | `latency_p50_ms` | < 200 |
 
 > 현재 공식 랭킹용 `*_test.csv`는 독립 정지사진 기반 landmark 세트이므로
 > `fp_per_min`은 공식 비교에 사용하지 않는다. 필요하면 video / inference runtime 분석에서만 본다.
+=======
+| `fp_per_min` | < 2.0 |
+| `latency_p95_ms` | < 200 |
+>>>>>>> develop

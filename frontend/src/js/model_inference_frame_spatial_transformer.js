@@ -97,7 +97,8 @@ function normalizeHandKey(handKey = "default") {
 }
 
 function isInferenceEnabledForHand(handKey = "default") {
-  return normalizeHandKey(handKey) !== "left";
+  // 왼손 추론을 허용합니다. (미러링 전처리가 적용됨)
+  return true;
 }
 
 function createDisabledPrediction() {
@@ -483,7 +484,10 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
   const requestIntervalMs = getRequestIntervalMs();
   if (!onnxSession) {
     const initialized = await initializeModel();
-    if (!initialized) return;
+    if (!initialized) {
+      console.warn("[FrameSpatialTransformer] 모델 세션이 유효하지 않아 추론을 시도할 수 없습니다. 경로를 확인하세요.");
+      return;
+    }
   }
 
   if (handState.inFlight) return;
@@ -509,6 +513,10 @@ async function scheduleModelRequest(landmarks, now, handKey = "default") {
       perfWindow.maxMs = Math.max(perfWindow.maxMs, elapsedMs);
     }
   } catch (error) {
+    console.error("[FrameSpatialTransformer] 추론 실행 중 에러 발생:", {
+      message: error.message,
+      landmarksLength: landmarks?.length
+    });
     console.error("[FrameSpatialTransformer] 추론 실패:", error);
     if (PERF_ENABLED) {
       const elapsedMs = performance.now() - requestStartedAt;

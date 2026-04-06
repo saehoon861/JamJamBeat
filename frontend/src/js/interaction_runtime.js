@@ -42,7 +42,9 @@ export function createInteractionRuntime({
   const HELD_ONESHOT_INTERVAL_MS = Math.max(gestureCooldownMs, 220);
   const SOUND_DEBUG = (() => {
     const raw = new URLSearchParams(window.location.search).get("soundDebug");
-    return raw === "1" || raw === "true";
+    if (raw === "1" || raw === "true") return true;
+    if (raw === "0" || raw === "false") return false;
+    return Boolean(import.meta.env.DEV); // 개발 환경(npm run dev)에서는 기본적으로 활성화
   })();
 
   function logSoundDebug(stage, payload = {}) {
@@ -56,7 +58,8 @@ export function createInteractionRuntime({
   }
 
   function isGestureEnabledForHand(handKey = "default") {
-    return String(handKey || "default").trim().toLowerCase() !== "left";
+    // 왼손 상호작용을 허용합니다.
+    return true;
   }
 
   function createDisabledGestureResult() {
@@ -519,6 +522,17 @@ export function createInteractionRuntime({
     handState.lastResolvedGesture = gesture ? { ...gesture } : null;
     handState.lastRawModelPrediction = rawModel ? { ...rawModel } : null;
 
+    // 모델이 예측한 확률 분포를 로그로 출력 (soundDebug=1일 때만)
+    if (rawModel && rawModel.probs) {
+      logSoundDebug("gesture.rawModelPrediction", {
+        handKey,
+        label: rawModel.label,
+        confidence: Number((rawModel.confidence * 100).toFixed(1)),
+        probs: rawModel.probs.map(p => Number((p * 100).toFixed(1))), // 확률을 백분율로 변환하여 소수점 첫째 자리까지 표시
+        status: rawModel.status,
+        tauNeutralized: rawModel.tau_neutralized
+      });
+    }
     // 제스처가 없거나 신뢰도가 매우 낮으면 멜로디 중지
     const shouldStopMelody = !gesture || gesture.label === "None" ||
                              (gesture.confidence < getGestureStartConfidenceFloor(gesture.label) && gesture.label !== handState.lastGestureLabel);

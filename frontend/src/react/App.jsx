@@ -35,18 +35,13 @@ const penguinCreditVideo = "/assets/objects/팽귄1.mov";
 
 const BGM_PLAYLIST = [
   {
-    id: "nursery",
-    title: "행복해지는 놀이음악",
-    src: "/assets/sounds/[놀이음악]행복해지는 귀엽고 산뜻한 놀이음악, 밝은 음악 😍 Nersery Rhymes for Kidsㅣ코코키즈 [Qo5bmDQRVTY].mp3",
-    slots: ["morning", "day"]
-  },
-  {
     id: "spring-piano",
     title: "봄을 부르는 피아노",
     src: "/assets/sounds/봄을 부르는 피아노 음악 🌷 싱그러운 선율 들어요 [bExNhDN12HI].mp3",
     slots: ["evening", "night"]
   }
 ];
+const AUTO_BGM_TRACK_ID = "spring-piano";
 
 const INSTRUMENTS = [
   {
@@ -148,27 +143,12 @@ function buildObjectSampleMappingState() {
   );
 }
 
-function getCurrentTimeSlot(date = new Date()) {
-  const hour = date.getHours();
-  if (hour < 11) return "morning";
-  if (hour < 17) return "day";
-  if (hour < 21) return "evening";
-  return "night";
-}
-
-function getTimeSlotLabel(slot) {
-  if (slot === "morning") return "아침";
-  if (slot === "day") return "낮";
-  if (slot === "evening") return "저녁";
-  return "밤";
-}
-
-function resolveBgmTrack(selection, timeSlot) {
+function resolveBgmTrack(selection) {
   if (selection !== "auto") {
     return BGM_PLAYLIST.find((track) => track.id === selection) || BGM_PLAYLIST[0];
   }
 
-  return BGM_PLAYLIST.find((track) => track.slots.includes(timeSlot)) || BGM_PLAYLIST[0];
+  return BGM_PLAYLIST.find((track) => track.id === AUTO_BGM_TRACK_ID) || BGM_PLAYLIST[0];
 }
 
 function getInstrumentStyle(id, isMvpButton) {
@@ -262,7 +242,6 @@ function BgmPlayer({
   bgmEnabled,
   bgmSelection,
   bgmVolume,
-  timeSlot,
   onSelectionChange,
   onToggle,
   onVolumeChange
@@ -274,7 +253,7 @@ function BgmPlayer({
         <div className="bgm-player-text">
           <span className="bgm-player-title">{activeBgmTrack.title}</span>
           <span className="bgm-player-mode">
-            {bgmSelection === "auto" ? `자동 · ${getTimeSlotLabel(timeSlot)} 시간` : "수동 선택"}
+            {bgmSelection === "auto" ? "자동 선택" : "수동 선택"}
           </span>
         </div>
       </div>
@@ -431,7 +410,6 @@ export default function App() {
   const [bgmEnabled, setBgmEnabled] = React.useState(true);
   const [bgmVolume, setBgmVolume] = React.useState(0.22);
   const [bgmSelection, setBgmSelection] = React.useState("auto");
-  const [timeSlot, setTimeSlot] = React.useState(() => getCurrentTimeSlot());
   const [selectedModelId, setSelectedModelId] = React.useState(() => getCurrentModelId());
   const [modelLoading, setModelLoading] = React.useState(false);
   const [landingVisible, setLandingVisible] = React.useState(true);
@@ -440,9 +418,12 @@ export default function App() {
   const [gestureMapping, setGestureMapping] = React.useState(() => buildGestureMappingState());
   const [objectSampleMapping, setObjectSampleMapping] = React.useState(() => buildObjectSampleMappingState());
 
+  const [isHudCollapsed, setIsHudCollapsed] = React.useState(false);
+
   const landingBgmRef = React.useRef(null);
+
   const modelConfigs = getAllModelConfigs();
-  const activeBgmTrack = resolveBgmTrack(bgmSelection, timeSlot);
+  const activeBgmTrack = resolveBgmTrack(bgmSelection);
   const sceneUiState = showCredits
     ? "credits"
     : showTutorial
@@ -452,11 +433,8 @@ export default function App() {
         : "playing";
   const shouldPlayBgm = bgmEnabled && sceneUiState !== "playing";
 
-  React.useEffect(() => {
-    const syncTimeSlot = () => setTimeSlot(getCurrentTimeSlot());
-    syncTimeSlot();
-    const timer = window.setInterval(syncTimeSlot, 60_000);
-    return () => window.clearInterval(timer);
+  const requestCameraRefresh = React.useCallback(() => {
+    window.dispatchEvent(new CustomEvent("jamjam:refresh-camera-target"));
   }, []);
 
   React.useEffect(() => {
@@ -537,22 +515,49 @@ export default function App() {
 
   React.useEffect(() => {
     const audio = new Audio(activeBgmTrack.src);
+    audio.preload = "auto";
     audio.loop = true;
     audio.volume = bgmVolume;
     landingBgmRef.current = audio;
 
+    let disposed = false;
+
     const tryPlay = () => {
+      if (disposed) return;
       if (!landingBgmRef.current || !shouldPlayBgm) return;
-      audio.play().catch(() => {
-        window.addEventListener('click', tryPlay, { once: true });
-        window.addEventListener('keydown', tryPlay, { once: true });
-      });
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {
+          // 첫 사용자 입력 또는 미디어 버퍼 준비 이후 다시 재생을 시도합니다.
+        });
+      }
     };
+
+    const handleFirstInteraction = () => {
+      tryPlay();
+    };
+
+    const handleCanPlay = () => {
+      tryPlay();
+    };
+
+    audio.addEventListener("canplay", handleCanPlay);
+    audio.addEventListener("canplaythrough", handleCanPlay);
+    audio.load();
+
+    window.addEventListener("pointerdown", handleFirstInteraction, { passive: true });
+    window.addEventListener("touchend", handleFirstInteraction, { passive: true });
+    window.addEventListener("keydown", handleFirstInteraction);
+
     tryPlay();
 
     return () => {
-      window.removeEventListener('click', tryPlay);
-      window.removeEventListener('keydown', tryPlay);
+      disposed = true;
+      audio.removeEventListener("canplay", handleCanPlay);
+      audio.removeEventListener("canplaythrough", handleCanPlay);
+      window.removeEventListener("pointerdown", handleFirstInteraction);
+      window.removeEventListener("touchend", handleFirstInteraction);
+      window.removeEventListener("keydown", handleFirstInteraction);
       if (landingBgmRef.current) {
         landingBgmRef.current.pause();
         landingBgmRef.current.removeAttribute('src');
@@ -639,18 +644,21 @@ export default function App() {
   const closeTutorial = () => {
     setShowTutorial(false);
     requestStart();
+    requestCameraRefresh();
   };
 
   const startTutorialPractice = () => {
     if (!tutorialPracticeEnabled) {
       setTutorialPracticeEnabled(true);
     }
+    requestCameraRefresh();
   };
 
   const skipTutorialAndStart = () => {
     setShowTutorial(false);
     setTutorialPracticeEnabled(false);
     requestStart();
+    requestCameraRefresh();
   };
 
   const openCredits = () => {
@@ -671,10 +679,10 @@ export default function App() {
   };
 
   React.useEffect(() => {
-    if (!showTutorial || tutorialPracticeEnabled) {
-      window.dispatchEvent(new CustomEvent("jamjam:refresh-camera-target"));
+    if (!landingVisible || tutorialPracticeEnabled) {
+      requestCameraRefresh();
     }
-  }, [showTutorial, tutorialPracticeEnabled]);
+  }, [landingVisible, tutorialPracticeEnabled, requestCameraRefresh]);
 
   // 모델 로딩 이벤트 리스너
   React.useEffect(() => {
@@ -869,7 +877,6 @@ export default function App() {
           bgmEnabled={bgmEnabled}
           bgmSelection={bgmSelection}
           bgmVolume={bgmVolume}
-          timeSlot={timeSlot}
           onSelectionChange={handleBgmSelectionChange}
           onToggle={toggleBgm}
           onVolumeChange={handleVolumeChange}
@@ -922,36 +929,55 @@ export default function App() {
           <p id="pulseMessage" className="pulse-message">손을 잼잼! 해서 숲을 깨워봐!</p>
         </section>
 
-        <section className="hud hud-panel" aria-live="polite">
-          <h2>잼잼비트 숲의 입구</h2>
-          <p id="status" className="status">카메라 준비 중...</p>
-          <button id="soundUnlockButton" className="sound-unlock" type="button" onClick={requestSoundToggle}>{soundButtonLabel}</button>
-          <button id="testModeToggleButton" className="test-mode-toggle" type="button">테스트 모드 켜기</button>
-          <button
-            className="hud-settings-toggle"
-            type="button"
-            onClick={() => setShowSoundSettings((current) => !current)}
-            aria-expanded={showSoundSettings}
-          >
-            {showSoundSettings ? "환경설정 닫기" : "환경설정"}
-          </button>
-          {showSoundSettings && (
-            <SoundSettingsPanel
-              instrumentVolumes={instrumentVolumes}
-              gestureMapping={gestureMapping}
-              objectSampleMapping={objectSampleMapping}
-              onVolumeChange={handleInstrumentVolumeChange}
-              onObjectSampleChange={handleObjectSampleChange}
-              onGestureMappingChange={handleGestureMappingChange}
-              onReset={handleResetInstrumentVolumes}
-              onResetObjectSampleMapping={handleResetObjectSampleMapping}
-              onResetGestureMapping={handleResetGestureMapping}
-            />
+        <section className={`hud hud-panel${isHudCollapsed ? " is-collapsed" : ""}`} aria-live="polite">
+          <div className="hud-header">
+            <h2>잼잼비트 숲의 입구</h2>
+            <button
+              type="button"
+              className="hud-collapse-toggle"
+              onClick={() => setIsHudCollapsed(!isHudCollapsed)}
+              aria-label={isHudCollapsed ? "HUD 펼치기" : "HUD 접기"}
+            >
+              {isHudCollapsed ? "▼" : "▲"}
+            </button>
+          </div>
+          {!isHudCollapsed && (
+            <>
+              <p id="status" className="status">카메라 준비 중...</p>
+              <div className="hud-actions">
+                <button id="soundUnlockButton" className="sound-unlock" type="button" onClick={requestSoundToggle}>{soundButtonLabel}</button>
+                <button id="testModeToggleButton" className="test-mode-toggle" type="button">테스트 모드 켜기</button>
+                <button
+                  className="hud-settings-toggle"
+                  type="button"
+                  onClick={() => setShowSoundSettings((current) => !current)}
+                  aria-expanded={showSoundSettings}
+                >
+                  {showSoundSettings ? "환경설정 닫기" : "환경설정"}
+                </button>
+              </div>
+              {showSoundSettings && (
+                <SoundSettingsPanel
+                  instrumentVolumes={instrumentVolumes}
+                  gestureMapping={gestureMapping}
+                  objectSampleMapping={objectSampleMapping}
+                  onVolumeChange={handleInstrumentVolumeChange}
+                  onObjectSampleChange={handleObjectSampleChange}
+                  onGestureMappingChange={handleGestureMappingChange}
+                  onReset={handleResetInstrumentVolumes}
+                  onResetObjectSampleMapping={handleResetObjectSampleMapping}
+                  onResetGestureMapping={handleResetGestureMapping}
+                />
+              )}
+              <div className="hud-footer">
+                <button className="hud-exit-button" type="button" onClick={handleExitClick}>프로그램 끝내기</button>
+                <a className="hud-main-link" href="./index.html">메인화면으로</a>
+                <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
+              </div>
+            </>
           )}
-          <button className="hud-exit-button" type="button" onClick={handleExitClick}>프로그램 끝내기</button>
-          <a className="hud-main-link" href="./index.html">메인화면으로</a>
-          <p className="privacy-note">영상은 서버로 전송되지 않고 오직 연주에만 사용됩니다.</p>
         </section>
+
 
         <section id="adminControls" className="admin-floating-controls" aria-live="polite">
           <p>관리자 편집 모드: 오브젝트를 드래그해 배치</p>

@@ -15,13 +15,13 @@ export const DEFAULT_GESTURE_MAPPING = {
   Fist: "penguin",
   OpenPalm: "drum",
   V: "tambourine",
-  Pinky: "xylophone",  // Fox Xylophone
-  Animal: "a",         // Squirrel Cymbal
+  Pinky: "a",          // Squirrel Cymbal
+  Animal: "xylophone", // Fox Xylophone
   KHeart: "cat"        // Cat Heart
 };
 
-const GESTURE_MAPPING_STORAGE_KEY = "jamjam.gestureMapping.v1";
-const OBJECT_SAMPLE_MAPPING_STORAGE_KEY = "jamjam.objectSampleMapping.v1";
+const GESTURE_MAPPING_STORAGE_KEY = "jamjam.gestureMapping.v2";
+const OBJECT_SAMPLE_MAPPING_STORAGE_KEY = "jamjam.objectSampleMapping.v2";
 
 export const OBJECT_SAMPLE_OPTIONS = [
   { id: "kick", label: "킥" },
@@ -51,12 +51,12 @@ export const OBJECT_SAMPLE_OPTIONS = [
 ];
 
 export const DEFAULT_OBJECT_SAMPLE_MAPPING = {
-  drum: "kick",
-  xylophone: "small-drum",
-  tambourine: "maracas",
-  a: "crash",
-  cat: "iloveyou",
-  penguin: "snare"
+  drum: "flute-c4",
+  xylophone: "flute-d4",
+  tambourine: "flute-e4",
+  a: "flute-f4",
+  cat: "flute-g4",
+  penguin: "flute-a4"
 };
 
 export function loadCustomSounds() {

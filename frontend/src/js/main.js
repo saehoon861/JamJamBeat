@@ -20,8 +20,8 @@ const TEST_MODE_HAND_CONNECTIONS = [
 ];
 const TEST_MODE_HAND_COLORS = {
   left: {
-    stroke: "rgba(113, 220, 255, 0.95)",
-    fill: "rgba(214, 248, 255, 0.95)"
+    stroke: "rgba(245, 245, 245, 0.94)",
+    fill: "rgba(255, 255, 255, 0.92)"
   },
   right: {
     stroke: "rgba(255, 204, 113, 0.95)",
@@ -179,7 +179,16 @@ const videoInstruments = {}; // { [id]: { video, canvas, ctx, workCanvas, workCt
 let gestureObjectActive = false;
 const VIDEO_RENDER_FPS = 15; 
 const VIDEO_RENDER_INTERVAL_MS = 1000 / VIDEO_RENDER_FPS;
-const VIDEO_PROCESS_MAX_DIM = 480; 
+const VIDEO_PROCESS_MAX_DIM = (() => {
+  const raw = Number(new URLSearchParams(window.location.search).get("videoProcessMaxDim"));
+  if (Number.isFinite(raw)) return Math.max(180, Math.min(640, Math.round(raw)));
+  const isCoarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const cpuCores = Number(navigator.hardwareConcurrency || 0);
+  if (isCoarsePointer || (Number.isFinite(cpuCores) && cpuCores > 0 && cpuCores <= 4)) {
+    return 320;
+  }
+  return 400;
+})(); 
 
 const VIDEO_BLACK_THRESHOLD = 58;
 const VIDEO_SOFT_BLACK_THRESHOLD = 96;
@@ -325,6 +334,7 @@ let testModeEnabled = (() => {
   if (queryValue === "0" || queryValue === "false") return false;
   return false;
 })();
+let testModeRaf = 0;
 let lastPointerTrailAt = 0;
 let lastPointerTrailPoint = null;
 
@@ -626,18 +636,34 @@ function syncTestModeUI() {
   if (testModeDock) {
     testModeDock.classList.toggle("is-hidden", !testModeEnabled);
   }
+  syncDebugOverlayLoop();
+}
+
+function shouldRenderTutorialOverlay() {
+  return Boolean(landingOverlay && !landingOverlay.classList.contains("is-hidden"));
+}
+
+function shouldRunDebugOverlayLoop() {
+  return testModeEnabled || shouldRenderTutorialOverlay();
 }
 
 function renderTestModePanel() {
+  if (shouldRenderTutorialOverlay()) {
+    const debugSnapshot = interactionRuntime.getDebugSnapshot?.() || {};
+    const handKeys = Object.keys(debugSnapshot).filter((handKey) => {
+      const hand = debugSnapshot[handKey];
+      return Boolean(hand?.lastUpdatedAt);
+    });
+    renderTutorialModelVision(debugSnapshot, handKeys);
+  }
+
+  if (!testModeEnabled) return;
+
   const debugSnapshot = interactionRuntime.getDebugSnapshot?.() || {};
   const handKeys = Object.keys(debugSnapshot).filter((handKey) => {
     const hand = debugSnapshot[handKey];
     return Boolean(hand?.lastUpdatedAt);
   });
-
-  renderTutorialModelVision(debugSnapshot, handKeys);
-
-  if (!testModeEnabled) return;
 
   const modelStatus = getModelInferenceStatus(performance.now());
 
@@ -701,11 +727,30 @@ function renderTestModePanel() {
 }
 
 function startTestModeLoop() {
+  if (testModeRaf) return;
   const tick = () => {
+    if (!shouldRunDebugOverlayLoop()) {
+      testModeRaf = 0;
+      return;
+    }
     renderTestModePanel();
-    requestAnimationFrame(tick);
+    testModeRaf = requestAnimationFrame(tick);
   };
-  requestAnimationFrame(tick);
+  testModeRaf = requestAnimationFrame(tick);
+}
+
+function stopTestModeLoop() {
+  if (!testModeRaf) return;
+  cancelAnimationFrame(testModeRaf);
+  testModeRaf = 0;
+}
+
+function syncDebugOverlayLoop() {
+  if (shouldRunDebugOverlayLoop()) {
+    startTestModeLoop();
+    return;
+  }
+  stopTestModeLoop();
 }
 
 function getMappedSoundProfile(instrumentId) {
@@ -867,6 +912,7 @@ function clamp(value, min, max) {
 function activateStart() { // 게임을 실제로 시작하는 기능입니다.
   sessionStarted = true; // 세션이 시작되었음을 표시합니다.
   landingOverlay.classList.add("is-hidden"); // 시작 화면 덮개를 숨깁니다.
+  syncDebugOverlayLoop();
   const audioState = Audio.getAudioState(); // 현재 오디오 상태를 가져옵니다.
   const playGuide = INTERACTION_MODE === "gesture" // 플레이 방식에 따라 안내 문구를 정합니다.
     ? "손동작으로 숲을 연주해 보세요."
@@ -978,7 +1024,6 @@ function drawVideoInstrumentFrame(id, now = performance.now()) {
     return;
   }
 
-  workCtx.clearRect(0, 0, processWidth, processHeight);
   workCtx.drawImage(video, 0, 0, processWidth, processHeight);
   const frame = workCtx.getImageData(0, 0, processWidth, processHeight);
   const pixels = frame.data;
@@ -1001,7 +1046,6 @@ function drawVideoInstrumentFrame(id, now = performance.now()) {
   }
 
   workCtx.putImageData(frame, 0, 0);
-  ctx.clearRect(0, 0, displayWidth, displayHeight);
   ctx.drawImage(workCanvas, 0, 0, displayWidth, displayHeight);
   inst.raf = requestAnimationFrame((t) => drawVideoInstrumentFrame(id, t));
 }
@@ -1476,7 +1520,7 @@ async function init() {
     });
   }
   syncTestModeUI();
-  startTestModeLoop();
+  syncDebugOverlayLoop();
   VIDEO_INSTRUMENT_IDS.forEach((id) => {
     const el = instrumentElements[id];
     if (!el) return;
@@ -1525,10 +1569,7 @@ async function init() {
   }
 
   try {
-    await Promise.all([
-      initCamera(),
-      initMediaPipe()
-    ]); // 카메라와 손 인식 모델을 동시에 준비해서 체감 대기 시간을 줄입니다.
+    await initMediaPipe(); // 모바일 브라우저 권한 정책을 피하려고 카메라는 사용자 입력 시점에만 요청합니다.
   } catch (error) {
     console.error("Initialization failed:", error); // 실패 이유는 콘솔에 남깁니다.
     statusText.textContent = "초기화 실패: 새로고침 후 다시 시도해 주세요."; // 사용자에게는 쉬운 문구로 알려줍니다.

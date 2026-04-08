@@ -20,8 +20,8 @@ const TEST_MODE_HAND_CONNECTIONS = [
 ];
 const TEST_MODE_HAND_COLORS = {
   left: {
-    stroke: "rgba(113, 220, 255, 0.95)",
-    fill: "rgba(214, 248, 255, 0.95)"
+    stroke: "rgba(245, 245, 245, 0.94)",
+    fill: "rgba(255, 255, 255, 0.92)"
   },
   right: {
     stroke: "rgba(255, 204, 113, 0.95)",
@@ -31,7 +31,14 @@ const TEST_MODE_HAND_COLORS = {
 import { getConfiguredHandLandmarkerTaskPath, getConfiguredMediaPipeWasmRoot, getConfiguredSplitHandInference } from "./env_config.js";
 import { setupSeamlessBackgroundLoop, applySceneMode } from "./scene_runtime.js";
 import { createParticleSystem, restartClassAnimation } from "./particle_system.js";
-import { DEFAULT_SOUND_MAPPING, loadSoundMapping, getSoundProfileForInstrument, loadGestureMapping } from "./sound_mapping.js";
+import {
+  DEFAULT_OBJECT_SAMPLE_MAPPING,
+  DEFAULT_SOUND_MAPPING,
+  getSoundProfileForInstrument,
+  loadGestureMapping,
+  loadObjectSampleMapping,
+  loadSoundMapping
+} from "./sound_mapping.js";
 import { createInteractionRuntime } from "./interaction_runtime.js";
 import { createHandTrackingRuntime } from "./hand_tracking_runtime.js";
 import { createControlRuntime } from "./control_runtime.js";
@@ -172,7 +179,16 @@ const videoInstruments = {}; // { [id]: { video, canvas, ctx, workCanvas, workCt
 let gestureObjectActive = false;
 const VIDEO_RENDER_FPS = 15; 
 const VIDEO_RENDER_INTERVAL_MS = 1000 / VIDEO_RENDER_FPS;
-const VIDEO_PROCESS_MAX_DIM = 480; 
+const VIDEO_PROCESS_MAX_DIM = (() => {
+  const raw = Number(new URLSearchParams(window.location.search).get("videoProcessMaxDim"));
+  if (Number.isFinite(raw)) return Math.max(180, Math.min(640, Math.round(raw)));
+  const isCoarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const cpuCores = Number(navigator.hardwareConcurrency || 0);
+  if (isCoarsePointer || (Number.isFinite(cpuCores) && cpuCores > 0 && cpuCores <= 4)) {
+    return 320;
+  }
+  return 400;
+})(); 
 
 const VIDEO_BLACK_THRESHOLD = 58;
 const VIDEO_SOFT_BLACK_THRESHOLD = 96;
@@ -199,7 +215,7 @@ const POINTER_TRAIL_MIN_DISTANCE = 14;
 const POINTER_TRAIL_MIN_INTERVAL_MS = 28;
 
 const SOUND_PROFILES = {
-  drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Drum(note) },
+  drum: { soundTag: "드럼 비트", burstType: "drum", playbackMode: "oneshot", melodyType: "drum", play: () => Audio.playKids_Drum() },
   djembe: { soundTag: "젬베 타격", burstType: "tambourine", playbackMode: "oneshot", melodyType: "drum", play: (note) => Audio.playKids_Djembe(note) },
   piano: { soundTag: "피아노 선율", burstType: "xylophone", playbackMode: "oneshot", melodyType: "piano", play: (note) => Audio.playKids_Piano(note) },
   guitar: { soundTag: "기타 스트럼", burstType: "tambourine", playbackMode: "oneshot", melodyType: "guitar", play: (note) => Audio.playKids_Guitar(note) },
@@ -208,6 +224,63 @@ const SOUND_PROFILES = {
   bell: { soundTag: "벨 포인트", burstType: "pinky", playbackMode: "oneshot", melodyType: "bell", play: (note) => Audio.playKids_Bell(note) },
   musicbox: { soundTag: "뮤직박스 반짝임", burstType: "pinky", playbackMode: "oneshot", melodyType: "musicbox", play: (note) => Audio.playKids_MusicBox(note) },
   softpad: { soundTag: "소프트 패드 잔향", burstType: "heart", playbackMode: "oneshot", melodyType: "softpad", play: (note) => Audio.playKids_SoftPad(note) }
+};
+
+const SAMPLE_LIBRARY = {
+  kick: {
+    label: "킥",
+    soundKey: "sample-kick",
+    path: "/assets/sounds/kick.wav",
+    options: { gain: 0.24, reverbSend: 0.03, delaySend: 0, filterType: "lowpass", filterFrequency: 1500 }
+  },
+  "small-drum": {
+    label: "작은북",
+    soundKey: "sample-small-drum",
+    path: "/assets/sounds/작은북.wav",
+    options: { gain: 0.16, playbackRate: 1.05, reverbSend: 0.06, delaySend: 0.01, filterType: "bandpass", filterFrequency: 2000 }
+  },
+  snare: {
+    label: "스네어",
+    soundKey: "sample-snare",
+    path: "/assets/sounds/snare.wav",
+    options: { gain: 0.17, reverbSend: 0.05, delaySend: 0.01, filterType: "bandpass", filterFrequency: 2200 }
+  },
+  crash: {
+    label: "심벌",
+    soundKey: "sample-crash",
+    path: "/assets/sounds/crash_simval_choke.wav",
+    options: { gain: 0.12, playbackRate: 1.04, reverbSend: 0.16, delaySend: 0.04, filterType: "highpass", filterFrequency: 2200 }
+  },
+  maracas: {
+    label: "마라카스",
+    soundKey: "sample-maracas",
+    path: "/assets/sounds/maracas-single-clear.mp3",
+    options: { gain: 0.15, reverbSend: 0.04, delaySend: 0.01, filterType: "highpass", filterFrequency: 2400 }
+  },
+  iloveyou: {
+    label: "I love you",
+    soundKey: "sample-iloveyou",
+    path: "/assets/sounds/iloveyou.mp3",
+    options: { gain: 0.32, reverbSend: 0.08, delaySend: 0.02, filterType: "lowpass", filterFrequency: 4200 }
+  },
+  "flute-c4": { label: "플룻 도", soundKey: "sample-flute-c4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4도.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-d4": { label: "플룻 레", soundKey: "sample-flute-d4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4레.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-e4": { label: "플룻 미", soundKey: "sample-flute-e4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4미.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-f4": { label: "플룻 파", soundKey: "sample-flute-f4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4파.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-g4": { label: "플룻 솔", soundKey: "sample-flute-g4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4솔.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-a4": { label: "플룻 라", soundKey: "sample-flute-a4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4라.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "flute-b4": { label: "플룻 시", soundKey: "sample-flute-b4", path: "/assets/sounds/플룻_류트_효과음/플룻_O4시.wav", options: { gain: 0.18, reverbSend: 0.12, delaySend: 0.02, filterType: "lowpass", filterFrequency: 3800 } },
+  "lute-c3": { label: "류트 도3", soundKey: "sample-lute-c3", path: "/assets/sounds/플룻_류트_효과음/류트_O3도.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-d3": { label: "류트 레3", soundKey: "sample-lute-d3", path: "/assets/sounds/플룻_류트_효과음/류트_O3레.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-e3": { label: "류트 미3", soundKey: "sample-lute-e3", path: "/assets/sounds/플룻_류트_효과음/류트_O3미.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-f3": { label: "류트 파3", soundKey: "sample-lute-f3", path: "/assets/sounds/플룻_류트_효과음/류트_O3파.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-g3": { label: "류트 솔3", soundKey: "sample-lute-g3", path: "/assets/sounds/플룻_류트_효과음/류트_O3솔.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-a3": { label: "류트 라3", soundKey: "sample-lute-a3", path: "/assets/sounds/플룻_류트_효과음/류트_O3라.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-b3": { label: "류트 시3", soundKey: "sample-lute-b3", path: "/assets/sounds/플룻_류트_효과음/류트_O3시.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  "lute-c4": { label: "류트 도4", soundKey: "sample-lute-c4", path: "/assets/sounds/플룻_류트_효과음/류트_O4도.wav", options: { gain: 0.18, reverbSend: 0.08, delaySend: 0.02, filterType: "bandpass", filterFrequency: 2200 } },
+  duck: { label: "꽥꽥", soundKey: "sample-duck", path: "/assets/sounds/플룻_류트_효과음/꽥꽥.m4a", options: { gain: 0.2, reverbSend: 0.04, delaySend: 0.01, filterType: "highpass", filterFrequency: 1800 } },
+  scratch: { label: "끼리릭", soundKey: "sample-scratch", path: "/assets/sounds/플룻_류트_효과음/끼리릭.m4a", options: { gain: 0.18, reverbSend: 0.04, delaySend: 0.01, filterType: "bandpass", filterFrequency: 2600 } },
+  triangle: { label: "트라이앵글", soundKey: "sample-triangle", path: "/assets/sounds/플룻_류트_효과음/트라이앵글.m4a", options: { gain: 0.16, reverbSend: 0.12, delaySend: 0.02, filterType: "highpass", filterFrequency: 3000 } }
 };
 
 // GESTURE_SOUND_PROFILES는 제거됨 - gestureMapping과 SOUND_PROFILES 조합으로 대체
@@ -247,7 +320,8 @@ const NUM_HANDS = parseNumHands();
 const HAND_DETECTION_TARGET = NUM_HANDS;
 const ENABLE_SPLIT_HAND_INFERENCE = getConfiguredSplitHandInference();
 let soundMapping = loadSoundMapping(SOUND_PROFILES);
-const gestureMapping = loadGestureMapping();
+let gestureMapping = loadGestureMapping();
+let objectSampleMapping = loadObjectSampleMapping();
 const particleSystem = createParticleSystem(effectCtx, effectCanvas);
 let animationManager = createNoopAnimationManager();
 const feverController = createNoopFeverController();
@@ -260,6 +334,7 @@ let testModeEnabled = (() => {
   if (queryValue === "0" || queryValue === "false") return false;
   return false;
 })();
+let testModeRaf = 0;
 let lastPointerTrailAt = 0;
 let lastPointerTrailPoint = null;
 
@@ -561,18 +636,34 @@ function syncTestModeUI() {
   if (testModeDock) {
     testModeDock.classList.toggle("is-hidden", !testModeEnabled);
   }
+  syncDebugOverlayLoop();
+}
+
+function shouldRenderTutorialOverlay() {
+  return Boolean(landingOverlay && !landingOverlay.classList.contains("is-hidden"));
+}
+
+function shouldRunDebugOverlayLoop() {
+  return testModeEnabled || shouldRenderTutorialOverlay();
 }
 
 function renderTestModePanel() {
+  if (shouldRenderTutorialOverlay()) {
+    const debugSnapshot = interactionRuntime.getDebugSnapshot?.() || {};
+    const handKeys = Object.keys(debugSnapshot).filter((handKey) => {
+      const hand = debugSnapshot[handKey];
+      return Boolean(hand?.lastUpdatedAt);
+    });
+    renderTutorialModelVision(debugSnapshot, handKeys);
+  }
+
+  if (!testModeEnabled) return;
+
   const debugSnapshot = interactionRuntime.getDebugSnapshot?.() || {};
   const handKeys = Object.keys(debugSnapshot).filter((handKey) => {
     const hand = debugSnapshot[handKey];
     return Boolean(hand?.lastUpdatedAt);
   });
-
-  renderTutorialModelVision(debugSnapshot, handKeys);
-
-  if (!testModeEnabled) return;
 
   const modelStatus = getModelInferenceStatus(performance.now());
 
@@ -636,24 +727,68 @@ function renderTestModePanel() {
 }
 
 function startTestModeLoop() {
+  if (testModeRaf) return;
   const tick = () => {
+    if (!shouldRunDebugOverlayLoop()) {
+      testModeRaf = 0;
+      return;
+    }
     renderTestModePanel();
-    requestAnimationFrame(tick);
+    testModeRaf = requestAnimationFrame(tick);
   };
-  requestAnimationFrame(tick);
+  testModeRaf = requestAnimationFrame(tick);
+}
+
+function stopTestModeLoop() {
+  if (!testModeRaf) return;
+  cancelAnimationFrame(testModeRaf);
+  testModeRaf = 0;
+}
+
+function syncDebugOverlayLoop() {
+  if (shouldRunDebugOverlayLoop()) {
+    startTestModeLoop();
+    return;
+  }
+  stopTestModeLoop();
 }
 
 function getMappedSoundProfile(instrumentId) {
   return getSoundProfileForInstrument(soundMapping, DEFAULT_SOUND_MAPPING, SOUND_PROFILES, instrumentId);
 }
 
+function getConfiguredObjectSample(instrumentId) {
+  const sampleId = objectSampleMapping[instrumentId] || DEFAULT_OBJECT_SAMPLE_MAPPING[instrumentId];
+  return SAMPLE_LIBRARY[sampleId] || null;
+}
+
+function primeConfiguredObjectSamples(mapping = objectSampleMapping) {
+  const audioState = Audio.getAudioState();
+  if (!audioState.ready || !audioState.running) return;
+  const paths = Object.values(mapping || {})
+    .map((sampleId) => SAMPLE_LIBRARY[sampleId]?.path || null)
+    .filter(Boolean);
+  Audio.primeSampleBuffers(paths);
+}
+
+function playConfiguredObjectSample(instrumentId) {
+  const sample = getConfiguredObjectSample(instrumentId);
+  if (!sample) return null;
+  const played = Audio.playSample(sample.path, sample.soundKey, sample.options);
+  if (!played) return null;
+  return sample;
+}
+
 function playMappedInstrumentSound(instrumentId, element, { note, spawnEffect = true } = {}) {
   const profile = getMappedSoundProfile(instrumentId);
-  profile.play(note);
+  const sample = playConfiguredObjectSample(instrumentId);
+  if (!sample) {
+    profile.play(note);
+  }
   if (spawnEffect && element) {
     spawnBurst(profile.burstType, element);
   }
-  return profile;
+  return sample ? { ...profile, soundTag: sample.label } : profile;
 }
 
 function getGestureSoundProfile(label, instrumentId) {
@@ -665,11 +800,14 @@ function getGestureSoundProfile(label, instrumentId) {
 function playGestureMappedSound(label, instrumentId, { note, spawnEffect = true } = {}) {
   const element = instrumentElements[instrumentId] || null;
   const profile = getGestureSoundProfile(label, instrumentId);
-  profile.play(note);
+  const sample = playConfiguredObjectSample(instrumentId);
+  if (!sample) {
+    profile.play(note);
+  }
   if (spawnEffect && element) {
     spawnBurst(profile.burstType, element);
   }
-  return profile;
+  return sample ? { ...profile, soundTag: sample.label } : profile;
 }
 
 // 우리가 연주할 수 있는 '동물 악기'들의 정보입니다. 이름과 소리, 그리고 닿았을 때 어떤 행동을 할지 적혀 있습니다.
@@ -774,6 +912,7 @@ function clamp(value, min, max) {
 function activateStart() { // 게임을 실제로 시작하는 기능입니다.
   sessionStarted = true; // 세션이 시작되었음을 표시합니다.
   landingOverlay.classList.add("is-hidden"); // 시작 화면 덮개를 숨깁니다.
+  syncDebugOverlayLoop();
   const audioState = Audio.getAudioState(); // 현재 오디오 상태를 가져옵니다.
   const playGuide = INTERACTION_MODE === "gesture" // 플레이 방식에 따라 안내 문구를 정합니다.
     ? "손동작으로 숲을 연주해 보세요."
@@ -785,6 +924,7 @@ function activateStart() { // 게임을 실제로 시작하는 기능입니다.
     } else {
       Audio.stopAmbientLoop();
     }
+    primeConfiguredObjectSamples();
   } else { // 오디오가 꺼져 있으면
     statusText.textContent = "소리를 들으려면 '소리 켜기' 버튼을 눌러주세요."; // 소리를 켜라는 메시지를 보여줍니다.
   }
@@ -884,7 +1024,6 @@ function drawVideoInstrumentFrame(id, now = performance.now()) {
     return;
   }
 
-  workCtx.clearRect(0, 0, processWidth, processHeight);
   workCtx.drawImage(video, 0, 0, processWidth, processHeight);
   const frame = workCtx.getImageData(0, 0, processWidth, processHeight);
   const pixels = frame.data;
@@ -907,7 +1046,6 @@ function drawVideoInstrumentFrame(id, now = performance.now()) {
   }
 
   workCtx.putImageData(frame, 0, 0);
-  ctx.clearRect(0, 0, displayWidth, displayHeight);
   ctx.drawImage(workCanvas, 0, 0, displayWidth, displayHeight);
   inst.raf = requestAnimationFrame((t) => drawVideoInstrumentFrame(id, t));
 }
@@ -961,6 +1099,19 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function prepareVideoElement(videoEl) {
+  if (!videoEl) return;
+  videoEl.autoplay = true;
+  videoEl.muted = true;
+  videoEl.defaultMuted = true;
+  videoEl.playsInline = true;
+  videoEl.setAttribute("autoplay", "");
+  videoEl.setAttribute("muted", "");
+  videoEl.setAttribute("playsinline", "");
+  videoEl.setAttribute("webkit-playsinline", "true");
+  videoEl.setAttribute("disablepictureinpicture", "true");
+}
+
 function stopCameraTracks(stream) {
   if (!stream || typeof stream.getTracks !== "function") return;
   stream.getTracks().forEach((track) => {
@@ -1001,23 +1152,41 @@ async function initCamera() {
       statusText.textContent = "카메라 화면을 준비하는 중입니다...";
       return;
     }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      statusText.textContent = "이 브라우저에서는 카메라를 사용할 수 없습니다.";
+      statusText.style.color = "var(--danger)";
+      return;
+    }
     console.info("[MediaPipe] initCamera:start");
     statusText.textContent = "카메라를 준비하는 중입니다...";
 
     clearCameraSource();
+    prepareVideoElement(activeVideo);
+    prepareVideoElement(testModeWebcamPreview);
 
     const cameraAttempts = [
       {
-        label: "detailed",
+        label: "front-detailed",
         constraints: {
+          facingMode: { ideal: "user" },
           width: { ideal: 640 },
           height: { ideal: 360 },
           frameRate: { ideal: 30, max: 30 }
         }
       },
       {
-        label: "compat",
+        label: "front-compat",
         constraints: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+          frameRate: { ideal: 24, max: 30 }
+        }
+      },
+      {
+        label: "rear-compat",
+        constraints: {
+          facingMode: { ideal: "environment" },
           width: { ideal: 640 },
           height: { ideal: 360 },
           frameRate: { ideal: 24, max: 30 }
@@ -1035,7 +1204,10 @@ async function initCamera() {
     for (let index = 0; index < cameraAttempts.length; index += 1) {
       const attempt = cameraAttempts[index];
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: attempt.constraints });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: attempt.constraints
+        });
         console.info("[MediaPipe] initCamera:getUserMedia " + attempt.label + " success");
         break;
       } catch (attemptError) {
@@ -1063,14 +1235,10 @@ async function initCamera() {
 
     activeVideo.srcObject = stream;
     cameraStream = stream;
-    activeVideo.playsInline = true;
-    activeVideo.muted = true;
-    activeVideo.setAttribute("playsinline", "");
+    prepareVideoElement(activeVideo);
     if (testModeWebcamPreview) {
       testModeWebcamPreview.srcObject = stream;
-      testModeWebcamPreview.playsInline = true;
-      testModeWebcamPreview.muted = true;
-      testModeWebcamPreview.setAttribute("playsinline", "");
+      prepareVideoElement(testModeWebcamPreview);
     }
     activeVideo.onloadedmetadata = () => {
       console.info("[MediaPipe] initCamera:loadedmetadata", {
@@ -1179,9 +1347,7 @@ async function refreshCameraTarget() {
     if (activeVideo.srcObject !== cameraStream) {
       activeVideo.srcObject = cameraStream;
     }
-    activeVideo.playsInline = true;
-    activeVideo.muted = true;
-    activeVideo.setAttribute("playsinline", "");
+    prepareVideoElement(activeVideo);
     activeVideo.play().catch(() => {});
     return;
   }
@@ -1291,6 +1457,19 @@ async function init() {
     setModelPredictionProvider(getModelPrediction);
     console.info(`[JamJamBeat] ✅ 모델 전환 완료: ${event.detail.modelId}`);
   });
+  window.addEventListener("jamjam:gesture-mapping-changed", (event) => {
+    gestureMapping = {
+      ...loadGestureMapping(),
+      ...(event.detail?.mapping || {})
+    };
+  });
+  window.addEventListener("jamjam:object-sample-mapping-changed", (event) => {
+    objectSampleMapping = {
+      ...loadObjectSampleMapping(),
+      ...(event.detail?.mapping || {})
+    };
+    primeConfiguredObjectSamples(objectSampleMapping);
+  });
 
   setupSeamlessBackgroundLoop({ crossfadeSec: BG_VIDEO_CROSSFADE_SEC }); // 배경 영상 반복 시스템을 먼저 준비합니다.
   setCanvasSize(); // 현재 화면 크기에 맞게 캔버스를 조정합니다.
@@ -1341,7 +1520,7 @@ async function init() {
     });
   }
   syncTestModeUI();
-  startTestModeLoop();
+  syncDebugOverlayLoop();
   VIDEO_INSTRUMENT_IDS.forEach((id) => {
     const el = instrumentElements[id];
     if (!el) return;
@@ -1390,10 +1569,7 @@ async function init() {
   }
 
   try {
-    await Promise.all([
-      initCamera(),
-      initMediaPipe()
-    ]); // 카메라와 손 인식 모델을 동시에 준비해서 체감 대기 시간을 줄입니다.
+    await initMediaPipe(); // 모바일 브라우저 권한 정책을 피하려고 카메라는 사용자 입력 시점에만 요청합니다.
   } catch (error) {
     console.error("Initialization failed:", error); // 실패 이유는 콘솔에 남깁니다.
     statusText.textContent = "초기화 실패: 새로고침 후 다시 시도해 주세요."; // 사용자에게는 쉬운 문구로 알려줍니다.

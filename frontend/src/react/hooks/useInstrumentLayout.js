@@ -24,6 +24,21 @@ function getInstrumentElements() {
   };
 }
 
+function isGridLayoutInstrument(el) {
+  return Boolean(el?.classList.contains("mvp-button"));
+}
+
+function resetGridInstrumentLayout(instrumentElements) {
+  Object.values(instrumentElements).forEach((el) => {
+    if (!isGridLayoutInstrument(el)) return;
+    el.style.left = "";
+    el.style.bottom = "";
+    el.style.right = "";
+    el.style.top = "";
+    el.style.transform = "";
+  });
+}
+
 function isAdminRoute() {
   return new URLSearchParams(window.location.search).get("admin") === "1";
 }
@@ -40,7 +55,15 @@ export function useInstrumentLayout() {
 
     const adminMode = isAdminRoute();
     const savedLayout = loadInstrumentLayout(INSTRUMENT_LAYOUT_KEY);
-    applyInstrumentLayout(adminMode ? DEFAULT_LAYOUT : (savedLayout || DEFAULT_LAYOUT), instrumentElements, clamp);
+    const hasGridLayout = Object.values(instrumentElements).some((el) => isGridLayoutInstrument(el));
+
+    if (adminMode) {
+      applyInstrumentLayout(DEFAULT_LAYOUT, instrumentElements, clamp);
+    } else if (hasGridLayout) {
+      resetGridInstrumentLayout(instrumentElements);
+    } else {
+      applyInstrumentLayout(savedLayout || DEFAULT_LAYOUT, instrumentElements, clamp);
+    }
 
     if (!adminMode || !scene || !landingOverlay || !statusText) {
       return undefined;

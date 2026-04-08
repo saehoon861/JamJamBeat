@@ -6,7 +6,7 @@ import { getModelPrediction as getDefaultModelPrediction } from "./model_inferen
 let modelPredictionProvider = getDefaultModelPrediction;
 
 function isGestureEnabledForHand(handKey = "default") {
-  // 왼손 제스처 판정을 허용합니다.
+  // 모델 수준(Provider)에서 개별적으로 판단하므로 상위 게이트는 개방합니다.
   return true;
 }
 

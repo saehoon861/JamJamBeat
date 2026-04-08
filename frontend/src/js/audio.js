@@ -24,6 +24,7 @@ let lastOutputRouteMeta = {
   pan: 0,
   gainMode: "profile"
 };
+const sampleEntries = new Map();
 const SOUND_DEBUG = (() => {
   const raw = new URLSearchParams(window.location.search).get("soundDebug");
   if (raw === "1" || raw === "true") return true;
@@ -31,6 +32,52 @@ const SOUND_DEBUG = (() => {
   return Boolean(import.meta.env.DEV);
 })();
 const SOUND_DEBUG_LOG_LIMIT = 200;
+const INSTRUMENT_VOLUME_STORAGE_KEY = "jamjam.instrumentVolumes.v1";
+const DEFAULT_INSTRUMENT_VOLUME = 1;
+
+function clampInstrumentVolume(value) {
+  if (!Number.isFinite(value)) return DEFAULT_INSTRUMENT_VOLUME;
+  return Math.min(1.5, Math.max(0, value));
+}
+
+function loadInstrumentVolumes() {
+  try {
+    const raw = localStorage.getItem(INSTRUMENT_VOLUME_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).map(([key, value]) => [key, clampInstrumentVolume(Number(value))])
+    );
+  } catch {
+    return {};
+  }
+}
+
+const instrumentVolumeState = loadInstrumentVolumes();
+
+function persistInstrumentVolumes() {
+  try {
+    localStorage.setItem(INSTRUMENT_VOLUME_STORAGE_KEY, JSON.stringify(instrumentVolumeState));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function dispatchInstrumentVolumeEvent() {
+  window.dispatchEvent(new CustomEvent("jamjam:instrument-volumes-changed", {
+    detail: {
+      volumes: { ...instrumentVolumeState }
+    }
+  }));
+}
+
+function getInstrumentGainMultiplier(instrumentId = null) {
+  if (!instrumentId) return DEFAULT_INSTRUMENT_VOLUME;
+  return clampInstrumentVolume(
+    instrumentVolumeState[instrumentId] ?? DEFAULT_INSTRUMENT_VOLUME
+  );
+}
 
 function pushSoundDebug(stage, payload = {}) {
   if (!SOUND_DEBUG) return;
@@ -296,6 +343,59 @@ function nowTime() {
   return audioCtx ? audioCtx.currentTime : 0;
 }
 
+function getSampleEntry(path) {
+  if (!sampleEntries.has(path)) {
+    sampleEntries.set(path, {
+      status: "idle",
+      buffer: null,
+      promise: null
+    });
+  }
+  return sampleEntries.get(path);
+}
+
+async function loadSampleBuffer(path) {
+  const ctx = ensureAudioContext();
+  if (!ctx || !path) return null;
+
+  const entry = getSampleEntry(path);
+  if (entry.status === "ready" && entry.buffer) return entry.buffer;
+  if (entry.promise) return entry.promise;
+
+  entry.status = "loading";
+  entry.promise = fetch(path)
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.arrayBuffer();
+    })
+    .then((data) => ctx.decodeAudioData(data.slice(0)))
+    .then((buffer) => {
+      entry.status = "ready";
+      entry.buffer = buffer;
+      return buffer;
+    })
+    .catch((error) => {
+      entry.status = "error";
+      console.warn(`[Audio] Failed to load sample: ${path}`, error);
+      return null;
+    })
+    .finally(() => {
+      entry.promise = null;
+    });
+
+  return entry.promise;
+}
+
+export function primeSampleBuffers(paths = []) {
+  if (!Array.isArray(paths) || paths.length === 0) return;
+  const uniquePaths = new Set(
+    paths.filter((path) => typeof path === "string" && path.trim())
+  );
+  uniquePaths.forEach((path) => {
+    void loadSampleBuffer(path);
+  });
+}
+
 function stopGlobalSequencer() {
   if (Number.isFinite(globalSequencer.timer)) {
     window.clearInterval(globalSequencer.timer);
@@ -361,7 +461,8 @@ function connectNode(node, {
 } = {}) {
   if (!masterGain) return null;
   const gainNode = audioCtx.createGain();
-  gainNode.gain.value = gainValue;
+  const instrumentGain = getInstrumentGainMultiplier(playbackContext?.instrumentId ?? null);
+  gainNode.gain.value = gainValue * instrumentGain;
   node.connect(gainNode);
 
   let outputNode = gainNode;
@@ -657,6 +758,66 @@ function playDrumHit(pattern = "kick") {
   return true;
 }
 
+export function playSample(path, soundKey, {
+  gain = 0.2,
+  playbackRate = 1,
+  reverbSend = 0.06,
+  delaySend = 0.01,
+  pan = null,
+  filterType = "",
+  filterFrequency = 2200
+} = {}) {
+  const ctx = ensureAudioContext();
+  if (!ctx || !soundEnabled || !path) return false;
+  if (ctx.state !== "running") {
+    void unlockAudioContext();
+    if (ctx.state !== "running") return false;
+  }
+  if (activeVoiceCount >= MAX_ACTIVE_VOICES) return false;
+
+  const entry = getSampleEntry(path);
+  if (entry.status !== "ready" || !entry.buffer) {
+    void loadSampleBuffer(path);
+    return false;
+  }
+
+  const t = nowTime();
+  const source = ctx.createBufferSource();
+  const amp = ctx.createGain();
+  source.buffer = entry.buffer;
+  source.playbackRate.value = playbackRate;
+  amp.gain.setValueAtTime(Math.max(0.0001, gain), t);
+
+  if (filterType) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.value = filterFrequency;
+    source.connect(filter);
+    filter.connect(amp);
+  } else {
+    source.connect(amp);
+  }
+
+  connectNode(amp, {
+    gainValue: 1,
+    reverbSend,
+    delaySend,
+    pan,
+    gainMode: "sample"
+  });
+
+  activeVoiceCount += 1;
+  source.onended = () => {
+    activeVoiceCount = Math.max(0, activeVoiceCount - 1);
+  };
+
+  source.start(t);
+  emitSoundPlayed(soundKey, "sample", {
+    gainMode: "sample"
+  });
+  return true;
+}
+
 export function setPlaybackContext(context) {
   playbackContext = context && typeof context === "object" ? { ...context } : null;
   pushSoundDebug("audio.setPlaybackContext", playbackContext || { context: null });
@@ -767,8 +928,6 @@ export function ensureAudioContext() {
 
   masterGain.connect(masterLimiter);
   masterLimiter.connect(audioCtx.destination);
-
-
   return audioCtx;
 }
 
@@ -837,6 +996,31 @@ export function getAudioDebugState() {
     panDebugMode,
     lastPlayback: lastPlaybackMeta ? { ...lastPlaybackMeta } : null
   };
+}
+
+export function getInstrumentVolume(instrumentId) {
+  return getInstrumentGainMultiplier(instrumentId);
+}
+
+export function getInstrumentVolumes() {
+  return { ...instrumentVolumeState };
+}
+
+export function setInstrumentVolume(instrumentId, volume) {
+  if (!instrumentId) return getInstrumentVolumes();
+  instrumentVolumeState[instrumentId] = clampInstrumentVolume(Number(volume));
+  persistInstrumentVolumes();
+  dispatchInstrumentVolumeEvent();
+  return getInstrumentVolumes();
+}
+
+export function resetInstrumentVolumes() {
+  Object.keys(instrumentVolumeState).forEach((key) => {
+    delete instrumentVolumeState[key];
+  });
+  persistInstrumentVolumes();
+  dispatchInstrumentVolumeEvent();
+  return getInstrumentVolumes();
 }
 
 export function setPanDebugMode(mode) {

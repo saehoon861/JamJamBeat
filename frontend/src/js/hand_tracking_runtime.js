@@ -404,7 +404,6 @@ export function createHandTrackingRuntime({
       hands.forEach((hand) => {
         if (hand.landmarks) {
           interactionRuntime.updateTrackedHandSnapshot?.(hand.landmarks, now, hand.handKey);
-          if (String(hand.handKey || "").toLowerCase() === "left") return;
           interactionRuntime.processGestureTriggers(hand.landmarks, now, hand.handKey);
         }
       });

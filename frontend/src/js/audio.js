@@ -27,7 +27,9 @@ let lastOutputRouteMeta = {
 const sampleEntries = new Map();
 const SOUND_DEBUG = (() => {
   const raw = new URLSearchParams(window.location.search).get("soundDebug");
-  return raw === "1" || raw === "true";
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
+  return Boolean(import.meta.env.DEV);
 })();
 const SOUND_DEBUG_LOG_LIMIT = 200;
 const INSTRUMENT_VOLUME_STORAGE_KEY = "jamjam.instrumentVolumes.v1";

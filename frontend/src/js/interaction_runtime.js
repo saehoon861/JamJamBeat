@@ -56,7 +56,8 @@ export function createInteractionRuntime({
   }
 
   function isGestureEnabledForHand(handKey = "default") {
-    return String(handKey || "default").trim().toLowerCase() !== "left";
+    // feature/mirroring 지원 모델을 위해 상위 차단을 해제합니다.
+    return true;
   }
 
   function createDisabledGestureResult() {

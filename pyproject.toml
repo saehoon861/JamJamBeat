@@ -8,4 +8,17 @@ dependencies = [
     "mediapipe>=0.10.32",
     "opencv-python>=4.8.0",
     "numpy>=1.26.0",
+    "wandb>=0.25.0",
+    "torch>=2.10.0",
+    "pandas>=3.0.1",
+    "scikit-learn>=1.8.0",
+    "dash>=2.18.0",
+    "plotly>=6.0.0",
+    "onnxscript>=0.6.2",
+]
+
+[tool.uv.workspace]
+members = [
+    "data/labeling_tool",
+    "data/landmark_extractor",
 ]

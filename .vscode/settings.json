@@ -1,0 +1,5 @@
+{
+  "python.defaultInterpreterPath": "/home/user/projects/JamJamBeat/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.envFile": "/home/user/projects/JamJamBeat/.env"
+}

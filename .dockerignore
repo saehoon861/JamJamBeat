@@ -1,0 +1,10 @@
+.git
+.venv
+wandb
+outputs
+data
+!checkpoints
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc

@@ -219,7 +219,7 @@ function normalizeHandKey(handKey = "default") {
 }
 
 function isInferenceEnabledForHand(handKey = "default") {
-  // 왼손 추론을 허용합니다. (미러링 전처리가 적용됨)
+  // 미러링 전처리를 사용하여 왼손 추론을 허용합니다.
   return true;
 }
 

@@ -1,0 +1,44 @@
+# 라벨 클래스 매핑 설정 파일
+# 클래스 ID, 이름(Name), 타임라인 색상(BGR 포맷)을 정의합니다.
+# 추후 동작이 추가/변경되면 이 파일만 수정하면 됩니다.
+
+classes:
+  0:
+    name: "Neutral"
+    color: [128, 128, 128]   # 회색
+
+  1:
+    name: "Fist"
+    color: [0, 0, 255]       # 빨강 (BGR)
+
+  2:
+    name: "Open Palm"
+    color: [0, 200, 0]       # 초록
+
+  3:
+    name: "V"
+    color: [255, 200, 0]     # 하늘색 계열
+
+  4:
+    name: "Pinky"
+    color: [255, 0, 200]     # 보라
+
+  5:
+    name: "Animal"
+    color: [0, 165, 255]     # 주황 (BGR)
+
+  6:
+    name: "K-Heart"
+    color: [203, 192, 255]   # 핑크
+
+  7:
+    name: "Grab"
+    color: [80, 140, 255]    # 주황-파랑 중간톤
+
+# 타임라인 설정
+timeline:
+  half_range: 60           # 현재 프레임 기준 ±60 프레임 표시
+  bar_height: 40           # 타임라인 바 높이 (px)
+
+# FPS 설정 (30fps 고정)
+fps: 30

@@ -1,0 +1,6 @@
+# Generated dataset exports
+*.csv
+기존데이터셋/
+추론용데이터셋/
+테스트데이터셋/
+학습데이터셋/

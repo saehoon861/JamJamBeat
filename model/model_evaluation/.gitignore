@@ -1,0 +1,9 @@
+# Training and evaluation outputs
+pipelines/
+runs/
+agent_runs/
+cron_logs/
+comparison_results_all_labeled.csv
+comparison_results_all_labeled.md
+comparison_results_all_labeled.xlsx
+예전학습비교데이터/

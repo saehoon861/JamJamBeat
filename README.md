@@ -35,7 +35,7 @@
 
 ## 📺 서비스 시연 영상
 
-[![JamJamBeat Demo Video](https://youtu.be/XglcwV9qn4E/0.jpg)](https://youtu.be/XglcwV9qn4E)
+[![JamJamBeat Demo Video](https://img.youtube.com/vi/XglcwV9qn4E/0.jpg)](https://youtu.be/XglcwV9qn4E)
 
 *이미지를 클릭하면 시연 영상으로 이동합니다.*  
 ---

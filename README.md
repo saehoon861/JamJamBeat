@@ -8,14 +8,16 @@
 
 ## 스크린샷
 
+## 📸 스크린샷
+
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="doc/images/main_page.png" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="doc/images/main_page.png" alt="메인 화면" style="height:230px; object-fit:contain;" /><br/>
       <sub><b>메인 화면</b></sub>
     </td>
     <td align="center" width="50%">
-      <img src="doc/images/gesture_demo.png" alt="제스처 인식 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="doc/images/gesture_demo.png" alt="제스처 인식 화면" style="height:230px; object-fit:contain;" /><br/>
       <sub><b>제스처 인식 화면</b></sub>
     </td>
   </tr>
@@ -40,7 +42,7 @@
 
 ## 주요 기능
 
-<img src="docs/images/architecture.png" alt="Project Architecture" width="55%" />
+<img src="doc/images/architecture.png" alt="Project Architecture" width="55%" />
 
 *JamJamBeat 전체 파이프라인 구성도: 랜드마크 추출, 전처리, 모델 추론, 후처리, 브라우저 상호작용 흐름을 나타냅니다.*
 

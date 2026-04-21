@@ -138,11 +138,9 @@ JamJamBeat는 단순한 제스처 분류를 넘어, **실시간 브라우저 추
 
 - Python 3.10 이상
 - Node.js & npm
-- 가상환경 도구 (`venv` 또는 `conda`)
-- 학습/전처리용 Python 패키지 설치
-- 프론트엔드 실행을 위한 npm 환경
+- [uv](https://docs.astral.sh/uv/) 설치
 
----
+> 이 프로젝트의 Python 의존성 관리는 `uv`를 기준으로 합니다.
 
 ### 빠른 실행 (Quick Start)
 
@@ -160,8 +158,8 @@ uv sync
 
 아래 링크에서 ONNX 모델 파일을 다운로드하세요:
 
-- ONNX 모델: [Google Drive 링크]
-- ONNX 데이터 파일: [Google Drive 링크]
+- ONNX 모델: [https://drive.google.com/drive/folders/152NKBoteSEmpiimJlPy5tnSJLYGrBuL5?usp=drive_link]
+- ONNX 데이터 파일: [https://drive.google.com/drive/folders/152NKBoteSEmpiimJlPy5tnSJLYGrBuL5?usp=drive_link]
 
 다운로드한 파일을 아래 경로에 넣어주세요:
 frontend/public/runtime_frame_spatial_transformer/

@@ -11,21 +11,19 @@
 <table>
   <tr>
     <td align="center" width="33%">
-      <img src="docs/images/main_page.png" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="/home/sehoon/workspace/JamJamBeat/doc/images" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>메인 화면</b></sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/images/gesture_demo.png" alt="제스처 인식 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="/home/sehoon/workspace/JamJamBeat/doc/images/gesture_demo.png" alt="제스처 인식 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>제스처 인식 화면</b></sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/images/system_flow.png" alt="시스템 흐름" style="height:280px; object-fit:contain;" /><br/>
+      <img src="/home/sehoon/workspace/JamJamBeat/doc/images/system_flow.png" alt="시스템 흐름" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>시스템 흐름</b></sub>
     </td>
   </tr>
 </table>
-
-> ※ 위 이미지 경로는 예시입니다. 실제 프로젝트 이미지 파일명에 맞게 수정해서 사용하세요.
 
 ---
 
@@ -34,8 +32,6 @@
 [![JamJamBeat Demo Video](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
 
 *이미지를 클릭하면 시연 영상으로 이동합니다.*  
-> ※ `VIDEO_ID`는 실제 유튜브 링크로 교체하세요.
-
 ---
 
 ## 주요 기능
@@ -142,13 +138,11 @@ JamJamBeat는 단순한 제스처 분류를 넘어, **실시간 브라우저 추
 
 ---
 
-### 1. 프로젝트 클론
+### 빠른 실행 (Quick Start)
 
 ```bash
 git clone <YOUR_REPOSITORY_URL>
 cd JamJamBeat
-
-## 🚀 빠른 실행 (Quick Start)
 
 JamJamBeat는 브라우저 기반으로 동작하며, ONNX 모델 파일이 필요합니다.
 ### 1. Python 환경 설정 

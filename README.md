@@ -11,15 +11,15 @@
 <table>
   <tr>
     <td align="center" width="33%">
-      <img src="/home/sehoon/workspace/JamJamBeat/doc/images/main_page.png" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="doc/images/main_page.png" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>메인 화면</b></sub>
     </td>
     <td align="center" width="33%">
-      <img src="/home/sehoon/workspace/JamJamBeat/doc/images/gesture_demo.png" alt="제스처 인식 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="doc/images/gesture_demo.png" alt="제스처 인식 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>제스처 인식 화면</b></sub>
     </td>
     <td align="center" width="33%">
-      <img src="/home/sehoon/workspace/JamJamBeat/doc/images/system_flow.png" alt="시스템 흐름" style="height:280px; object-fit:contain;" /><br/>
+      <img src="doc/images/system_flow.png" alt="시스템 흐름" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>시스템 흐름</b></sub>
     </td>
   </tr>

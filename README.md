@@ -11,7 +11,7 @@
 <table>
   <tr>
     <td align="center" width="33%">
-      <img src="/home/sehoon/workspace/JamJamBeat/doc/images" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
+      <img src="/home/sehoon/workspace/JamJamBeat/doc/images/main_page.png" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>메인 화면</b></sub>
     </td>
     <td align="center" width="33%">

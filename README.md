@@ -6,24 +6,28 @@
 
 ---
 
-## 📸 스크린샷
+## 스크린샷
 
 <table>
   <tr>
-    <td align="center" width="33%">
+    <td align="center" width="50%">
       <img src="doc/images/main_page.png" alt="메인 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>메인 화면</b></sub>
     </td>
-    <td align="center" width="33%">
+    <td align="center" width="50%">
       <img src="doc/images/gesture_demo.png" alt="제스처 인식 화면" style="height:280px; object-fit:contain;" /><br/>
       <sub><b>제스처 인식 화면</b></sub>
     </td>
-    <td align="center" width="33%">
-      <img src="doc/images/system_flow.png" alt="시스템 흐름" style="height:280px; object-fit:contain;" /><br/>
-      <sub><b>시스템 흐름</b></sub>
-    </td>
   </tr>
 </table>
+
+## 시스템 흐름
+
+<p align="center">
+  <img src="doc/images/system_flow.png" alt="시스템 흐름" width="85%" />
+</p>
+
+<p align="center"><sub><b>전체 시스템 흐름</b></sub></p>
 
 ---
 

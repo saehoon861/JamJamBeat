@@ -1,0 +1,60 @@
+{
+  "os":  "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "python":  "CPython 3.11.14",
+  "startedAt":  "2026-03-09T14:35:27.743719Z",
+  "args":  [
+    "--csv-path",
+    "/home/kimsaehoon/workspace/JamJamBeat/data/total_data_0309.csv",
+    "--label-col",
+    "gesture",
+    "--input-size",
+    "63",
+    "--num-classes",
+    "7",
+    "--hidden-dims",
+    "128,64",
+    "--batch-size",
+    "256",
+    "--num-epochs",
+    "50",
+    "--learning-rate",
+    "0.0005",
+    "--dropout",
+    "0.005",
+    "--weight-decay",
+    "0.0001",
+    "--use-batchnorm",
+    "True",
+    "--test-split-seed",
+    "42",
+    "--train-val-split-seed",
+    "7",
+    "--train-seed",
+    "42",
+    "--scheduler-name",
+    "ReduceLROnPlateau"
+  ],
+  "program":  "/home/kimsaehoon/workspace/JamJamBeat/src/training/train.py",
+  "codePath":  "src/training/train.py",
+  "codePathLocal":  "src/training/train.py",
+  "git":  {
+    "remote":  "git@github.com:saehoon861/JamJamBeat.git",
+    "commit":  "0b9e5458e410fc0426cbd6cfaffea74e9c5480c8"
+  },
+  "email":  "qazxcv39372046@gmail.com",
+  "root":  "/home/kimsaehoon/workspace/JamJamBeat",
+  "host":  "DESKTOP-EM38RML",
+  "executable":  "/home/kimsaehoon/workspace/JamJamBeat/.venv/bin/python3",
+  "cpu_count":  14,
+  "cpu_count_logical":  28,
+  "disk":  {
+    "/":  {
+      "total":  "1081101176832",
+      "used":  "16474169344"
+    }
+  },
+  "memory":  {
+    "total":  "16602247168"
+  },
+  "writerId":  "y14q5xl85p9h9xlk2j1azfl6vmgm0kll"
+}

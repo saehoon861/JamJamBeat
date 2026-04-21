@@ -8,4 +8,6 @@ dependencies = [
     "mediapipe>=0.10.32",
     "opencv-python>=4.8.0",
     "numpy>=1.26.0",
+    "wandb>=0.26.0",
+    "pandas>=3.0.2",
 ]

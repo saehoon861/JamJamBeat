@@ -1,0 +1,14 @@
+{
+  "bundle_id": "baseline_mlp_embedding_20260318_194239",
+  "model_id": "mlp_embedding",
+  "mode": "frame",
+  "dataset_key": "baseline",
+  "normalization_family": "baseline",
+  "input_type": "raw_joint63_frame",
+  "input_dim": 63,
+  "num_classes": 7,
+  "neutral_index": 0,
+  "default_device": "cpu",
+  "default_tau": null,
+  "checkpoint_fingerprint": "70c66caa7344fd69c0a13b5ba4f2654996579f398a70dbb826dc4e6e3c637e59"
+}
